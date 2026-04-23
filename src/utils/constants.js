@@ -26,7 +26,7 @@ export const WEBHOOKS = {
   // 1. OCR scan → extract text from photo of exercise
   OCR_SCAN:         import.meta.env?.VITE_WEBHOOK_OCR         || `${BASE}/REPLACE-WITH-OCR-SCAN-HOOK`,
   // 2. Solve extracted problem → returns structured solution
-  SOLVE:            import.meta.env?.VITE_WEBHOOK_SOLVE       || `${BASE}/REPLACE-WITH-SOLVE-HOOK`,
+  SOLVE:            "/api/solve",       || `${BASE}/REPLACE-WITH-SOLVE-HOOK`,
   // 3. Classroom tutor chat → conversational reply
   TUTOR_CHAT:       import.meta.env?.VITE_WEBHOOK_CHAT        || `${BASE}/REPLACE-WITH-CHAT-HOOK`,
   // 4. Explain specific step differently → adaptive explanation
