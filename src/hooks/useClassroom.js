@@ -1,25 +1,40 @@
 // src/hooks/useClassroom.js
-// Manages classroom sessions (conversations + virtual board) in localStorage.
-// Later: migrate to Supabase for cross-device sync.
+// Manages classroom sessions in localStorage.
+// FIX: properly re-loads on every render so state stays in sync between
+// Classroom.jsx and ClassroomSession.jsx.
 
 import { useCallback, useEffect, useState } from "react";
 
 const SESSIONS_KEY = "laureat.classroom.sessions";
 
-export function useClassroomSessions() {
-  const [sessions, setSessions] = useState([]);
+function loadFromStorage() {
+  try {
+    return JSON.parse(localStorage.getItem(SESSIONS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
 
+export function useClassroomSessions() {
+  const [sessions, setSessions] = useState(() => loadFromStorage());
+
+  // Re-sync from storage when other components modify it
   useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem(SESSIONS_KEY) || "[]");
-      setSessions(stored);
-    } catch {}
+    const onStorage = (e) => {
+      if (e.key === SESSIONS_KEY) {
+        setSessions(loadFromStorage());
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   const persist = useCallback((list) => {
     try {
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(list.slice(-50))); // keep last 50
-      setSessions(list);
+      // keep last 50 sessions to avoid localStorage bloat
+      const trimmed = list.slice(-50);
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify(trimmed));
+      setSessions(trimmed);
     } catch {}
   }, []);
 
@@ -29,54 +44,64 @@ export function useClassroomSessions() {
         id: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         subject: subject || "Général",
         title: title || "Nouvelle conversation",
-        context, // { fromStep: "...", problem: "..." } when coming from Scan & Solve
+        context,
         messages: firstMessage ? [firstMessage] : [],
         boardSvg: null,
         createdAt: Date.now(),
         lastViewedAt: Date.now(),
       };
-      persist([...sessions, session]);
+      // Read fresh to avoid stale state
+      const current = loadFromStorage();
+      persist([...current, session]);
       return session;
     },
-    [sessions, persist]
+    [persist]
   );
 
   const updateSession = useCallback(
     (id, updates) => {
-      const next = sessions.map((s) =>
+      const current = loadFromStorage();
+      const next = current.map((s) =>
         s.id === id ? { ...s, ...updates, lastViewedAt: Date.now() } : s
       );
       persist(next);
     },
-    [sessions, persist]
+    [persist]
   );
 
   const appendMessage = useCallback(
     (id, message) => {
-      const next = sessions.map((s) =>
+      const current = loadFromStorage();
+      const next = current.map((s) =>
         s.id === id
           ? { ...s, messages: [...s.messages, message], lastViewedAt: Date.now() }
           : s
       );
       persist(next);
     },
-    [sessions, persist]
+    [persist]
   );
 
   const deleteSession = useCallback(
     (id) => {
-      persist(sessions.filter((s) => s.id !== id));
+      const current = loadFromStorage();
+      persist(current.filter((s) => s.id !== id));
     },
-    [sessions, persist]
+    [persist]
   );
 
   const getSession = useCallback(
-    (id) => sessions.find((s) => s.id === id),
-    [sessions]
+    (id) => {
+      // Always read fresh so newly-appended messages show up
+      return loadFromStorage().find((s) => s.id === id);
+    },
+    []
   );
 
-  // Sort sessions newest-first when exposed
-  const sortedSessions = [...sessions].sort((a, b) => b.lastViewedAt - a.lastViewedAt);
+  // Sort newest-first
+  const sortedSessions = [...sessions].sort(
+    (a, b) => b.lastViewedAt - a.lastViewedAt
+  );
 
   return {
     sessions: sortedSessions,
