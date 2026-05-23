@@ -1,147 +1,122 @@
 // src/components/classroom/ClassroomSession.jsx
-// Real webhook integration: tutor messages → webhook → reply + optional SVG.
-// "Draw on board" button explicitly requests an SVG from the AI.
+// Fullscreen tutor session: virtual board + chat.
+// Uses real /api/chat endpoint when available, falls back to mock if not.
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Send, Maximize2, Minimize2, PencilRuler,
-  Loader2, Sparkles, User, AlertCircle, Lock,
+  Loader2, Sparkles, User,
 } from "lucide-react";
 import { useClassroomSessions } from "../../hooks/useClassroom";
-import { useUsage } from "../../hooks/useUsage";
-import { sendTutorMessage, generateBoard, WebhookError } from "../../services/webhookClient";
 
 export default function ClassroomSession({ session, onExit }) {
   const { appendMessage, updateSession } = useClassroomSessions();
-  const { planTier, canUse, increment, getRemaining } = useUsage();
-
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [generatingBoard, setGeneratingBoard] = useState(false);
   const [boardExpanded, setBoardExpanded] = useState(false);
-  const [error, setError] = useState(null);
+  const [localMessages, setLocalMessages] = useState(session.messages || []);
   const messagesEndRef = useRef(null);
 
-  // Seed first tutor greeting if session is empty
+  // Seed first message if session is empty
   useEffect(() => {
-    if (session.messages.length > 0) return;
-
-    const greeting = session.context
-      ? {
-          id: `msg_${Date.now()}`,
-          role: "tutor",
-          content: `M wè w ap travay sou pwoblèm sa a. Kisa w pa konprann egzakteman nan etap la: "${session.context.fromStep}" ?`,
-          timestamp: Date.now(),
-        }
-      : {
-          id: `msg_${Date.now()}`,
-          role: "tutor",
-          content: "Bonjou ! M se pwofesè ou a. Ki pwoblèm ou vle nou travay ansanm jodi a ?",
-          timestamp: Date.now(),
-        };
-    appendMessage(session.id, greeting);
+    if (localMessages.length === 0) {
+      const greeting = session.context
+        ? {
+            id: `msg_${Date.now()}`,
+            role: "tutor",
+            content: `M wè w ap travay sou pwoblèm sa a. Kisa w pa konprann egzakteman nan etap la: "${session.context.fromStep}" ?`,
+            timestamp: Date.now(),
+          }
+        : {
+            id: `msg_${Date.now()}`,
+            role: "tutor",
+            content: "Bonjou ! M se pwofesè ou a. Ki pwoblèm ou vle nou travay ansanm jodi a ?",
+            timestamp: Date.now(),
+          };
+      appendMessage(session.id, greeting);
+      setLocalMessages([greeting]);
+    }
   }, []); // eslint-disable-line
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [session.messages.length]);
+  }, [localMessages.length]);
 
   const handleSend = async () => {
     const text = input.trim();
     if (!text || sending) return;
 
-    if (!canUse("chats")) {
-      setError(`Limite quotidienne atteinte (${planTier}). Upgrade pour continuer.`);
-      return;
-    }
-
-    setError(null);
     const userMsg = {
       id: `msg_${Date.now()}`,
       role: "user",
       content: text,
       timestamp: Date.now(),
     };
+
+    const newMessages = [...localMessages, userMsg];
+    setLocalMessages(newMessages);
     appendMessage(session.id, userMsg);
     setInput("");
     setSending(true);
-    increment("chats");
 
     try {
-      const response = await sendTutorMessage({
-        sessionId: session.id,
-        messages: [...session.messages, userMsg].map((m) => ({
-          role: m.role === "tutor" ? "assistant" : "user",
-          content: m.content,
-        })),
-        userMessage: text,
-        context: session.context,
-        planTier,
+      // Try real AI endpoint
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: session.id,
+          context: session.context,
+          messages: newMessages.map((m) => ({
+            role: m.role === "tutor" ? "assistant" : "user",
+            content: m.content,
+          })),
+          userMessage: text,
+        }),
       });
 
+      if (response.ok) {
+        const data = await response.json();
+        const reply = data?.data?.reply || data?.reply;
+        const boardSvg = data?.data?.boardSvg || data?.boardSvg;
+
+        const tutorMsg = {
+          id: `msg_${Date.now() + 1}`,
+          role: "tutor",
+          content: reply || mockTutorReply(text),
+          timestamp: Date.now(),
+        };
+        setLocalMessages((prev) => [...prev, tutorMsg]);
+        appendMessage(session.id, tutorMsg);
+
+        if (boardSvg) {
+          updateSession(session.id, { boardSvg });
+          setBoardExpanded(true);
+        } else if (text.toLowerCase().includes("schéma") || text.toLowerCase().includes("dessine")) {
+          updateSession(session.id, { boardSvg: generateMockBoard() });
+        }
+      } else {
+        throw new Error("API unavailable");
+      }
+    } catch (err) {
+      // Fallback to mock
+      console.warn("Using mock tutor reply:", err.message);
+      await new Promise((r) => setTimeout(r, 800));
       const tutorMsg = {
         id: `msg_${Date.now() + 1}`,
         role: "tutor",
-        content: response.reply || "M ap reflechi sou sa... Eseye rephrase kesyon w la.",
+        content: mockTutorReply(text),
         timestamp: Date.now(),
       };
+      setLocalMessages((prev) => [...prev, tutorMsg]);
       appendMessage(session.id, tutorMsg);
 
-      // AI decided to draw a diagram with its reply
-      if (response.boardSvg) {
-        updateSession(session.id, { boardSvg: response.boardSvg });
-        setBoardExpanded(true);
+      if (text.toLowerCase().includes("schéma") || text.toLowerCase().includes("dessine")) {
+        updateSession(session.id, { boardSvg: generateMockBoard() });
       }
-    } catch (err) {
-      setError(err instanceof WebhookError ? err.message : "Erreur de connexion");
-      console.error(err);
     } finally {
       setSending(false);
-    }
-  };
-
-  const handleRequestBoard = async () => {
-    if (!canUse("boards")) {
-      setError(`Limite de tableaux atteinte (${getRemaining("boards")} restant${getRemaining("boards") > 1 ? "s" : ""}). Upgrade pour plus.`);
-      return;
-    }
-
-    setGeneratingBoard(true);
-    setError(null);
-    increment("boards");
-
-    try {
-      // Use last few messages as context for what to draw
-      const recentContext = session.messages
-        .slice(-4)
-        .map((m) => m.content)
-        .join("\n");
-
-      const result = await generateBoard({
-        topic: session.title,
-        description: recentContext,
-        subject: session.subject,
-        planTier,
-      });
-
-      if (result.svg) {
-        updateSession(session.id, { boardSvg: result.svg });
-        setBoardExpanded(true);
-        // Add a tutor message announcing the board
-        const msg = {
-          id: `msg_${Date.now()}`,
-          role: "tutor",
-          content: "M fin trase yon schéma sou tableau a. Gade l pou w kapab wè pi klè.",
-          timestamp: Date.now(),
-        };
-        appendMessage(session.id, msg);
-      }
-    } catch (err) {
-      setError("Pa kapab jenere schéma a. Eseye ankò.");
-      console.error(err);
-    } finally {
-      setGeneratingBoard(false);
     }
   };
 
@@ -153,8 +128,6 @@ export default function ClassroomSession({ session, onExit }) {
   };
 
   const hasBoard = Boolean(session.boardSvg);
-  const boardsRemaining = getRemaining("boards");
-  const chatsRemaining = getRemaining("chats");
 
   return (
     <div className="fixed inset-0 z-40 bg-slate-50 dark:bg-slate-950 flex flex-col">
@@ -171,17 +144,9 @@ export default function ClassroomSession({ session, onExit }) {
             {session.title}
           </div>
           <div className="text-[11px] text-slate-500 dark:text-slate-400">
-            {session.subject} · {chatsRemaining === Infinity ? "∞" : chatsRemaining} messages
+            {session.subject}
           </div>
         </div>
-        <button
-          onClick={handleRequestBoard}
-          disabled={generatingBoard || !canUse("boards")}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 text-white text-xs font-bold shadow-md disabled:opacity-50"
-        >
-          {generatingBoard ? <Loader2 size={14} className="animate-spin" /> : <PencilRuler size={14} />}
-          {canUse("boards") ? "Tableau" : <Lock size={14} />}
-        </button>
       </header>
 
       {/* Virtual board */}
@@ -189,7 +154,10 @@ export default function ClassroomSession({ session, onExit }) {
         {(hasBoard || session.context) && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
-            animate={{ height: boardExpanded ? "55%" : "30%", opacity: 1 }}
+            animate={{
+              height: boardExpanded ? "60%" : "30%",
+              opacity: 1,
+            }}
             transition={{ duration: 0.3 }}
             className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 relative flex-shrink-0"
           >
@@ -226,27 +194,9 @@ export default function ClassroomSession({ session, onExit }) {
         )}
       </AnimatePresence>
 
-      {/* Error banner */}
-      <AnimatePresence>
-        {error && (
-          <motion.div
-            initial={{ y: -20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -20, opacity: 0 }}
-            className="bg-red-50 dark:bg-red-950/50 border-b border-red-200 dark:border-red-500/30 px-4 py-2.5 flex items-center gap-2 text-sm text-red-700 dark:text-red-400"
-          >
-            <AlertCircle size={16} className="flex-shrink-0" />
-            <span className="flex-1">{error}</span>
-            <button onClick={() => setError(null)} className="text-xs font-semibold">
-              ×
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {session.messages.map((msg) => (
+        {localMessages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
         ))}
         {sending && <TypingIndicator />}
@@ -287,6 +237,7 @@ export default function ClassroomSession({ session, onExit }) {
 
 function MessageBubble({ message }) {
   const isUser = message.role === "user";
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -305,7 +256,9 @@ function MessageBubble({ message }) {
             : "bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-bl-sm shadow-sm"
         }`}
       >
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
+        <p className="text-sm leading-relaxed whitespace-pre-wrap">
+          {message.content}
+        </p>
       </div>
       {isUser && (
         <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
@@ -338,4 +291,36 @@ function TypingIndicator() {
       </div>
     </motion.div>
   );
+}
+
+function mockTutorReply(userText) {
+  const text = userText.toLowerCase();
+  if (text.includes("pourquoi") || text.includes("poukisa")) {
+    return "Bon kesyon ! On sait que dans ce type de problème, on applique la conservation de l'énergie. Alors, si l'énergie potentielle au départ égale l'énergie cinétique à l'arrivée, on a m·g·h = ½·m·v². Ou konprann la ?";
+  }
+  if (text.includes("exemple") || text.includes("egzanp")) {
+    return "Pran yon egzanp konkrè : imagine yon bokit ki tonbe nan yon pwi. Plis li tonbe, plis li pran vitès. C'est exactement ce que dit la formule — plus h (la hauteur) est grand, plus v (la vitesse) est grande.";
+  }
+  if (text.includes("schéma") || text.includes("dessine")) {
+    return "M ap trase yon schéma sou tableau a pou w kapab wè l pi klè. Gade anlè.";
+  }
+  return "D'accord, m ap esplike w sa. Nan fizik ayisyen, pwofesè yo toujou mande nou kòmanse par la Donnée. Ensuite, on identifie la Formule, puis on passe à la Résolution. Kisa w panse de sa ?";
+}
+
+function generateMockBoard() {
+  return `
+    <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg" class="w-full max-w-md">
+      <rect x="0" y="0" width="300" height="200" fill="transparent"/>
+      <line x1="50" y1="150" x2="250" y2="150" stroke="currentColor" stroke-width="2"/>
+      <rect x="120" y="110" width="60" height="40" fill="#8b5cf6" rx="4"/>
+      <text x="150" y="135" text-anchor="middle" fill="white" font-size="14" font-weight="bold">m</text>
+      <line x1="150" y1="110" x2="150" y2="60" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow)"/>
+      <text x="160" y="85" fill="#ef4444" font-size="12" font-weight="bold">P = m·g</text>
+      <defs>
+        <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#ef4444"/>
+        </marker>
+      </defs>
+    </svg>
+  `;
 }
