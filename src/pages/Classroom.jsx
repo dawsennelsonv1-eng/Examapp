@@ -1,14 +1,12 @@
 // src/pages/Classroom.jsx
-// Classroom tab: persistent teaching space. List sessions, start new ones,
-// continue previous conversations with the tutor + virtual board.
+// Classroom tab — sessions list, quick actions, and active session view.
 
-import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
-  MessageCircle, PencilRuler, Sparkles, Plus, Trash2,
-  Clock, ChevronRight, GraduationCap, HelpCircle,
+  MessageCircle, PencilRuler, Sparkles, Plus,
+  ChevronRight, GraduationCap, HelpCircle,
 } from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { useClassroomSessions } from "../hooks/useClassroom";
 import ClassroomSession from "../components/classroom/ClassroomSession";
 
@@ -23,7 +21,6 @@ export default function Classroom() {
     const titles = {
       chat: "Nouvelle conversation",
       board: "Nouveau tableau",
-      question: "Question rapide",
     };
     const s = createSession({ subject: "Général", title: titles[type] });
     setSearchParams({ session: s.id });
@@ -32,7 +29,6 @@ export default function Classroom() {
   const openSession = (id) => setSearchParams({ session: id });
   const exitSession = () => setSearchParams({});
 
-  // If a session is active, render full-screen session view
   if (activeSession) {
     return <ClassroomSession session={activeSession} onExit={exitSession} />;
   }
@@ -51,7 +47,7 @@ export default function Classroom() {
         </p>
       </div>
 
-      {/* Active session banner if there's an unfinished one */}
+      {/* Active session banner */}
       {sessions.length > 0 && sessions[0].messages.length > 0 && (
         <section className="px-4 mb-4">
           <motion.button
