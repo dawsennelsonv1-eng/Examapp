@@ -1,5 +1,6 @@
 // src/utils/constants.js
-// Clean version with /api endpoints wired in.
+// Clean version. No template literals, no || fallbacks, no import.meta chains.
+// Just plain strings and objects so Vite parses it perfectly.
 
 export const EXAM_DATE = new Date("2026-07-17T08:00:00");
 
@@ -9,7 +10,7 @@ export const TRACKS = {
 };
 
 export const SUBJECTS_BY_TRACK = {
-  [TRACKS.NINE_AF]: [
+  "9AF": [
     "Mathématiques",
     "Physique",
     "Chimie",
@@ -17,7 +18,7 @@ export const SUBJECTS_BY_TRACK = {
     "Français",
     "Créole",
   ],
-  [TRACKS.NS4]: [
+  "NS4": [
     "Mathématiques",
     "Physique",
     "Chimie",
@@ -28,35 +29,14 @@ export const SUBJECTS_BY_TRACK = {
   ],
 };
 
-// ============================================================
-// API ENDPOINTS
-// All AI features now use Vercel serverless functions at /api/*
-// instead of Make.com webhooks. This is simpler, free, and reliable.
-// ============================================================
-
 export const WEBHOOKS = {
-  // 1. OCR scan — handled inside SOLVE for MVP (Gemini Vision)
   OCR_SCAN: "/api/solve",
-
-  // 2. Solve extracted problem → returns structured solution
   SOLVE: "/api/solve",
-
-  // 3. Classroom tutor chat → conversational reply
   TUTOR_CHAT: "/api/chat",
-
-  // 4. Explain specific step differently → adaptive explanation
   EXPLAIN_STEP: "/api/explain",
-
-  // 5. Generate virtual board SVG → returns SVG code
   GENERATE_BOARD: "/api/board",
-
-  // 6. Generate fresh quiz from past exams
   GENERATE_QUIZ: "/api/quiz",
 };
-
-// ============================================================
-// LOCAL STORAGE KEYS
-// ============================================================
 
 export const STORAGE_KEYS = {
   TRACK: "menfp.track",
@@ -67,11 +47,6 @@ export const STORAGE_KEYS = {
   PLAN_TIER: "laureat.planTier",
   USAGE_TODAY: "laureat.usageToday",
 };
-
-// ============================================================
-// PLAN TIERS — usage caps per day
-// -1 means unlimited
-// ============================================================
 
 export const USAGE_CAPS = {
   free: {
