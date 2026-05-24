@@ -1,60 +1,85 @@
 // src/services/ttsService.js
-// Thin wrapper over the Web Speech API. Picks the best voice for fr-FR / ht
-// (browsers rarely ship a Haitian Creole voice, so we fall back to French
-// with slight rate/pitch adjustment to keep the feel natural.)
+// Text-to-speech: tries server-side API first, falls back to browser Web Speech API.
 
+let currentAudio = null;
 let currentUtterance = null;
 
-export function isSupported() {
-  return typeof window !== "undefined" && "speechSynthesis" in window;
-}
+export async function speakText(text, lang = "fr-FR") {
+  stopSpeaking();
+  if (!text) return;
 
-function pickVoice(lang) {
-  if (!isSupported()) return null;
-  const voices = window.speechSynthesis.getVoices();
-  if (lang === "ht") {
-    // Try Haitian first, then any French voice (best phonetic approximation).
-    return (
-      voices.find((v) => v.lang?.toLowerCase().startsWith("ht")) ||
-      voices.find((v) => v.lang?.toLowerCase().startsWith("fr")) ||
-      voices[0]
-    );
+  // Try server-side TTS first (better quality)
+  try {
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+
+      if (data?.data?.audioUrl) {
+        // Play AI-generated audio
+        currentAudio = new Audio(data.data.audioUrl);
+        await new Promise((resolve, reject) => {
+          currentAudio.onended = resolve;
+          currentAudio.onerror = reject;
+          currentAudio.play().catch(reject);
+        });
+        return;
+      }
+
+      if (data?.data?.useBrowserFallback) {
+        return browserSpeak(text, lang);
+      }
+    }
+  } catch (err) {
+    console.warn("Server TTS failed, using browser fallback:", err);
   }
-  return (
-    voices.find((v) => v.lang?.toLowerCase().startsWith("fr")) || voices[0]
-  );
+
+  // Fallback to browser
+  return browserSpeak(text, lang);
 }
 
-export function speak(text, lang = "fr", { onEnd, onStart } = {}) {
-  if (!isSupported() || !text) return;
-  stop(); // always cancel anything queued
+function browserSpeak(text, lang = "fr-FR") {
+  if (!("speechSynthesis" in window)) {
+    console.warn("Speech synthesis not supported");
+    return;
+  }
 
-  const utter = new SpeechSynthesisUtterance(text);
-  const voice = pickVoice(lang);
-  if (voice) utter.voice = voice;
-  utter.lang = voice?.lang || (lang === "ht" ? "ht" : "fr-FR");
-  utter.rate = lang === "ht" ? 0.92 : 0.98; // slightly slower for Creole clarity
-  utter.pitch = 1.0;
-  utter.onstart = onStart;
-  utter.onend = () => {
-    currentUtterance = null;
-    onEnd?.();
-  };
-  utter.onerror = () => {
-    currentUtterance = null;
-    onEnd?.();
-  };
+  return new Promise((resolve) => {
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = lang;
+    utter.rate = 0.95;
+    utter.pitch = 1.0;
 
-  currentUtterance = utter;
-  window.speechSynthesis.speak(utter);
+    // Try to pick a good French voice if available
+    const voices = speechSynthesis.getVoices();
+    const frenchVoice = voices.find(
+      (v) => v.lang.startsWith("fr") && v.localService
+    );
+    if (frenchVoice) utter.voice = frenchVoice;
+
+    utter.onend = resolve;
+    utter.onerror = resolve;
+    currentUtterance = utter;
+    speechSynthesis.speak(utter);
+  });
 }
 
-export function stop() {
-  if (!isSupported()) return;
-  window.speechSynthesis.cancel();
-  currentUtterance = null;
+export function stopSpeaking() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+    currentAudio = null;
+  }
+  if (currentUtterance && "speechSynthesis" in window) {
+    speechSynthesis.cancel();
+    currentUtterance = null;
+  }
 }
 
 export function isSpeaking() {
-  return isSupported() && window.speechSynthesis.speaking;
+  return Boolean(currentAudio) || (typeof speechSynthesis !== "undefined" && speechSynthesis.speaking);
 }
