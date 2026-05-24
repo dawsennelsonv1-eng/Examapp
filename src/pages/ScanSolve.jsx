@@ -1,341 +1,272 @@
 // src/pages/ScanSolve.jsx
-// Updated to pass problemStatement to each step so "Open in Classroom" gets full context.
+// Captures image from camera, sends to /api/solve, displays the real AI solution.
 
-import { useState, useCallback, useRef } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Camera, Lightbulb, SkipForward, Unlock, CheckCircle2 } from "lucide-react";
-import { useApp } from "../contexts/AppContext";
-import { solveProblem, explainDifferently } from "../services/webhookClient";
-import SolutionStep from "../components/scan/SolutionStep";
-import AudioButton from "../components/scan/AudioButton";
+import {
+  Camera, RefreshCw, AlertCircle, Loader2, ChevronRight,
+  ArrowLeft, Sparkles, BookOpen, X,
+} from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import CameraCapture from "../components/scan/CameraCapture";
+import SolutionStep from "../components/scan/SolutionStep";
+import { useApp } from "../contexts/AppContext";
 
 export default function ScanSolve() {
-  const { t, lang, track } = useApp();
-  const [phase, setPhase] = useState("intro");
+  const navigate = useNavigate();
+  const { track } = useApp();
+
+  const [step, setStep] = useState("camera"); // camera | solving | solution | error
+  const [capturedImage, setCapturedImage] = useState(null);
   const [solution, setSolution] = useState(null);
   const [error, setError] = useState(null);
-  const [unlockedUpTo, setUnlockedUpTo] = useState(0);
-  const [reFetching, setReFetching] = useState(false);
-  const galleryInputRef = useRef(null);
 
-  const processImage = useCallback(
-    async (imageDataUrl) => {
-      setPhase("loading");
-      setError(null);
-      try {
-        const result = await solveProblem({
-          imageData: imageDataUrl,
-          subject: "Physique",
-          track,
-          lang,
-        });
-        setSolution(result);
-        setUnlockedUpTo(0);
-        setPhase("solution");
-      } catch (e) {
-        setError(t("error_generic"));
-        setPhase("intro");
-      }
-    },
-    [lang, track, t]
-  );
+  const handleCapture = async (imageDataUrl) => {
+    setCapturedImage(imageDataUrl);
+    setStep("solving");
+    setError(null);
 
-  const openGallery = () => galleryInputRef.current?.click();
-  const handleGalleryPick = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => processImage(reader.result);
-    reader.readAsDataURL(file);
-    e.target.value = "";
-  };
-
-  const unlockNext = () =>
-    setUnlockedUpTo((n) => Math.min(n + 1, solution?.steps.length ?? 0));
-  const revealAll = () => setUnlockedUpTo(solution?.steps.length ?? 0);
-
-  const handleExplainDifferently = async () => {
-    if (!solution) return;
-    setReFetching(true);
     try {
-      const alt = await explainDifferently({
-        originalProblem: solution.problemStatement,
-        previousExplanation: solution.formule,
-        lang,
+      const response = await fetch("/api/solve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: "user-" + Date.now(),
+          input: {
+            imageData: imageDataUrl,
+            subject: "Physique", // Could detect from photo later
+            track: track || "NS4",
+          },
+        }),
       });
-      setSolution((s) => ({ ...s, formule: alt.analogy || s.formule }));
-    } catch (e) {
-      setError(t("error_generic"));
-    } finally {
-      setReFetching(false);
+
+      if (response.status === 422) {
+        const body = await response.json();
+        setError(
+          body.message ||
+          "L'image n'est pas assez claire. Reprends la photo."
+        );
+        setStep("error");
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+
+      const result = await response.json();
+      if (!result?.data) {
+        throw new Error("Réponse invalide du serveur");
+      }
+
+      setSolution(result.data);
+      setStep("solution");
+    } catch (err) {
+      console.error("Solve error:", err);
+      setError(
+        "Impossible de résoudre l'exercice. Vérifie ta connexion internet et réessaye."
+      );
+      setStep("error");
     }
   };
 
-  const allRevealed = solution && unlockedUpTo >= solution.steps.length;
+  const handleRetry = () => {
+    setStep("camera");
+    setCapturedImage(null);
+    setSolution(null);
+    setError(null);
+  };
+
+  if (step === "camera") {
+    return (
+      <CameraCapture
+        onCapture={handleCapture}
+        onClose={() => navigate("/")}
+      />
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-28">
+      {/* Header */}
+      <header className="sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center gap-3">
+        <button
+          onClick={() => navigate("/")}
+          className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300"
+        >
+          <ArrowLeft size={18} />
+        </button>
+        <div className="flex-1">
+          <div className="font-bold text-sm text-slate-900 dark:text-white">
+            Solution
+          </div>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400">
+            Niveau {track || "NS4"}
+          </div>
+        </div>
+        {step === "solution" && (
+          <button
+            onClick={handleRetry}
+            className="text-xs font-semibold text-violet-600 dark:text-violet-400 flex items-center gap-1"
+          >
+            <RefreshCw size={14} />
+            Nouveau
+          </button>
+        )}
+      </header>
+
+      {/* Image preview */}
+      {capturedImage && (
+        <div className="px-4 pt-4">
+          <div className="relative rounded-xl overflow-hidden bg-slate-200 dark:bg-slate-800 shadow-md">
+            <img
+              src={capturedImage}
+              alt="Exercice capturé"
+              className="w-full max-h-48 object-cover"
+            />
+            {step === "solving" && (
+              <div className="absolute inset-0 bg-black/50 flex items-center justify-center backdrop-blur-sm">
+                <div className="text-white text-center">
+                  <Loader2 size={32} className="animate-spin mx-auto mb-2" />
+                  <div className="text-sm font-semibold">Lecture de l'image...</div>
+                  <div className="text-xs opacity-75 mt-1">Le prof analyse</div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Solving state */}
+      {step === "solving" && !capturedImage && (
+        <div className="px-4 py-12 text-center">
+          <Loader2 size={36} className="animate-spin mx-auto text-violet-600 mb-4" />
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            Le prof réfléchit...
+          </p>
+        </div>
+      )}
+
+      {/* Error state */}
       <AnimatePresence>
-        {phase === "camera" && (
-          <CameraCapture
-            onCapture={processImage}
-            onClose={() => setPhase("intro")}
-            onOpenGallery={openGallery}
-          />
+        {step === "error" && (
+          <motion.div
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="mx-4 mt-4 p-4 rounded-xl bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-500/30 flex gap-3"
+          >
+            <AlertCircle size={20} className="text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="font-semibold text-sm text-red-900 dark:text-red-200 mb-1">
+                Oups
+              </div>
+              <p className="text-xs text-red-700 dark:text-red-300 leading-relaxed mb-3">
+                {error}
+              </p>
+              <button
+                onClick={handleRetry}
+                className="text-xs font-bold text-red-700 dark:text-red-300 underline"
+              >
+                Reprendre une photo
+              </button>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
-      <input
-        ref={galleryInputRef}
-        type="file"
-        accept="image/*"
-        onChange={handleGalleryPick}
-        className="hidden"
-      />
-
-      {phase === "intro" && (
-        <IntroView
-          onOpenCamera={() => setPhase("camera")}
-          onOpenGallery={openGallery}
-          error={error}
-        />
-      )}
-
-      {phase === "loading" && <LoadingView />}
-
-      {phase === "solution" && solution && (
-        <SolutionView
-          solution={solution}
-          unlockedUpTo={unlockedUpTo}
-          onUnlockNext={unlockNext}
-          onRevealAll={revealAll}
-          onExplainDifferently={handleExplainDifferently}
-          onReset={() => {
-            setSolution(null);
-            setUnlockedUpTo(0);
-            setPhase("intro");
-          }}
-          reFetching={reFetching}
-          allRevealed={allRevealed}
-          t={t}
-        />
-      )}
-    </div>
-  );
-}
-
-function IntroView({ onOpenCamera, onOpenGallery, error }) {
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6 pb-32">
-      <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        className="text-center max-w-sm"
-      >
-        <div className="w-24 h-24 mx-auto mb-6 rounded-3xl bg-gradient-to-br from-violet-500 to-indigo-700 flex items-center justify-center shadow-xl shadow-violet-500/40">
-          <Camera size={40} className="text-white" strokeWidth={2} />
-        </div>
-
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-3">
-          Scanner un problème
-        </h1>
-        <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed mb-8">
-          Prends une photo de ton exercice et le professeur t'expliquera étape par étape.
-        </p>
-
-        {error && (
-          <div className="mb-4 px-4 py-3 rounded-xl bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 text-sm">
-            {error}
-          </div>
-        )}
-
-        <div className="space-y-3">
-          <motion.button
-            whileTap={{ scale: 0.97 }}
-            onClick={onOpenCamera}
-            className="w-full py-4 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-700 text-white font-bold shadow-lg shadow-violet-500/30 flex items-center justify-center gap-2"
+      {/* Solution */}
+      <AnimatePresence>
+        {step === "solution" && solution && (
+          <motion.div
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="px-4 mt-4 space-y-4"
           >
-            <Camera size={20} strokeWidth={2.5} />
-            Ouvrir la caméra
-          </motion.button>
-
-          <motion.button
-            whileTap={{ scale: 0.97 }}
-            onClick={onOpenGallery}
-            className="w-full py-4 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold flex items-center justify-center gap-2"
-          >
-            📁 Choisir dans la galerie
-          </motion.button>
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
-function LoadingView() {
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-6 p-6 pb-32">
-      <motion.div
-        animate={{ rotate: 360 }}
-        transition={{ duration: 1.2, repeat: Infinity, ease: "linear" }}
-        className="w-16 h-16 rounded-full border-4 border-violet-200 dark:border-violet-900 border-t-violet-600"
-      />
-      <p className="text-slate-600 dark:text-slate-300 font-medium text-center">
-        Lecture du problème...
-      </p>
-    </div>
-  );
-}
-
-function SolutionView({ solution, unlockedUpTo, onUnlockNext, onRevealAll, onExplainDifferently, onReset, reFetching, allRevealed, t }) {
-  return (
-    <>
-      <header className="sticky top-0 z-10 backdrop-blur-lg bg-white/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-800">
-        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
-          <button
-            onClick={onReset}
-            className="flex items-center gap-2 text-sm font-medium text-violet-600 dark:text-violet-400"
-          >
-            <ArrowLeft size={18} />
-            Scanner
-          </button>
-        </div>
-      </header>
-
-      <main className="max-w-3xl mx-auto px-4 py-6 pb-32 space-y-4">
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-700 text-white p-5 shadow-lg shadow-violet-500/20"
-        >
-          <div className="flex items-start justify-between gap-3 mb-2">
-            <span className="text-[11px] uppercase tracking-widest font-bold text-violet-200">
-              Problème
-            </span>
-            <AudioButton
-              text={solution.problemStatement}
-              className="bg-white/10 text-white ring-white/20 hover:bg-white/20"
-            />
-          </div>
-          <p className="text-sm leading-relaxed">{solution.problemStatement}</p>
-        </motion.div>
-
-        <StrictFormatBlock label="Donnée" content={solution.hypothese} accent="emerald" />
-        <StrictFormatBlock label="Formule" content={solution.formule} accent="amber" isFormula />
-
-        <section>
-          <div className="flex items-center justify-between mb-3 px-1">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-              Résolution
-            </h3>
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              {unlockedUpTo} / {solution.steps.length}
-            </span>
-          </div>
-
-          <div className="space-y-3">
-            {solution.steps.map((step, i) => (
-              <SolutionStep
-                key={i}
-                step={step}
-                index={i}
-                locked={i >= unlockedUpTo}
-                onUnlock={onUnlockNext}
-                problemStatement={solution.problemStatement}
-              />
-            ))}
-          </div>
-        </section>
-
-        <div className="mt-6 flex flex-col gap-2">
-          {!allRevealed && unlockedUpTo > 0 && (
-            <motion.button
-              whileTap={{ scale: 0.98 }}
-              onClick={onUnlockNext}
-              className="w-full py-3.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-semibold shadow-lg shadow-violet-500/30 flex items-center justify-center gap-2"
-            >
-              <Unlock size={18} />
-              Voir l'étape suivante
-            </motion.button>
-          )}
-
-          {!allRevealed && (
-            <motion.button
-              whileTap={{ scale: 0.98 }}
-              onClick={onRevealAll}
-              className="w-full py-3 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 font-medium flex items-center justify-center gap-2"
-            >
-              <SkipForward size={18} />
-              Voir toute la solution
-            </motion.button>
-          )}
-
-          {allRevealed && (
-            <motion.div
-              initial={{ y: 20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-5 text-center"
-            >
-              <CheckCircle2 className="mx-auto mb-2 text-emerald-600 dark:text-emerald-400" size={32} />
-              <div className="text-xs font-bold uppercase tracking-widest text-emerald-700 dark:text-emerald-400 mb-1">
-                Réponse finale
+            {/* Problem statement */}
+            <section className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <BookOpen size={16} className="text-violet-600 dark:text-violet-400" />
+                <h2 className="text-xs uppercase tracking-widest font-bold text-slate-500 dark:text-slate-400">
+                  Énoncé
+                </h2>
               </div>
-              <div className="text-2xl font-mono font-bold text-emerald-800 dark:text-emerald-300">
+              <p className="text-sm text-slate-900 dark:text-slate-100 leading-relaxed">
+                {solution.problemStatement}
+              </p>
+            </section>
+
+            {/* Donnée */}
+            <section className="rounded-2xl bg-gradient-to-br from-violet-50 to-indigo-50 dark:from-violet-950/40 dark:to-indigo-950/40 p-4 border border-violet-100 dark:border-violet-500/20">
+              <h2 className="text-xs uppercase tracking-widest font-bold text-violet-700 dark:text-violet-400 mb-2">
+                Donnée
+              </h2>
+              <p className="text-sm text-slate-800 dark:text-slate-200 leading-relaxed font-medium">
+                {solution.donnee}
+              </p>
+            </section>
+
+            {/* Formule */}
+            <section className="rounded-2xl bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 p-4 border border-amber-100 dark:border-amber-500/20">
+              <h2 className="text-xs uppercase tracking-widest font-bold text-amber-700 dark:text-amber-400 mb-2">
+                Formule
+              </h2>
+              <p className="text-sm text-slate-800 dark:text-slate-200 leading-relaxed font-mono">
+                {solution.formule}
+              </p>
+            </section>
+
+            {/* Steps */}
+            <section className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm">
+              <h2 className="text-xs uppercase tracking-widest font-bold text-slate-500 dark:text-slate-400 mb-3">
+                Résolution
+              </h2>
+              <div className="space-y-2">
+                {solution.steps?.map((s, i) => (
+                  <SolutionStep
+                    key={i}
+                    step={s}
+                    index={i}
+                    problemStatement={solution.problemStatement}
+                  />
+                ))}
+              </div>
+            </section>
+
+            {/* Final answer */}
+            <section className="rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 p-5 text-white shadow-lg shadow-emerald-500/30">
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles size={16} />
+                <h2 className="text-xs uppercase tracking-widest font-bold opacity-90">
+                  Réponse finale
+                </h2>
+              </div>
+              <p className="text-xl font-bold font-mono">
                 {solution.finalAnswer}
-              </div>
-            </motion.div>
-          )}
+              </p>
+            </section>
 
-          <motion.button
-            whileTap={{ scale: 0.98 }}
-            onClick={onExplainDifferently}
-            disabled={reFetching}
-            className="w-full py-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-medium flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {reFetching ? (
-              <span className="inline-block w-4 h-4 rounded-full border-2 border-slate-400 border-t-transparent animate-spin" />
-            ) : (
-              <Lightbulb size={18} />
+            {/* Traps */}
+            {solution.traps?.length > 0 && (
+              <section className="rounded-2xl bg-red-50 dark:bg-red-950/30 p-4 border border-red-100 dark:border-red-500/20">
+                <h2 className="text-xs uppercase tracking-widest font-bold text-red-700 dark:text-red-400 mb-2">
+                  ⚠️ Pièges à éviter
+                </h2>
+                <ul className="space-y-1.5">
+                  {solution.traps.map((trap, i) => (
+                    <li
+                      key={i}
+                      className="text-xs text-red-900 dark:text-red-200 flex gap-2"
+                    >
+                      <span>•</span>
+                      <span>{trap}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             )}
-            Explique-moi autrement
-          </motion.button>
-        </div>
-      </main>
-    </>
-  );
-}
-
-function StrictFormatBlock({ label, content, accent = "indigo", isFormula = false }) {
-  const palettes = {
-    emerald: "bg-emerald-500/10 border-emerald-500/30",
-    amber: "bg-amber-500/10 border-amber-500/30",
-    indigo: "bg-indigo-500/10 border-indigo-500/30",
-  };
-  const textColors = {
-    emerald: "text-emerald-700 dark:text-emerald-400",
-    amber: "text-amber-700 dark:text-amber-400",
-    indigo: "text-indigo-700 dark:text-indigo-400",
-  };
-  return (
-    <motion.div
-      initial={{ y: 12, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      className={`rounded-2xl border p-5 ${palettes[accent]}`}
-    >
-      <div className="flex items-center justify-between mb-2">
-        <span className={`text-[11px] uppercase tracking-widest font-bold ${textColors[accent]}`}>
-          {label}
-        </span>
-        <AudioButton text={`${label}. ${content}`} />
-      </div>
-      <p
-        className={`text-slate-800 dark:text-slate-100 leading-relaxed ${
-          isFormula ? "font-mono text-[15px]" : ""
-        }`}
-      >
-        {content}
-      </p>
-    </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
