@@ -1,55 +1,58 @@
 // src/hooks/useStreak.js
-// Tracks consecutive days of app usage. Resets if >1 day gap.
+// Tracks daily login streak in localStorage.
 
 import { useEffect, useState } from "react";
 
 const STREAK_KEY = "laureat.streak";
-const LAST_VISIT_KEY = "laureat.lastVisit";
 
-function getToday() {
+function todayKey() {
   const d = new Date();
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function getYesterday() {
+function yesterdayKey() {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export function useStreak() {
-  const [streak, setStreak] = useState(() => {
-    if (typeof window === "undefined") return 0;
-    return parseInt(localStorage.getItem(STREAK_KEY) || "0", 10);
-  });
+  const [streak, setStreak] = useState(0);
+  const [lastVisit, setLastVisit] = useState(null);
 
   useEffect(() => {
     try {
-      const today = getToday();
-      const yesterday = getYesterday();
-      const lastVisit = localStorage.getItem(LAST_VISIT_KEY);
-      const currentStreak = parseInt(localStorage.getItem(STREAK_KEY) || "0", 10);
-
-      if (lastVisit === today) {
-        // already counted today
+      const raw = localStorage.getItem(STREAK_KEY);
+      if (!raw) {
+        const fresh = { count: 1, lastDate: todayKey() };
+        localStorage.setItem(STREAK_KEY, JSON.stringify(fresh));
+        setStreak(1);
+        setLastVisit(todayKey());
         return;
       }
+      const parsed = JSON.parse(raw);
+      const today = todayKey();
+      const yesterday = yesterdayKey();
 
-      let newStreak;
-      if (!lastVisit) {
-        newStreak = 1;
-      } else if (lastVisit === yesterday) {
-        newStreak = currentStreak + 1;
+      if (parsed.lastDate === today) {
+        setStreak(parsed.count);
+        setLastVisit(parsed.lastDate);
+      } else if (parsed.lastDate === yesterday) {
+        const newCount = parsed.count + 1;
+        const updated = { count: newCount, lastDate: today };
+        localStorage.setItem(STREAK_KEY, JSON.stringify(updated));
+        setStreak(newCount);
+        setLastVisit(today);
       } else {
-        // missed a day — reset
-        newStreak = 1;
+        const reset = { count: 1, lastDate: today };
+        localStorage.setItem(STREAK_KEY, JSON.stringify(reset));
+        setStreak(1);
+        setLastVisit(today);
       }
-
-      localStorage.setItem(STREAK_KEY, String(newStreak));
-      localStorage.setItem(LAST_VISIT_KEY, today);
-      setStreak(newStreak);
-    } catch {}
+    } catch {
+      setStreak(1);
+    }
   }, []);
 
-  return streak;
+  return { streak, lastVisit };
 }

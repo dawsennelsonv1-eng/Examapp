@@ -1,6 +1,5 @@
 // src/hooks/useUsage.js
-// Client-side daily usage tracking + cap enforcement.
-// Server-side enforcement comes in Tier 3B (Supabase). For now localStorage.
+// Tracks daily usage caps per plan tier (free / basic / premium).
 
 import { useCallback, useEffect, useState } from "react";
 import { STORAGE_KEYS, USAGE_CAPS } from "../utils/constants";
@@ -15,7 +14,6 @@ function loadUsage() {
     const raw = localStorage.getItem(STORAGE_KEYS.USAGE_TODAY);
     if (!raw) return { date: todayKey(), counts: {} };
     const parsed = JSON.parse(raw);
-    // reset if new day
     if (parsed.date !== todayKey()) return { date: todayKey(), counts: {} };
     return parsed;
   } catch {
@@ -44,7 +42,7 @@ export function useUsage() {
   const canUse = useCallback(
     (feature) => {
       const cap = caps[feature];
-      if (cap === -1) return true; // unlimited
+      if (cap === -1) return true;
       if (cap === undefined) return true;
       const used = usage.counts[feature] || 0;
       return used < cap;

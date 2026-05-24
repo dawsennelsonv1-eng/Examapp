@@ -1,7 +1,5 @@
 // src/hooks/useClassroom.js
 // Manages classroom sessions in localStorage.
-// FIX: properly re-loads on every render so state stays in sync between
-// Classroom.jsx and ClassroomSession.jsx.
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -18,7 +16,6 @@ function loadFromStorage() {
 export function useClassroomSessions() {
   const [sessions, setSessions] = useState(() => loadFromStorage());
 
-  // Re-sync from storage when other components modify it
   useEffect(() => {
     const onStorage = (e) => {
       if (e.key === SESSIONS_KEY) {
@@ -31,7 +28,6 @@ export function useClassroomSessions() {
 
   const persist = useCallback((list) => {
     try {
-      // keep last 50 sessions to avoid localStorage bloat
       const trimmed = list.slice(-50);
       localStorage.setItem(SESSIONS_KEY, JSON.stringify(trimmed));
       setSessions(trimmed);
@@ -50,7 +46,6 @@ export function useClassroomSessions() {
         createdAt: Date.now(),
         lastViewedAt: Date.now(),
       };
-      // Read fresh to avoid stale state
       const current = loadFromStorage();
       persist([...current, session]);
       return session;
@@ -90,15 +85,10 @@ export function useClassroomSessions() {
     [persist]
   );
 
-  const getSession = useCallback(
-    (id) => {
-      // Always read fresh so newly-appended messages show up
-      return loadFromStorage().find((s) => s.id === id);
-    },
-    []
-  );
+  const getSession = useCallback((id) => {
+    return loadFromStorage().find((s) => s.id === id);
+  }, []);
 
-  // Sort newest-first
   const sortedSessions = [...sessions].sort(
     (a, b) => b.lastViewedAt - a.lastViewedAt
   );
