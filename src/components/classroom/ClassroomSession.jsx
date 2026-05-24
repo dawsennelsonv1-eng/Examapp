@@ -1,24 +1,26 @@
 // src/components/classroom/ClassroomSession.jsx
-// Fullscreen tutor session: virtual board + chat.
-// Uses real /api/chat endpoint when available, falls back to mock if not.
+// Full classroom: chat + virtual board + voice playback
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Send, Maximize2, Minimize2, PencilRuler,
-  Loader2, Sparkles, User,
+  Loader2, Sparkles, User, Volume2, VolumeX,
 } from "lucide-react";
 import { useClassroomSessions } from "../../hooks/useClassroom";
+import { speakText, stopSpeaking } from "../../services/ttsService";
 
 export default function ClassroomSession({ session, onExit }) {
   const { appendMessage, updateSession } = useClassroomSessions();
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [generatingBoard, setGeneratingBoard] = useState(false);
   const [boardExpanded, setBoardExpanded] = useState(false);
   const [localMessages, setLocalMessages] = useState(session.messages || []);
+  const [speakingMessageId, setSpeakingMessageId] = useState(null);
   const messagesEndRef = useRef(null);
 
-  // Seed first message if session is empty
+  // Seed greeting
   useEffect(() => {
     if (localMessages.length === 0) {
       const greeting = session.context
@@ -31,7 +33,8 @@ export default function ClassroomSession({ session, onExit }) {
         : {
             id: `msg_${Date.now()}`,
             role: "tutor",
-            content: "Bonjou ! M se pwofesè ou a. Ki pwoblèm ou vle nou travay ansanm jodi a ?",
+            content:
+              "Bonjou ! M se pwofesè ou a. Ki pwoblèm ou vle nou travay ansanm jodi a ?",
             timestamp: Date.now(),
           };
       appendMessage(session.id, greeting);
@@ -43,6 +46,11 @@ export default function ClassroomSession({ session, onExit }) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [localMessages.length]);
 
+  useEffect(() => {
+    // Stop any speech when leaving
+    return () => stopSpeaking();
+  }, []);
+
   const handleSend = async () => {
     const text = input.trim();
     if (!text || sending) return;
@@ -53,7 +61,6 @@ export default function ClassroomSession({ session, onExit }) {
       content: text,
       timestamp: Date.now(),
     };
-
     const newMessages = [...localMessages, userMsg];
     setLocalMessages(newMessages);
     appendMessage(session.id, userMsg);
@@ -61,7 +68,6 @@ export default function ClassroomSession({ session, onExit }) {
     setSending(true);
 
     try {
-      // Try real AI endpoint
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -76,47 +82,89 @@ export default function ClassroomSession({ session, onExit }) {
         }),
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        const reply = data?.data?.reply || data?.reply;
-        const boardSvg = data?.data?.boardSvg || data?.boardSvg;
+      if (!response.ok) throw new Error("API unavailable");
 
-        const tutorMsg = {
-          id: `msg_${Date.now() + 1}`,
-          role: "tutor",
-          content: reply || mockTutorReply(text),
-          timestamp: Date.now(),
-        };
-        setLocalMessages((prev) => [...prev, tutorMsg]);
-        appendMessage(session.id, tutorMsg);
+      const data = await response.json();
+      const reply = data?.data?.reply;
+      const boardSvg = data?.data?.boardSvg;
 
-        if (boardSvg) {
-          updateSession(session.id, { boardSvg });
-          setBoardExpanded(true);
-        } else if (text.toLowerCase().includes("schéma") || text.toLowerCase().includes("dessine")) {
-          updateSession(session.id, { boardSvg: generateMockBoard() });
-        }
-      } else {
-        throw new Error("API unavailable");
-      }
-    } catch (err) {
-      // Fallback to mock
-      console.warn("Using mock tutor reply:", err.message);
-      await new Promise((r) => setTimeout(r, 800));
       const tutorMsg = {
         id: `msg_${Date.now() + 1}`,
         role: "tutor",
-        content: mockTutorReply(text),
+        content: reply || "M ap reflechi...",
         timestamp: Date.now(),
       };
       setLocalMessages((prev) => [...prev, tutorMsg]);
       appendMessage(session.id, tutorMsg);
 
-      if (text.toLowerCase().includes("schéma") || text.toLowerCase().includes("dessine")) {
-        updateSession(session.id, { boardSvg: generateMockBoard() });
+      if (boardSvg) {
+        updateSession(session.id, { boardSvg });
+        setBoardExpanded(true);
       }
+    } catch (err) {
+      console.error("Chat error:", err);
+      const errorMsg = {
+        id: `msg_${Date.now() + 1}`,
+        role: "tutor",
+        content: "Pa gen koneksyon entènèt. Eseye ankò.",
+        timestamp: Date.now(),
+      };
+      setLocalMessages((prev) => [...prev, errorMsg]);
+      appendMessage(session.id, errorMsg);
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleRequestBoard = async () => {
+    setGeneratingBoard(true);
+    try {
+      const recentContext = localMessages
+        .slice(-4)
+        .map((m) => m.content)
+        .join("\n");
+      const response = await fetch("/api/board", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: session.title,
+          description: recentContext,
+          subject: session.subject,
+        }),
+      });
+
+      if (!response.ok) throw new Error("Board API failed");
+      const data = await response.json();
+      if (data?.data?.svg) {
+        updateSession(session.id, { boardSvg: data.data.svg });
+        setBoardExpanded(true);
+        const msg = {
+          id: `msg_${Date.now()}`,
+          role: "tutor",
+          content: "M fin trase yon schéma sou tableau a. Gade l pou w wè pi klè.",
+          timestamp: Date.now(),
+        };
+        setLocalMessages((prev) => [...prev, msg]);
+        appendMessage(session.id, msg);
+      }
+    } catch (err) {
+      console.error("Board error:", err);
+    } finally {
+      setGeneratingBoard(false);
+    }
+  };
+
+  const handleSpeak = async (msg) => {
+    if (speakingMessageId === msg.id) {
+      stopSpeaking();
+      setSpeakingMessageId(null);
+      return;
+    }
+    setSpeakingMessageId(msg.id);
+    try {
+      await speakText(msg.content, "fr-FR");
+    } finally {
+      setSpeakingMessageId(null);
     }
   };
 
@@ -131,7 +179,6 @@ export default function ClassroomSession({ session, onExit }) {
 
   return (
     <div className="fixed inset-0 z-40 bg-slate-50 dark:bg-slate-950 flex flex-col">
-      {/* Top bar */}
       <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center gap-3 flex-shrink-0">
         <button
           onClick={onExit}
@@ -147,15 +194,26 @@ export default function ClassroomSession({ session, onExit }) {
             {session.subject}
           </div>
         </div>
+        <button
+          onClick={handleRequestBoard}
+          disabled={generatingBoard}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 text-white text-xs font-bold shadow-md disabled:opacity-50"
+        >
+          {generatingBoard ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <PencilRuler size={14} />
+          )}
+          Tableau
+        </button>
       </header>
 
-      {/* Virtual board */}
       <AnimatePresence>
         {(hasBoard || session.context) && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{
-              height: boardExpanded ? "60%" : "30%",
+              height: boardExpanded ? "55%" : "30%",
               opacity: 1,
             }}
             transition={{ duration: 0.3 }}
@@ -194,16 +252,19 @@ export default function ClassroomSession({ session, onExit }) {
         )}
       </AnimatePresence>
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {localMessages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            isSpeaking={speakingMessageId === msg.id}
+            onSpeak={() => handleSpeak(msg)}
+          />
         ))}
         {sending && <TypingIndicator />}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Composer */}
       <div className="bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-3 flex-shrink-0">
         <div className="flex items-end gap-2 max-w-3xl mx-auto">
           <div className="flex-1 rounded-2xl bg-slate-100 dark:bg-slate-800 px-4 py-2.5 flex items-center gap-2">
@@ -223,11 +284,7 @@ export default function ClassroomSession({ session, onExit }) {
             disabled={!input.trim() || sending}
             className="w-11 h-11 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 text-white flex items-center justify-center shadow-md disabled:opacity-50 disabled:grayscale"
           >
-            {sending ? (
-              <Loader2 size={18} className="animate-spin" />
-            ) : (
-              <Send size={18} />
-            )}
+            {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
           </motion.button>
         </div>
       </div>
@@ -235,9 +292,8 @@ export default function ClassroomSession({ session, onExit }) {
   );
 }
 
-function MessageBubble({ message }) {
+function MessageBubble({ message, isSpeaking, onSpeak }) {
   const isUser = message.role === "user";
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -249,16 +305,27 @@ function MessageBubble({ message }) {
           <Sparkles size={14} className="text-white" />
         </div>
       )}
-      <div
-        className={`max-w-[75%] rounded-2xl px-4 py-2.5 ${
-          isUser
-            ? "bg-violet-600 text-white rounded-br-sm"
-            : "bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-bl-sm shadow-sm"
-        }`}
-      >
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">
-          {message.content}
-        </p>
+      <div className={`max-w-[75%] flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}>
+        <div
+          className={`rounded-2xl px-4 py-2.5 ${
+            isUser
+              ? "bg-violet-600 text-white rounded-br-sm"
+              : "bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-bl-sm shadow-sm"
+          }`}
+        >
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">
+            {message.content}
+          </p>
+        </div>
+        {!isUser && (
+          <button
+            onClick={onSpeak}
+            className="flex items-center gap-1 px-2 py-1 text-[11px] text-slate-500 dark:text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
+          >
+            {isSpeaking ? <VolumeX size={12} /> : <Volume2 size={12} />}
+            {isSpeaking ? "Arrêter" : "Écouter"}
+          </button>
+        )}
       </div>
       {isUser && (
         <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
@@ -271,11 +338,7 @@ function MessageBubble({ message }) {
 
 function TypingIndicator() {
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="flex gap-2 justify-start"
-    >
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-2 justify-start">
       <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 flex items-center justify-center flex-shrink-0">
         <Sparkles size={14} className="text-white" />
       </div>
@@ -291,36 +354,4 @@ function TypingIndicator() {
       </div>
     </motion.div>
   );
-}
-
-function mockTutorReply(userText) {
-  const text = userText.toLowerCase();
-  if (text.includes("pourquoi") || text.includes("poukisa")) {
-    return "Bon kesyon ! On sait que dans ce type de problème, on applique la conservation de l'énergie. Alors, si l'énergie potentielle au départ égale l'énergie cinétique à l'arrivée, on a m·g·h = ½·m·v². Ou konprann la ?";
-  }
-  if (text.includes("exemple") || text.includes("egzanp")) {
-    return "Pran yon egzanp konkrè : imagine yon bokit ki tonbe nan yon pwi. Plis li tonbe, plis li pran vitès. C'est exactement ce que dit la formule — plus h (la hauteur) est grand, plus v (la vitesse) est grande.";
-  }
-  if (text.includes("schéma") || text.includes("dessine")) {
-    return "M ap trase yon schéma sou tableau a pou w kapab wè l pi klè. Gade anlè.";
-  }
-  return "D'accord, m ap esplike w sa. Nan fizik ayisyen, pwofesè yo toujou mande nou kòmanse par la Donnée. Ensuite, on identifie la Formule, puis on passe à la Résolution. Kisa w panse de sa ?";
-}
-
-function generateMockBoard() {
-  return `
-    <svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg" class="w-full max-w-md">
-      <rect x="0" y="0" width="300" height="200" fill="transparent"/>
-      <line x1="50" y1="150" x2="250" y2="150" stroke="currentColor" stroke-width="2"/>
-      <rect x="120" y="110" width="60" height="40" fill="#8b5cf6" rx="4"/>
-      <text x="150" y="135" text-anchor="middle" fill="white" font-size="14" font-weight="bold">m</text>
-      <line x1="150" y1="110" x2="150" y2="60" stroke="#ef4444" stroke-width="2" marker-end="url(#arrow)"/>
-      <text x="160" y="85" fill="#ef4444" font-size="12" font-weight="bold">P = m·g</text>
-      <defs>
-        <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-          <polygon points="0 0, 10 3.5, 0 7" fill="#ef4444"/>
-        </marker>
-      </defs>
-    </svg>
-  `;
 }
