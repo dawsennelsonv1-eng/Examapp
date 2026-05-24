@@ -1,51 +1,44 @@
 // src/App.jsx
-import { Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { useApp } from "./contexts/AppContext";
-import Onboarding from "./pages/Onboarding";
+// Routes for Laureat AI.
+
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AppProvider } from "./contexts/AppContext";
+import Layout from "./components/Layout";
 import Home from "./pages/Home";
 import ScanSolve from "./pages/ScanSolve";
+import Classroom from "./pages/Classroom";
 import Quizzes from "./pages/Quizzes";
 import Reviser from "./pages/Reviser";
-import Classroom from "./pages/Classroom";
 import Profile from "./pages/Profile";
-import BottomTabBar from "./components/BottomTabBar";
-import TopHeader from "./components/TopHeader";
+import Onboarding from "./pages/Onboarding";
+import Admin from "./pages/Admin";
+import Paywall from "./pages/Paywall";
 
 export default function App() {
-  const { isTrackSelected } = useApp();
-  const location = useLocation();
-
-  if (!isTrackSelected) {
-    return <Onboarding />;
-  }
-
-  // Hide header on fullscreen views
-  const hideHeader =
-    location.pathname === "/scan" ||
-    (location.pathname === "/classe" && location.search.includes("session="));
-
-  // Hide tab bar when inside a classroom session (it's fullscreen)
-  const hideTabBar =
-    location.pathname === "/classe" && location.search.includes("session=");
-
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
-      {!hideHeader && <TopHeader />}
+    <AppProvider>
+      <BrowserRouter>
+        <Routes>
+          {/* Standalone pages (no bottom tab bar) */}
+          <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/admin" element={<Admin />} />
+          <Route path="/paywall" element={<Paywall />} />
 
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/scan" element={<ScanSolve />} />
-        <Route path="/quiz" element={<Quizzes />} />
-        <Route path="/classe" element={<Classroom />} />
-        <Route path="/reviser" element={<Reviser />} />
-        <Route path="/profile" element={<Profile />} />
-        {/* Redirects from old routes */}
-        <Route path="/matieres" element={<Navigate to="/reviser" replace />} />
-        <Route path="/vault" element={<Navigate to="/reviser" replace />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+          {/* Main app with bottom tabs */}
+          <Route path="/" element={<Layout />}>
+            <Route index element={<Home />} />
+            <Route path="quiz" element={<Quizzes />} />
+            <Route path="scan" element={<ScanSolve />} />
+            <Route path="classe" element={<Classroom />} />
+            <Route path="reviser" element={<Reviser />} />
+            <Route path="profile" element={<Profile />} />
 
-      {!hideTabBar && <BottomTabBar />}
-    </div>
+            {/* Redirects from old paths */}
+            <Route path="matieres" element={<Navigate to="/reviser" replace />} />
+            <Route path="vault" element={<Navigate to="/reviser" replace />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </AppProvider>
   );
 }
