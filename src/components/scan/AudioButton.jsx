@@ -1,46 +1,58 @@
 // src/components/scan/AudioButton.jsx
+// Plays solution audio. Uses the new ttsService.
+
 import { useState, useEffect } from "react";
+import { Volume2, VolumeX, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
-import { speak, stop, isSupported } from "../../services/ttsService";
-import { useApp } from "../../contexts/AppContext";
+import { speakText, stopSpeaking } from "../../services/ttsService";
 
-export default function AudioButton({ text, className = "", label }) {
-  const { lang, t } = useApp();
+export default function AudioButton({ text, label = "Écouter" }) {
   const [playing, setPlaying] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => () => stop(), []); // cleanup on unmount
+  useEffect(() => {
+    // Stop audio if component unmounts mid-playback
+    return () => {
+      if (playing) stopSpeaking();
+    };
+    // eslint-disable-next-line
+  }, []);
 
-  if (!isSupported()) return null;
-
-  const handleClick = () => {
+  const handleToggle = async () => {
     if (playing) {
-      stop();
+      stopSpeaking();
       setPlaying(false);
       return;
     }
-    setPlaying(true);
-    speak(text, lang, { onEnd: () => setPlaying(false) });
+
+    if (!text) return;
+
+    setLoading(true);
+    try {
+      setPlaying(true);
+      await speakText(text, "fr-FR");
+    } catch (err) {
+      console.warn("Audio playback failed:", err);
+    } finally {
+      setPlaying(false);
+      setLoading(false);
+    }
   };
 
   return (
     <motion.button
-      whileTap={{ scale: 0.92 }}
-      whileHover={{ scale: 1.05 }}
-      onClick={handleClick}
-      aria-label={label || t("audio_listen")}
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full
-        bg-amber-500/10 text-amber-600 dark:text-amber-400
-        hover:bg-amber-500/20 transition-colors
-        ring-1 ring-amber-500/30 text-xs font-medium ${className}`}
+      whileTap={{ scale: 0.94 }}
+      onClick={handleToggle}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-400 text-xs font-semibold"
     >
-      <motion.span
-        animate={playing ? { scale: [1, 1.3, 1] } : { scale: 1 }}
-        transition={playing ? { repeat: Infinity, duration: 0.9 } : {}}
-        className="inline-block"
-      >
-        {playing ? "⏸" : "🔊"}
-      </motion.span>
-      <span>{playing ? t("audio_stop") : t("audio_listen")}</span>
+      {loading ? (
+        <Loader2 size={14} className="animate-spin" />
+      ) : playing ? (
+        <VolumeX size={14} />
+      ) : (
+        <Volume2 size={14} />
+      )}
+      {playing ? "Arrêter" : label}
     </motion.button>
   );
 }
