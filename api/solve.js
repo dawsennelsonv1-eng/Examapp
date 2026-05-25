@@ -1,9 +1,7 @@
 // api/solve.js
-// Two-phase solve:
-//   Phase 1 - OCR/transcription with Gemini 3 Pro Vision (high accuracy)
-//   Phase 2 - Solve with top math model (GPT-5 primary, Gemini 3 Pro fallback)
-//
-// Returns: Haitian textbook format with multi-section solution.
+// Updated for May 2026 model availability.
+// OCR: Gemini 3.5 Flash (vision, fast, reliable)
+// Solve cascade: GPT-5.5 → Claude Opus 4.7 → Gemini 3 Pro Preview
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -65,65 +63,90 @@ async function transcribeWithVision(imageData, KEY) {
     imageUrl = `data:image/jpeg;base64,${imageUrl}`;
   }
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${KEY}`,
-      "HTTP-Referer": "https://laureatai.com",
-      "X-Title": "Laureat AI",
-    },
-    body: JSON.stringify({
-      model: "google/gemini-3-pro-preview",
-      messages: [
-        {
-          role: "system",
-          content: `Tu es un OCR de haute précision pour des exercices d'examen haïtiens (MENFP).
-Transcris EXACTEMENT le texte de l'image, en respectant:
-- Les symboles mathématiques (×, ÷, ², ³, √, π, ≤, ≥, etc.)
-- Les indices et exposants (P_r, m², h^3)
-- Les unités (kg, m/s², g/cm³, etc.)
-- La ponctuation française (virgule pour décimales)
-- Les retours à la ligne et la structure
+  // Try multiple vision models in cascade — they all have vision
+  const visionModels = [
+    "google/gemini-3.5-flash",
+    "google/gemini-3-flash-preview",
+    "anthropic/claude-opus-4.7",
+    "openai/gpt-5.5",
+  ];
 
-Si l'image est illisible ou ne contient pas d'exercice clair, réponds:
-{"error": "Description du problème en français"}
-
-Sinon réponds en JSON:
-{"text": "transcription exacte de l'exercice", "confidence": "high|medium|low"}`,
+  for (const model of visionModels) {
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${KEY}`,
+          "HTTP-Referer": "https://laureatai.com",
+          "X-Title": "Laureat AI",
         },
-        {
-          role: "user",
-          content: [
-            { type: "image_url", image_url: { url: imageUrl } },
-            { type: "text", text: "Transcris cet exercice exactement comme il apparaît." },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: `Tu es un OCR de précision pour des exercices d'examen haïtiens (MENFP).
+
+Transcris le texte visible dans l'image avec précision:
+- Garde les symboles mathématiques (×, ÷, ², ³, √, π, ≤, ≥, etc.)
+- Garde les indices et exposants (P_r, m², h³)
+- Garde les unités (kg, m/s², g/cm³)
+- Utilise la virgule pour les décimales
+
+Sois TOLÉRANT: si le texte est partiellement lisible, transcris ce que tu vois et marque les parties incertaines avec [?].
+
+Réponds en JSON:
+{"text": "ta transcription", "confidence": "high|medium|low", "partial": true|false}
+
+Réponds "error" SEULEMENT si l'image ne contient AUCUN texte lisible ou si elle est complètement noire/blanche.`,
+            },
+            {
+              role: "user",
+              content: [
+                { type: "image_url", image_url: { url: imageUrl } },
+                {
+                  type: "text",
+                  text: "Transcris cet exercice. Même si une partie est floue, donne-moi ce que tu vois.",
+                },
+              ],
+            },
           ],
-        },
-      ],
-      response_format: { type: "json_object" },
-      max_tokens: 2000,
-    }),
-  });
+          response_format: { type: "json_object" },
+          max_tokens: 2000,
+        }),
+      });
 
-  if (!response.ok) {
-    return { error: "Impossible de lire l'image. Reprends une photo plus claire." };
-  }
+      if (!response.ok) {
+        console.warn(`Vision model ${model} returned ${response.status}`);
+        continue;
+      }
 
-  const data = await response.json();
-  const raw = data?.choices?.[0]?.message?.content;
-  if (!raw) return { error: "Image vide ou illisible." };
+      const data = await response.json();
+      const raw = data?.choices?.[0]?.message?.content;
+      if (!raw) continue;
 
-  try {
-    const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-    if (parsed.error) return { error: parsed.error };
-    if (parsed.confidence === "low") {
-      return { error: "L'image n'est pas assez claire. Reprends une photo avec plus de lumière." };
+      const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
+      const parsed = JSON.parse(cleaned);
+
+      // Only reject if explicitly errored AND no text returned
+      if (parsed.error && !parsed.text) {
+        return { error: "L'image n'est pas assez claire. Cadre l'exercice de plus près avec plus de lumière." };
+      }
+
+      // Accept even low confidence — let the solver try
+      if (parsed.text && parsed.text.length > 10) {
+        return { text: parsed.text };
+      }
+    } catch (err) {
+      console.warn(`Vision model ${model} failed:`, err.message);
+      continue;
     }
-    return { text: parsed.text || "" };
-  } catch {
-    return { text: raw };
   }
+
+  return {
+    error: "Pa kapab li imaj la. Cadre l'exercice de plus près avec plus de lumière, ou tape l'énoncé manuellement.",
+  };
 }
 
 async function solveInHaitianFormat({ problemText, subject, track, key }) {
@@ -158,10 +181,7 @@ RÉPONDS EN JSON STRICT:
   "enonce": "énoncé reformulé proprement",
   "donnees": [
     {"symbol": "P_r", "value": "105", "unit": "N"},
-    {"symbol": "P_a", "value": "65", "unit": "N"},
-    {"symbol": "μ", "value": "8", "unit": "g/cm³"},
-    {"symbol": "P", "value": "?", "unit": "", "isQuestion": true},
-    {"symbol": "d", "value": "?", "unit": "", "isQuestion": true}
+    {"symbol": "P", "value": "?", "unit": "", "isQuestion": true}
   ],
   "sections": [
     {
@@ -173,31 +193,24 @@ RÉPONDS EN JSON STRICT:
         {"type": "substitution", "content": "P = 105 - 65"},
         {"type": "result", "content": "P = 40 N", "boxed": true}
       ]
-    },
-    {
-      "number": 2,
-      "verb": "Déterminons",
-      "title": "le diamètre de la sphère",
-      "steps": [
-        {"type": "conversion", "content": "μ = 8 g/cm³ = 8000 kg/m³", "note": "conversion nécessaire"},
-        {"type": "formula", "content": "V = πd³/6"},
-        {"type": "substitution", "content": "V = π × d³ / 6"},
-        {"type": "result", "content": "d ≈ 1,359 cm", "boxed": true}
-      ]
     }
   ],
-  "traps": [
-    "Oublier de convertir g/cm³ en kg/m³ avant le calcul final",
-    "Confondre rayon et diamètre dans la formule du volume"
-  ]
+  "traps": ["piège 1", "piège 2"]
 }
 
-Step types possibles: "formula" (formule symbolique), "substitution" (avec valeurs), "result" (résultat avec boxed=true), "conversion" (conversion d'unités), "deduction" (avec verb comme "Alors", "Donc"), "note" (texte explicatif court).
+Step types: "formula", "substitution", "result" (avec boxed=true), "conversion" (avec note), "deduction", "note".
 
 Réponds UNIQUEMENT avec le JSON.`;
 
-  // Try GPT-5 first (best at math), fallback to Gemini 3 Pro
-  const models = ["openai/gpt-5", "google/gemini-3-pro-preview"];
+  // Cascade through available 2026 models
+  const models = [
+    "openai/gpt-5.5",
+    "openai/gpt-5.4",
+    "anthropic/claude-opus-4.7",
+    "google/gemini-3-pro-preview",
+    "google/gemini-3.5-flash",
+    "google/gemini-3-flash-preview",
+  ];
 
   for (const model of models) {
     try {
@@ -221,7 +234,7 @@ Réponds UNIQUEMENT avec le JSON.`;
       });
 
       if (!response.ok) {
-        console.warn(`Model ${model} failed:`, response.status);
+        console.warn(`Solver model ${model} returned ${response.status}`);
         continue;
       }
 
@@ -242,10 +255,10 @@ Réponds UNIQUEMENT avec le JSON.`;
         },
       };
     } catch (err) {
-      console.warn(`Error with ${model}:`, err.message);
+      console.warn(`Solver ${model} error:`, err.message);
       continue;
     }
   }
 
-  return { error: "All AI models failed to solve" };
+  return { error: "Tous les modèles AI ont échoué. Vérifie ton crédit OpenRouter." };
 }

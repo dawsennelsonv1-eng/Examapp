@@ -1,5 +1,6 @@
 // api/chat.js
-// Interactive tutor chat with personality, language preference, and step-by-step mode.
+// Tutor chat with personality + language + step-by-step teaching mode.
+// Updated for May 2026 model availability with cascade fallback.
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -11,14 +12,8 @@ export default async function handler(req, res) {
 
   try {
     const {
-      sessionId,
-      context,
-      messages,
-      userMessage,
-      preferences,
-      teachingMode,
-      currentStep,
-      failCount,
+      sessionId, context, messages, userMessage,
+      preferences, teachingMode, currentStep, failCount,
     } = req.body || {};
 
     if (!userMessage) return res.status(400).json({ error: "Missing userMessage" });
@@ -28,85 +23,69 @@ export default async function handler(req, res) {
 
     const prefs = preferences || { language: "mix", personality: "patient", name: "" };
 
-    // Language strategy with escalation: if user keeps not understanding, push toward Kreyòl
+    // Language strategy with escalation
     let languageStrategy;
     if (prefs.language === "fr") {
-      languageStrategy =
-        failCount >= 3
-          ? "Tu parles français principalement, mais comme l'élève a du mal, glisse quelques phrases-clés en kreyòl pour l'aider."
-          : "Réponds en français.";
+      languageStrategy = failCount >= 3
+        ? "Tu parles français principalement, mais comme l'élève a du mal, glisse quelques phrases-clés en kreyòl pour l'aider."
+        : "Réponds en français.";
     } else if (prefs.language === "kr") {
       languageStrategy = "Reponn nan kreyòl. Itilize mo teknik fransè kote ki nesesè.";
     } else {
-      // mix (recommended)
-      languageStrategy =
-        failCount >= 2
-          ? "L'élève a du mal — bascule en KREYÒL pour cette explication. Termes techniques en français OK, mais explication en kreyòl."
-          : "Mélange français et kreyòl naturellement. Kreyòl pour l'aspect humain/encouragement, français pour les termes techniques.";
+      languageStrategy = failCount >= 2
+        ? "L'élève a du mal — bascule en KREYÒL pour cette explication. Termes techniques en français OK, mais explication en kreyòl."
+        : "Mélange français et kreyòl naturellement. Kreyòl pour l'aspect humain/encouragement, français pour les termes techniques.";
     }
 
     const personalityPrompt = {
-      classique: "Tu es un professeur HAÏTIEN CLASSIQUE: rigoureux, méthodique, exigeant. Tu insistes sur la rigueur des démonstrations. Tu félicites brièvement et tu attends de l'effort.",
-      patient: "Tu es un professeur PATIENT: tu prends ton temps, tu utilises beaucoup d'exemples concrets de la vie haïtienne, tu rassures, tu ne juges jamais.",
-      ami: "Tu es un PROFESSEUR-AMI: chaleureux, casual, tu fais des blagues légères, tu utilises le kreyòl souvent, tu donnes des high-fives virtuels.",
-      efficace: "Tu es un professeur EFFICACE: direct, sans fluff, tu vas droit au but. Tu réponds court mais clair. Pas de longs discours.",
+      classique: "Tu es un professeur HAÏTIEN CLASSIQUE: rigoureux, méthodique, exigeant.",
+      patient: "Tu es un professeur PATIENT: tu prends ton temps, utilises des exemples haïtiens concrets, rassures.",
+      ami: "Tu es un PROFESSEUR-AMI: chaleureux, casual, blagues légères, kreyòl souvent.",
+      efficace: "Tu es un professeur EFFICACE: direct, sans fluff, droit au but.",
     };
 
     const personality = personalityPrompt[prefs.personality] || personalityPrompt.patient;
     const studentName = prefs.name ? `L'élève s'appelle ${prefs.name}.` : "";
 
-    // Build system prompt based on teaching mode
     let systemPrompt = `${personality}
-
 ${studentName}
-
 ${languageStrategy}
 
-RÈGLES GÉNÉRALES:
-- Réponses courtes (2-4 phrases max) sauf si l'élève demande un développement
+RÈGLES:
+- Réponses courtes (2-4 phrases max) sauf si demande développement
 - Décimales avec virgule (9,8 pas 9.8)
 - Unités SI
-- Format Donnée/Formule/Substitution/Résultat encadré quand tu écris une solution
-- Pose toujours une question de vérification après une explication`;
+- Format Donnée/Formule/Substitution/Résultat encadré pour les solutions
+- Pose une question de vérification après une explication`;
 
     if (teachingMode === "step-by-step" && context?.exercise) {
       systemPrompt += `
 
 MODE TEACHING ÉTAPE-PAR-ÉTAPE:
-Tu guides l'élève à travers l'exercice étape par étape. L'exercice est:
+Tu guides l'élève dans cet exercice étape par étape:
 ${JSON.stringify(context.exercise, null, 2)}
 
 Étape actuelle: ${currentStep || "introduction"}
-Nombre d'échecs sur cette étape: ${failCount || 0}
+Échecs sur cette étape: ${failCount || 0}
 
-À chaque réponse, tu DOIS:
-1. Expliquer UNE étape clairement
-2. Si tu dois écrire quelque chose au tableau (formule, conversion, calcul), inclure dans boardUpdate
-3. Demander "Eske w konprann?" / "Tu comprends?"
-4. Attendre la confirmation avant de passer à la suivante
-
-Si l'élève dit qu'il ne comprend pas:
-- Tentative 1: réexplique avec d'autres mots
-- Tentative 2: utilise une analogie/exemple concret
-- Tentative 3: bascule en kreyòl et fais un diagramme
-- Tentative 4: ajoute "Pou m kapab ede w konprann pi byen, ki sa egzakteman ou pa konprann?" et demande où exactement l'élève se perd`;
+Si l'élève ne comprend pas:
+- Échec 1: réexplique avec d'autres mots
+- Échec 2: utilise une analogie/exemple concret
+- Échec 3: bascule en kreyòl + fais un diagramme
+- Échec 4: "Pou m kapab ede w konprann pi byen, di m egzakteman ki sa w pa konprann ?"`;
     }
 
     systemPrompt += `
 
-FORMAT DE RÉPONSE JSON STRICT:
+FORMAT JSON STRICT:
 {
-  "reply": "ta réponse conversationnelle",
-  "speakable": "version épurée pour la voix (sans formules complexes, juste le sens)",
-  "boardUpdate": {
-    "action": "add" | "highlight" | "none",
-    "target": "donnees" | "solution" | "diagram",
-    "content": "ce qu'il faut ajouter au tableau"
-  },
-  "stepComplete": true | false,
-  "needsConfirmation": true | false,
-  "shouldDrawDiagram": true | false,
-  "diagramDescription": "description du diagramme à dessiner si pertinent"
+  "reply": "ta réponse",
+  "speakable": "version épurée pour voix (sans formules)",
+  "boardUpdate": {"action": "add"|"highlight"|"none", "target": "donnees"|"solution"|"diagram", "content": "..."},
+  "stepComplete": true|false,
+  "needsConfirmation": true|false,
+  "shouldDrawDiagram": true|false,
+  "diagramDescription": "description si pertinent"
 }`;
 
     const conversationHistory = (messages || []).slice(-12).map((m) => ({
@@ -120,45 +99,71 @@ FORMAT DE RÉPONSE JSON STRICT:
       { role: "user", content: userMessage },
     ];
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${KEY}`,
-        "HTTP-Referer": "https://laureatai.com",
-        "X-Title": "Laureat AI",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-pro-preview",
-        messages: apiMessages,
-        response_format: { type: "json_object" },
-        max_tokens: 1800,
-      }),
-    });
+    // Cascade through 2026 models
+    const models = [
+      "google/gemini-3-pro-preview",
+      "google/gemini-3.5-flash",
+      "anthropic/claude-opus-4.7",
+      "openai/gpt-5.5",
+      "openai/gpt-5.4",
+      "google/gemini-3-flash-preview",
+    ];
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("OpenRouter error:", errText);
-      return res.status(502).json({ error: "AI service error" });
+    let parsed = null;
+    let lastError = null;
+
+    for (const model of models) {
+      try {
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${KEY}`,
+            "HTTP-Referer": "https://laureatai.com",
+            "X-Title": "Laureat AI",
+          },
+          body: JSON.stringify({
+            model,
+            messages: apiMessages,
+            response_format: { type: "json_object" },
+            max_tokens: 1800,
+          }),
+        });
+
+        if (!response.ok) {
+          lastError = `${model}: ${response.status}`;
+          console.warn(`Chat model ${model} returned ${response.status}`);
+          continue;
+        }
+
+        const data = await response.json();
+        const raw = data?.choices?.[0]?.message?.content;
+        if (!raw) continue;
+
+        try {
+          const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
+          parsed = JSON.parse(cleaned);
+          break;
+        } catch {
+          parsed = {
+            reply: raw,
+            speakable: raw,
+            boardUpdate: { action: "none" },
+            stepComplete: false,
+            needsConfirmation: false,
+            shouldDrawDiagram: false,
+          };
+          break;
+        }
+      } catch (err) {
+        lastError = `${model}: ${err.message}`;
+        continue;
+      }
     }
 
-    const data = await response.json();
-    const raw = data?.choices?.[0]?.message?.content;
-    if (!raw) return res.status(502).json({ error: "Empty response" });
-
-    let parsed;
-    try {
-      const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      parsed = {
-        reply: raw,
-        speakable: raw,
-        boardUpdate: { action: "none" },
-        stepComplete: false,
-        needsConfirmation: false,
-        shouldDrawDiagram: false,
-      };
+    if (!parsed) {
+      console.error("All chat models failed:", lastError);
+      return res.status(502).json({ error: "AI service error", details: lastError });
     }
 
     return res.status(200).json({
