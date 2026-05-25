@@ -1,3 +1,7 @@
+// src/main.jsx
+// Entry point. BrowserRouter + AppProvider live here ONLY.
+// App.jsx does not re-wrap them.
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
@@ -15,7 +19,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
   </React.StrictMode>
 );
 
-// Register service worker after load (doesn't block render)
+// Register service worker for PWA (offline support)
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch((err) => {
