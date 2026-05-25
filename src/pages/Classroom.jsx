@@ -1,6 +1,8 @@
 // src/pages/Classroom.jsx
-// Classroom tab — sessions list, quick actions, and active session view.
+// Classroom tab. Shows sessions list + quick actions.
+// When arriving with ?new=1, auto-creates session from pending exercise in sessionStorage.
 
+import { useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   MessageCircle, PencilRuler, Sparkles, Plus,
@@ -8,14 +10,45 @@ import {
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useClassroomSessions } from "../hooks/useClassroom";
+import { useApp } from "../contexts/AppContext";
 import ClassroomSession from "../components/classroom/ClassroomSession";
 
 export default function Classroom() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeSessionId = searchParams.get("session");
+  const isNew = searchParams.get("new") === "1";
   const { sessions, createSession, getSession } = useClassroomSessions();
+  const { preferences } = useApp();
 
   const activeSession = activeSessionId ? getSession(activeSessionId) : null;
+
+  // Auto-create session from pending exercise (when coming from Scan)
+  useEffect(() => {
+    if (!isNew) return;
+    try {
+      const raw = sessionStorage.getItem("laureat.pendingExercise");
+      if (!raw) return;
+      const exercise = JSON.parse(raw);
+      sessionStorage.removeItem("laureat.pendingExercise");
+
+      const title = exercise.enonce
+        ? exercise.enonce.substring(0, 60) + (exercise.enonce.length > 60 ? "..." : "")
+        : "Exercice scanné";
+
+      const session = createSession({
+        subject: exercise.subject || "Physique",
+        title,
+        exercise: {
+          enonce: exercise.enonce,
+          donnees: exercise.donnees,
+          sections: exercise.sections,
+        },
+      });
+      setSearchParams({ session: session.id });
+    } catch (err) {
+      console.error("Failed to load pending exercise:", err);
+    }
+  }, [isNew]); // eslint-disable-line
 
   const startNewSession = (type = "chat") => {
     const titles = {
@@ -39,11 +72,11 @@ export default function Classroom() {
         <div className="flex items-center gap-2 mb-1">
           <GraduationCap size={24} className="text-violet-600 dark:text-violet-400" />
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-            Ma salle de classe
+            Salle de classe
           </h1>
         </div>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Pose tes questions. Le professeur t'explique au tableau.
+          {preferences?.name ? `Bonjou ${preferences.name}, p` : "P"}ose tes questions au prof
         </p>
       </div>
 
@@ -193,7 +226,7 @@ function EmptyState({ onStart }) {
         Ta salle de classe est vide
       </h3>
       <p className="text-sm text-slate-500 dark:text-slate-400 mb-6 max-w-xs mx-auto">
-        Démarre une conversation avec le professeur pour clarifier un point qui te bloque.
+        Scanne un exercice ou démarre une conversation avec le prof.
       </p>
       <motion.button
         whileTap={{ scale: 0.97 }}
