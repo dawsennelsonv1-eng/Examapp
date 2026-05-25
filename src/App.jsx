@@ -1,9 +1,10 @@
 // src/App.jsx
 // Routes for Laureat AI.
-// BrowserRouter and AppProvider live in main.jsx — don't duplicate them here.
+// BrowserRouter + AppProvider are in main.jsx — don't wrap again here.
 
-import { Routes, Route, Navigate } from "react-router-dom";
-import Layout from "./components/Layout";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { useApp } from "./contexts/AppContext";
+import AppShell from "./components/AppShell";
 import Home from "./pages/Home";
 import ScanSolve from "./pages/ScanSolve";
 import Classroom from "./pages/Classroom";
@@ -17,24 +18,33 @@ import Paywall from "./pages/Paywall";
 export default function App() {
   return (
     <Routes>
-      {/* Standalone pages (no bottom tab bar) */}
+      {/* Standalone (no tab bar) */}
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/admin" element={<Admin />} />
       <Route path="/paywall" element={<Paywall />} />
 
-      {/* Main app with bottom tabs */}
-      <Route path="/" element={<Layout />}>
+      {/* Main app */}
+      <Route path="/" element={<ProtectedShell />}>
         <Route index element={<Home />} />
         <Route path="quiz" element={<Quizzes />} />
         <Route path="scan" element={<ScanSolve />} />
         <Route path="classe" element={<Classroom />} />
         <Route path="reviser" element={<Reviser />} />
         <Route path="profile" element={<Profile />} />
-
-        {/* Redirects from old paths */}
         <Route path="matieres" element={<Navigate to="/reviser" replace />} />
         <Route path="vault" element={<Navigate to="/reviser" replace />} />
       </Route>
     </Routes>
   );
+}
+
+// Redirect to onboarding if user hasn't completed it
+function ProtectedShell() {
+  const { onboardingComplete } = useApp();
+  const location = useLocation();
+
+  if (!onboardingComplete) {
+    return <Navigate to="/onboarding" replace state={{ from: location }} />;
+  }
+  return <AppShell />;
 }
