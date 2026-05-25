@@ -1,5 +1,6 @@
 // src/hooks/useClassroom.js
 // Manages classroom sessions in localStorage.
+// Sessions store: exercise data, conversation, board state, current step.
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -28,21 +29,28 @@ export function useClassroomSessions() {
 
   const persist = useCallback((list) => {
     try {
-      const trimmed = list.slice(-50);
+      const trimmed = list.slice(-30); // keep last 30 sessions
       localStorage.setItem(SESSIONS_KEY, JSON.stringify(trimmed));
       setSessions(trimmed);
     } catch {}
   }, []);
 
   const createSession = useCallback(
-    ({ subject, title, context = null, firstMessage = null }) => {
+    ({ subject, title, exercise = null, firstMessage = null }) => {
       const session = {
         id: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         subject: subject || "Général",
         title: title || "Nouvelle conversation",
-        context,
+        exercise, // Full exercise data from scan (enonce, donnees, sections)
         messages: firstMessage ? [firstMessage] : [],
-        boardSvg: null,
+        boardState: {
+          donnees: [], // Données revealed so far
+          activeSection: null,
+          activeSteps: [], // Steps revealed in current section
+          diagramSvg: null,
+        },
+        currentStep: "intro", // intro | donnees | section_1 | section_2 | done
+        failCount: 0,
         createdAt: Date.now(),
         lastViewedAt: Date.now(),
       };
@@ -60,6 +68,7 @@ export function useClassroomSessions() {
         s.id === id ? { ...s, ...updates, lastViewedAt: Date.now() } : s
       );
       persist(next);
+      return next.find((s) => s.id === id);
     },
     [persist]
   );
@@ -73,6 +82,7 @@ export function useClassroomSessions() {
           : s
       );
       persist(next);
+      return next.find((s) => s.id === id);
     },
     [persist]
   );

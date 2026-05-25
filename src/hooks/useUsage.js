@@ -1,6 +1,4 @@
 // src/hooks/useUsage.js
-// Tracks daily usage caps per plan tier (free / basic / premium).
-
 import { useCallback, useEffect, useState } from "react";
 import { STORAGE_KEYS, USAGE_CAPS } from "../utils/constants";
 
@@ -42,8 +40,7 @@ export function useUsage() {
   const canUse = useCallback(
     (feature) => {
       const cap = caps[feature];
-      if (cap === -1) return true;
-      if (cap === undefined) return true;
+      if (cap === -1 || cap === undefined) return true;
       const used = usage.counts[feature] || 0;
       return used < cap;
     },
@@ -74,13 +71,5 @@ export function useUsage() {
     } catch {}
   }, []);
 
-  return {
-    planTier,
-    upgradePlan,
-    canUse,
-    getRemaining,
-    increment,
-    caps,
-    usage: usage.counts,
-  };
+  return { planTier, upgradePlan, canUse, getRemaining, increment, caps, usage: usage.counts };
 }
