@@ -1,270 +1,265 @@
 // src/components/scan/CameraCapture.jsx
-// Real fullscreen camera using getUserMedia API.
-// Defaults to back camera, falls back to front if back is unavailable.
+// Camera capture with text-input fallback for typing exercises directly.
 
-import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
-import { X, Image as ImageIcon, Zap, ZapOff, RefreshCw, Circle } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Camera, X, RefreshCw, Check, Type, Image as ImageIcon,
+  Upload, Sparkles,
+} from "lucide-react";
 
-export default function CameraCapture({ onCapture, onClose, onOpenGallery }) {
+export default function CameraCapture({ onCapture, onClose }) {
+  const [mode, setMode] = useState("camera"); // camera | text | preview
+  const [textInput, setTextInput] = useState("");
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState(null);
-  const [facingMode, setFacingMode] = useState("environment"); // back camera
-  const [torchOn, setTorchOn] = useState(false);
-  const [torchSupported, setTorchSupported] = useState(false);
+  const fileInputRef = useRef(null);
 
-  // Start camera stream
+  // Start camera when in camera mode
   useEffect(() => {
-    let cancelled = false;
-
-    async function startCamera() {
-      try {
-        // Stop any existing stream
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((t) => t.stop());
-        }
-
-        const constraints = {
-          video: {
-            facingMode: { ideal: facingMode },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-          },
-          audio: false,
-        };
-
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-          setReady(true);
-
-          // Check torch support
-          const track = stream.getVideoTracks()[0];
-          const capabilities = track.getCapabilities?.() || {};
-          setTorchSupported(!!capabilities.torch);
-        }
-      } catch (err) {
-        console.error("Camera error:", err);
-        if (err.name === "NotAllowedError") {
-          setError("permission");
-        } else if (err.name === "NotFoundError") {
-          setError("notfound");
-        } else {
-          setError("generic");
-        }
-      }
+    if (mode !== "camera") {
+      stopCamera();
+      return;
     }
 
     startCamera();
+    return stopCamera;
+    // eslint-disable-next-line
+  }, [mode]);
 
-    return () => {
-      cancelled = true;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-    };
-  }, [facingMode]);
-
-  const toggleTorch = async () => {
-    const track = streamRef.current?.getVideoTracks()[0];
-    if (!track) return;
+  const startCamera = async () => {
+    setCameraError(null);
     try {
-      await track.applyConstraints({ advanced: [{ torch: !torchOn }] });
-      setTorchOn(!torchOn);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment",
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => setCameraReady(true);
+      }
     } catch (err) {
-      console.warn("Torch not supported:", err);
+      console.error("Camera error:", err);
+      setCameraError(
+        err.name === "NotAllowedError"
+          ? "Accès caméra refusé. Active la caméra dans les paramètres."
+          : "Impossible d'accéder à la caméra."
+      );
     }
   };
 
-  const flipCamera = () => {
-    setReady(false);
-    setFacingMode((f) => (f === "environment" ? "user" : "environment"));
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    setCameraReady(false);
   };
 
-  const handleCapture = () => {
+  const takePhoto = () => {
+    if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) return;
-
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
     ctx.drawImage(video, 0, 0);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-
-    // Haptic feedback on capture
-    if (navigator.vibrate) navigator.vibrate(50);
-
-    onCapture(dataUrl);
+    setPreviewUrl(dataUrl);
+    setMode("preview");
   };
 
-  // Error states
-  if (error) {
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setPreviewUrl(ev.target.result);
+      setMode("preview");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const confirmPhoto = () => {
+    if (previewUrl) onCapture(previewUrl);
+  };
+
+  const retakePhoto = () => {
+    setPreviewUrl(null);
+    setMode("camera");
+  };
+
+  const submitText = () => {
+    if (textInput.trim().length < 10) return;
+    // For text-only, we pass a special marker
+    onCapture(null, textInput.trim());
+  };
+
+  if (mode === "preview" && previewUrl) {
     return (
-      <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center p-8 text-white text-center">
-        <div className="text-6xl mb-4">📷</div>
-        <h2 className="text-xl font-bold mb-2">
-          {error === "permission" && "Pèmisyon kamera bezwen"}
-          {error === "notfound" && "Pa gen kamera jwenn"}
-          {error === "generic" && "Pwoblèm ak kamera a"}
-        </h2>
-        <p className="text-white/70 text-sm mb-6 max-w-xs">
-          {error === "permission" &&
-            "Aktive kamera nan paramèt navigatè ou pou w kapab skane pwoblèm yo."}
-          {error === "notfound" && "Eseye sou yon aparèy ki gen kamera."}
-          {error === "generic" && "Fèmen aplikasyon an epi ouvri l ankò."}
-        </p>
-        <div className="flex gap-3">
-          <button
-            onClick={onOpenGallery}
-            className="px-6 py-3 rounded-full bg-violet-600 font-semibold"
-          >
-            Chaje yon foto
+      <div className="fixed inset-0 z-50 bg-black flex flex-col">
+        <header className="p-4 flex items-center justify-between">
+          <button onClick={retakePhoto} className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center text-white">
+            <X size={20} />
           </button>
-          <button
-            onClick={onClose}
-            className="px-6 py-3 rounded-full bg-white/10 font-semibold"
-          >
-            Fèmen
+          <div className="text-white text-sm font-semibold">Aperçu</div>
+          <div className="w-10" />
+        </header>
+        <div className="flex-1 flex items-center justify-center p-4 overflow-auto">
+          <img src={previewUrl} alt="Aperçu" className="max-w-full max-h-full rounded-lg shadow-2xl" />
+        </div>
+        <div className="p-4 flex gap-3">
+          <motion.button whileTap={{ scale: 0.97 }} onClick={retakePhoto}
+            className="flex-1 py-3 rounded-2xl bg-white/10 backdrop-blur-md text-white font-bold flex items-center justify-center gap-2">
+            <RefreshCw size={18} />Reprendre
+          </motion.button>
+          <motion.button whileTap={{ scale: 0.97 }} onClick={confirmPhoto}
+            className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-violet-500 to-indigo-700 text-white font-bold shadow-xl flex items-center justify-center gap-2">
+            <Check size={18} />Utiliser
+          </motion.button>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === "text") {
+    return (
+      <div className="fixed inset-0 z-50 bg-slate-900 flex flex-col">
+        <header className="p-4 flex items-center justify-between bg-slate-800">
+          <button onClick={() => setMode("camera")} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white">
+            <X size={20} />
           </button>
+          <div className="text-white text-sm font-semibold">Tape l'exercice</div>
+          <button
+            onClick={submitText}
+            disabled={textInput.trim().length < 10}
+            className="px-4 py-2 rounded-xl bg-violet-600 text-white font-bold text-sm disabled:opacity-40"
+          >
+            Résoudre
+          </button>
+        </header>
+        <div className="flex-1 p-4">
+          <textarea
+            value={textInput}
+            onChange={(e) => setTextInput(e.target.value)}
+            placeholder="Tape ou colle l'énoncé de ton exercice ici..."
+            autoFocus
+            className="w-full h-full p-4 rounded-2xl bg-slate-800 text-white text-base resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
+          />
+        </div>
+        <div className="p-4 text-center text-xs text-slate-400">
+          {textInput.length} caractères {textInput.length < 10 && "(minimum 10)"}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black">
-      {/* Fullscreen video */}
-      <video
-        ref={videoRef}
-        playsInline
-        muted
-        autoPlay
-        className="absolute inset-0 w-full h-full object-cover"
-      />
-      <canvas ref={canvasRef} className="hidden" />
-
-      {/* Top bar */}
-      <div className="absolute top-0 left-0 right-0 flex items-center justify-between p-4 bg-gradient-to-b from-black/60 to-transparent z-10">
-        <button
-          onClick={onClose}
-          className="w-10 h-10 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white"
-        >
-          <X size={22} />
+    <div className="fixed inset-0 z-50 bg-black flex flex-col">
+      <header className="p-4 flex items-center justify-between absolute top-0 inset-x-0 z-10">
+        <button onClick={onClose} className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center text-white">
+          <X size={20} />
         </button>
-
-        <div className="flex gap-2">
-          {torchSupported && (
-            <button
-              onClick={toggleTorch}
-              className={`w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center text-white ${
-                torchOn ? "bg-amber-500" : "bg-black/40"
-              }`}
-            >
-              {torchOn ? <Zap size={20} /> : <ZapOff size={20} />}
-            </button>
-          )}
-          <button
-            onClick={flipCamera}
-            className="w-10 h-10 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white"
-          >
-            <RefreshCw size={20} />
-          </button>
+        <div className="text-white text-sm font-semibold bg-black/50 backdrop-blur-md px-4 py-1.5 rounded-full">
+          Cadrer l'exercice
         </div>
-      </div>
+        <div className="w-10" />
+      </header>
 
-      {/* Scan frame overlay */}
-      {ready && (
-        <>
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="relative w-[85%] h-[55%] max-w-md">
-              <CornerBrackets />
-              {/* Animated scan line */}
-              <motion.div
-                initial={{ top: "0%" }}
-                animate={{ top: "100%" }}
-                transition={{
-                  duration: 2,
-                  repeat: Infinity,
-                  repeatType: "reverse",
-                  ease: "easeInOut",
-                }}
-                className="absolute left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-violet-400 to-transparent shadow-[0_0_12px_rgba(167,139,250,0.8)]"
-              />
+      <div className="flex-1 relative overflow-hidden">
+        {cameraError ? (
+          <div className="absolute inset-0 flex items-center justify-center p-6">
+            <div className="text-center max-w-sm">
+              <div className="w-16 h-16 rounded-3xl bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+                <Camera size={32} className="text-red-400" />
+              </div>
+              <p className="text-white mb-4">{cameraError}</p>
+              <button
+                onClick={() => setMode("text")}
+                className="px-6 py-3 rounded-xl bg-violet-600 text-white font-bold"
+              >
+                Taper l'exercice à la place
+              </button>
             </div>
           </div>
-
-          {/* Hint text */}
-          <div className="absolute top-20 left-0 right-0 text-center px-6 pointer-events-none">
-            <p className="text-white/90 text-sm font-medium bg-black/40 backdrop-blur-md inline-block px-4 py-2 rounded-full">
-              Pozisyone egzèsis ou andedan ankadreman an
-            </p>
-          </div>
-        </>
-      )}
-
-      {/* Bottom controls */}
-      <div className="absolute bottom-0 left-0 right-0 p-6 pb-10 bg-gradient-to-t from-black/80 to-transparent z-10">
-        <div className="flex items-center justify-around max-w-sm mx-auto">
-          {/* Gallery button */}
-          <button
-            onClick={onOpenGallery}
-            className="w-14 h-14 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-white"
-            aria-label="Gallery"
-          >
-            <ImageIcon size={24} />
-          </button>
-
-          {/* Big capture button */}
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            onClick={handleCapture}
-            disabled={!ready}
-            className="relative w-20 h-20 rounded-full bg-white flex items-center justify-center disabled:opacity-50"
-            aria-label="Capture"
-          >
-            <div className="absolute inset-0 rounded-full border-4 border-white" />
-            <div className="w-16 h-16 rounded-full bg-white border-4 border-black/10" />
-          </motion.button>
-
-          {/* Placeholder for symmetry */}
-          <div className="w-14 h-14" />
-        </div>
+        ) : (
+          <>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover"
+            />
+            {!cameraReady && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black">
+                <Sparkles size={32} className="text-violet-400 animate-pulse" />
+              </div>
+            )}
+            {/* Crop guide */}
+            {cameraReady && (
+              <div className="absolute inset-12 border-2 border-white/30 rounded-3xl pointer-events-none">
+                <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-white rounded-tl-lg" />
+                <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-white rounded-tr-lg" />
+                <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-white rounded-bl-lg" />
+                <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-white rounded-br-lg" />
+              </div>
+            )}
+          </>
+        )}
       </div>
 
-      {/* Loading overlay */}
-      {!ready && !error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black">
-          <motion.div
-            animate={{ rotate: 360 }}
-            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-            className="w-12 h-12 rounded-full border-4 border-white/20 border-t-violet-500"
-          />
-        </div>
-      )}
-    </div>
-  );
-}
+      {/* Bottom controls */}
+      <div className="p-4 bg-gradient-to-t from-black to-transparent">
+        <div className="flex items-center justify-around gap-4">
+          <motion.button
+            whileTap={{ scale: 0.9 }}
+            onClick={() => setMode("text")}
+            className="w-14 h-14 rounded-full bg-white/15 backdrop-blur-md flex items-center justify-center text-white flex-col gap-0.5"
+          >
+            <Type size={20} />
+          </motion.button>
 
-function CornerBrackets() {
-  const base = "absolute w-8 h-8 border-violet-400";
-  return (
-    <>
-      <span className={`${base} -top-1 -left-1 border-t-4 border-l-4 rounded-tl-xl`} />
-      <span className={`${base} -top-1 -right-1 border-t-4 border-r-4 rounded-tr-xl`} />
-      <span className={`${base} -bottom-1 -left-1 border-b-4 border-l-4 rounded-bl-xl`} />
-      <span className={`${base} -bottom-1 -right-1 border-b-4 border-r-4 rounded-br-xl`} />
-    </>
+          <motion.button
+            whileTap={{ scale: 0.9 }}
+            onClick={takePhoto}
+            disabled={!cameraReady}
+            className="w-20 h-20 rounded-full bg-white flex items-center justify-center shadow-2xl disabled:opacity-50"
+          >
+            <div className="w-16 h-16 rounded-full ring-4 ring-violet-500" />
+          </motion.button>
+
+          <motion.button
+            whileTap={{ scale: 0.9 }}
+            onClick={() => fileInputRef.current?.click()}
+            className="w-14 h-14 rounded-full bg-white/15 backdrop-blur-md flex items-center justify-center text-white"
+          >
+            <ImageIcon size={20} />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+          </motion.button>
+        </div>
+
+        <p className="text-center text-xs text-white/70 mt-3">
+          Photo, texte ou image — comme tu veux
+        </p>
+      </div>
+
+      <canvas ref={canvasRef} className="hidden" />
+    </div>
   );
 }
