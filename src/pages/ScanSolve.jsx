@@ -1,29 +1,27 @@
 // src/pages/ScanSolve.jsx
-// Capture image, send to /api/solve, render in Haitian textbook format:
-//   Énoncé at top
-//   Two columns: Données (left) | Solution sections (right)
-//   Big attention-grabbing "Je ne comprends pas" button at bottom
+// Wave 1: Adds "Explique-moi" button top-right, ModelIndicator, KaTeX rendering.
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, RefreshCw, AlertCircle, Loader2,
-  HelpCircle, Sparkles, MessageCircleQuestion,
+  Sparkles, MessageCircleQuestion,
 } from "lucide-react";
 import CameraCapture from "../components/scan/CameraCapture";
+import ModelIndicator from "../components/shared/ModelIndicator";
 import { useApp } from "../contexts/AppContext";
 
 export default function ScanSolve() {
   const navigate = useNavigate();
   const { track } = useApp();
 
-  const [step, setStep] = useState("camera"); // camera | solving | solution | error
+  const [step, setStep] = useState("camera");
   const [capturedImage, setCapturedImage] = useState(null);
   const [solution, setSolution] = useState(null);
   const [error, setError] = useState(null);
 
-  const handleCapture = async (imageDataUrl) => {
+  const handleCapture = async (imageDataUrl, textInput) => {
     setCapturedImage(imageDataUrl);
     setStep("solving");
     setError(null);
@@ -36,6 +34,7 @@ export default function ScanSolve() {
           userId: "user-" + Date.now(),
           input: {
             imageData: imageDataUrl,
+            problemText: textInput || undefined,
             subject: "Physique",
             track: track || "NS4",
           },
@@ -71,7 +70,6 @@ export default function ScanSolve() {
   };
 
   const handleAskTutor = () => {
-    // Pass the exercise to the classroom via sessionStorage
     const exerciseData = {
       enonce: solution.enonce,
       donnees: solution.donnees,
@@ -89,7 +87,7 @@ export default function ScanSolve() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-32">
-      {/* Header */}
+      {/* Header WITH top-right Explique-moi button */}
       <header className="sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center gap-3">
         <button
           onClick={() => navigate("/")}
@@ -97,21 +95,46 @@ export default function ScanSolve() {
         >
           <ArrowLeft size={18} />
         </button>
-        <div className="flex-1">
-          <div className="font-bold text-sm text-slate-900 dark:text-white">
-            Solution
-          </div>
+        <div className="flex-1 min-w-0">
+          <div className="font-bold text-sm text-slate-900 dark:text-white">Solution</div>
           <div className="text-[11px] text-slate-500 dark:text-slate-400">
             Niveau {track || "NS4"}
           </div>
         </div>
+
+        {/* TOP-RIGHT Explique-moi button (only when solution is shown) */}
+        {step === "solution" && (
+          <motion.button
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{
+              opacity: 1,
+              scale: 1,
+              boxShadow: [
+                "0 4px 12px rgba(245, 158, 11, 0.3)",
+                "0 4px 20px rgba(245, 158, 11, 0.6)",
+                "0 4px 12px rgba(245, 158, 11, 0.3)",
+              ],
+            }}
+            transition={{
+              opacity: { duration: 0.3 },
+              scale: { duration: 0.3 },
+              boxShadow: { duration: 1.8, repeat: Infinity },
+            }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleAskTutor}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white font-bold text-xs shadow-md"
+          >
+            <MessageCircleQuestion size={14} />
+            <span>Explique-moi</span>
+          </motion.button>
+        )}
+
         {step === "solution" && (
           <button
             onClick={handleRetry}
             className="text-xs font-semibold text-violet-600 dark:text-violet-400 flex items-center gap-1"
           >
             <RefreshCw size={14} />
-            Nouveau
           </button>
         )}
       </header>
@@ -134,11 +157,15 @@ export default function ScanSolve() {
                 </div>
               </div>
             )}
+            {/* Show OCR model used */}
+            {solution?.ocrModel && (
+              <ModelIndicator modelUsed={solution.ocrModel} position="bottom-right" size="xs" />
+            )}
           </div>
         </div>
       )}
 
-      {/* Error state */}
+      {/* Error */}
       <AnimatePresence>
         {step === "error" && (
           <motion.div
@@ -148,16 +175,9 @@ export default function ScanSolve() {
           >
             <AlertCircle size={20} className="text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
-              <div className="font-semibold text-sm text-red-900 dark:text-red-200 mb-1">
-                Oups
-              </div>
-              <p className="text-xs text-red-700 dark:text-red-300 leading-relaxed mb-3">
-                {error}
-              </p>
-              <button
-                onClick={handleRetry}
-                className="text-xs font-bold text-red-700 dark:text-red-300 underline"
-              >
+              <div className="font-semibold text-sm text-red-900 dark:text-red-200 mb-1">Oups</div>
+              <p className="text-xs text-red-700 dark:text-red-300 leading-relaxed mb-3">{error}</p>
+              <button onClick={handleRetry} className="text-xs font-bold text-red-700 dark:text-red-300 underline">
                 Reprendre une photo
               </button>
             </div>
@@ -165,7 +185,7 @@ export default function ScanSolve() {
         )}
       </AnimatePresence>
 
-      {/* Solution display — Haitian textbook format */}
+      {/* Solution */}
       <AnimatePresence>
         {step === "solution" && solution && (
           <motion.div
@@ -173,20 +193,20 @@ export default function ScanSolve() {
             animate={{ y: 0, opacity: 1 }}
             className="px-4 mt-4 space-y-4"
           >
-            {/* Énoncé */}
+            {/* Solver model badge */}
+            <div className="flex justify-end">
+              <ModelIndicator modelUsed={solution.modelUsed} position="inline" size="xs" />
+            </div>
+
             <section className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm">
               <h2 className="text-[10px] uppercase tracking-widest font-black text-violet-600 dark:text-violet-400 mb-2">
                 Énoncé
               </h2>
-              <p className="text-sm text-slate-900 dark:text-slate-100 leading-relaxed">
-                {solution.enonce}
-              </p>
+              <p className="text-sm text-slate-900 dark:text-slate-100 leading-relaxed">{solution.enonce}</p>
             </section>
 
-            {/* Two-column layout: Données | Solution */}
             <div className="rounded-2xl bg-white dark:bg-slate-900 shadow-sm overflow-hidden ring-1 ring-slate-200 dark:ring-slate-700">
               <div className="grid grid-cols-12">
-                {/* Données column (left, ~35%) */}
                 <div className="col-span-4 p-4 bg-violet-50 dark:bg-violet-950/30 border-r border-slate-200 dark:border-slate-700">
                   <h3 className="text-[10px] uppercase tracking-widest font-black text-violet-700 dark:text-violet-400 mb-3 border-b-2 border-violet-200 dark:border-violet-700 pb-1.5">
                     Données
@@ -198,7 +218,6 @@ export default function ScanSolve() {
                   </div>
                 </div>
 
-                {/* Solution column (right, ~65%) */}
                 <div className="col-span-8 p-4">
                   {solution.sections?.map((section, i) => (
                     <SolutionSection
@@ -211,7 +230,6 @@ export default function ScanSolve() {
               </div>
             </div>
 
-            {/* Traps */}
             {solution.traps?.length > 0 && (
               <section className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 p-4 border border-amber-200 dark:border-amber-500/30">
                 <h3 className="text-[10px] uppercase tracking-widest font-black text-amber-700 dark:text-amber-400 mb-2">
@@ -228,10 +246,9 @@ export default function ScanSolve() {
               </section>
             )}
 
-            {/* CTA: "Je ne comprends pas" — big, attention-grabbing */}
+            {/* Big bottom CTA (still useful, also there) */}
             <motion.button
               whileTap={{ scale: 0.97 }}
-              whileHover={{ scale: 1.02 }}
               animate={{
                 boxShadow: [
                   "0 10px 30px rgba(245, 158, 11, 0.3)",
@@ -239,9 +256,7 @@ export default function ScanSolve() {
                   "0 10px 30px rgba(245, 158, 11, 0.3)",
                 ],
               }}
-              transition={{
-                boxShadow: { duration: 2, repeat: Infinity },
-              }}
+              transition={{ boxShadow: { duration: 2, repeat: Infinity } }}
               onClick={handleAskTutor}
               className="w-full mt-2 p-5 rounded-3xl bg-gradient-to-br from-amber-400 via-orange-500 to-red-600 text-white font-bold shadow-xl relative overflow-hidden"
             >
@@ -252,9 +267,7 @@ export default function ScanSolve() {
                 </div>
                 <div className="text-left">
                   <div className="text-base font-black">Je comprends pas, explique-moi</div>
-                  <div className="text-xs font-medium opacity-90">
-                    Le prof t'explique étape par étape
-                  </div>
+                  <div className="text-xs font-medium opacity-90">Le prof t'explique étape par étape</div>
                 </div>
               </div>
             </motion.button>
@@ -278,9 +291,7 @@ function DonneeRow({ donnee }) {
       <span className="font-semibold">{donnee.symbol}</span>
       <span className="text-slate-500"> = </span>
       <span className="font-bold text-slate-900 dark:text-white">{donnee.value}</span>
-      {donnee.unit && (
-        <span className="text-slate-600 dark:text-slate-400 ml-1">{donnee.unit}</span>
-      )}
+      {donnee.unit && <span className="text-slate-600 dark:text-slate-400 ml-1">{donnee.unit}</span>}
     </div>
   );
 }
@@ -290,12 +301,8 @@ function SolutionSection({ section, isLast }) {
     <div className={`${isLast ? "" : "pb-4 mb-4 border-b border-slate-100 dark:border-slate-800"}`}>
       <h4 className="text-xs font-bold text-slate-900 dark:text-white mb-2 flex items-baseline gap-1.5">
         <span className="text-violet-600 dark:text-violet-400">{section.number}-</span>
-        <span className="italic text-slate-700 dark:text-slate-300">
-          {section.verb}
-        </span>{" "}
-        <span className="text-slate-600 dark:text-slate-400 font-normal">
-          {section.title}
-        </span>
+        <span className="italic text-slate-700 dark:text-slate-300">{section.verb}</span>{" "}
+        <span className="text-slate-600 dark:text-slate-400 font-normal">{section.title}</span>
       </h4>
       <div className="space-y-1.5 pl-2 font-mono text-xs">
         {section.steps?.map((step, i) => (
@@ -320,9 +327,7 @@ function StepLine({ step }) {
     return (
       <div className="text-blue-700 dark:text-blue-400 italic">
         {step.content}
-        {step.note && (
-          <span className="text-[10px] ml-2 opacity-75">({step.note})</span>
-        )}
+        {step.note && <span className="text-[10px] ml-2 opacity-75">({step.note})</span>}
       </div>
     );
   }
@@ -335,15 +340,7 @@ function StepLine({ step }) {
     );
   }
   if (step.type === "note") {
-    return (
-      <div className="text-slate-500 dark:text-slate-400 text-xs italic font-sans">
-        {step.content}
-      </div>
-    );
+    return <div className="text-slate-500 dark:text-slate-400 text-xs italic font-sans">{step.content}</div>;
   }
-  return (
-    <div className="text-slate-700 dark:text-slate-300">
-      {step.content}
-    </div>
-  );
+  return <div className="text-slate-700 dark:text-slate-300">{step.content}</div>;
 }
