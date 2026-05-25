@@ -1,6 +1,5 @@
 // src/utils/constants.js
-// Clean version. No template literals, no || fallbacks, no import.meta chains.
-// Just plain strings and objects so Vite parses it perfectly.
+// Clean constants file with all needed keys for v6.
 
 export const EXAM_DATE = new Date("2026-07-17T08:00:00");
 
@@ -33,9 +32,11 @@ export const WEBHOOKS = {
   OCR_SCAN: "/api/solve",
   SOLVE: "/api/solve",
   TUTOR_CHAT: "/api/chat",
-  EXPLAIN_STEP: "/api/explain",
+  EXPLAIN_STEP: "/api/chat",
   GENERATE_BOARD: "/api/board",
-  GENERATE_QUIZ: "/api/quiz",
+  GENERATE_QUIZ: "/api/generate-quizzes",
+  TTS: "/api/tts",
+  PAYMENT_VALIDATE: "/api/payment-webhook",
 };
 
 export const STORAGE_KEYS = {
@@ -46,6 +47,7 @@ export const STORAGE_KEYS = {
   WRONG_ANSWERS: "menfp.wrong",
   PLAN_TIER: "laureat.planTier",
   USAGE_TODAY: "laureat.usageToday",
+  PREFERENCES: "laureat.preferences",
 };
 
 export const USAGE_CAPS = {
@@ -68,3 +70,57 @@ export const USAGE_CAPS = {
     quizzes: -1,
   },
 };
+
+export const PLAN_PRICES = {
+  basic: 900,
+  premium: 2400,
+};
+
+export const PERSONALITIES = [
+  {
+    id: "patient",
+    name: "Prof. Patient",
+    description: "Prend son temps, beaucoup d'exemples concrets",
+    icon: "🌱",
+  },
+  {
+    id: "classique",
+    name: "Prof. Classique",
+    description: "Rigoureux, méthodique, exigeant",
+    icon: "📐",
+  },
+  {
+    id: "ami",
+    name: "Prof. Ami",
+    description: "Chaleureux, casual, des blagues légères",
+    icon: "🤝",
+  },
+  {
+    id: "efficace",
+    name: "Prof. Efficace",
+    description: "Direct, sans fluff, va droit au but",
+    icon: "⚡",
+  },
+];
+
+export const LANGUAGE_OPTIONS = [
+  {
+    id: "mix",
+    name: "Mélange français-créole",
+    description: "Recommandé",
+    badge: "Recommandé",
+    icon: "🇭🇹",
+  },
+  {
+    id: "fr",
+    name: "Français",
+    description: "Uniquement français",
+    icon: "🇫🇷",
+  },
+  {
+    id: "kr",
+    name: "Kreyòl",
+    description: "Sèlman kreyòl",
+    icon: "🗣️",
+  },
+];
