@@ -1,7 +1,6 @@
 // src/contexts/AppContext.jsx
 // Global state for Laureat AI.
-// MVP: French only (Haitian Creole coming in v2).
-// Default: dark mode (user can toggle in Profile).
+// French-only UI. Tutor handles multilingual via prompts.
 
 import { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
 import { translations } from "../utils/translations";
@@ -19,13 +18,28 @@ const getInitial = (key, fallback) => {
   }
 };
 
+const getInitialJSON = (key, fallback) => {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const v = localStorage.getItem(key);
+    return v ? JSON.parse(v) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 export function AppProvider({ children }) {
   const [track, setTrackState] = useState(() => getInitial(STORAGE_KEYS.TRACK, null));
 
-  // Force French for MVP
+  // Tutor preferences (set during conversational onboarding)
+  const [preferences, setPreferencesState] = useState(() =>
+    getInitialJSON(STORAGE_KEYS.PREFERENCES, null)
+  );
+
+  // Force French UI
   const lang = "fr";
 
-  // Default to dark unless user has chosen otherwise
+  // Default dark
   const [theme, setThemeState] = useState(() => getInitial(STORAGE_KEYS.THEME, "dark"));
 
   useEffect(() => {
@@ -44,6 +58,11 @@ export function AppProvider({ children }) {
     try { localStorage.setItem(STORAGE_KEYS.TRACK, value); } catch {}
   }, []);
 
+  const setPreferences = useCallback((prefs) => {
+    setPreferencesState(prefs);
+    try { localStorage.setItem(STORAGE_KEYS.PREFERENCES, JSON.stringify(prefs)); } catch {}
+  }, []);
+
   const toggleTheme = useCallback(() => {
     setThemeState((t) => (t === "dark" ? "light" : "dark"));
   }, []);
@@ -60,15 +79,19 @@ export function AppProvider({ children }) {
     []
   );
 
+  // Has the user completed onboarding fully? (both track AND preferences)
+  const onboardingComplete = Boolean(track && preferences?.language && preferences?.personality);
+
   const value = useMemo(
     () => ({
       track, setTrack, isTrackSelected: Boolean(track),
+      preferences, setPreferences, onboardingComplete,
       lang,
       theme, toggleTheme,
       t,
       TRACKS,
     }),
-    [track, setTrack, theme, toggleTheme, t]
+    [track, setTrack, preferences, setPreferences, onboardingComplete, theme, toggleTheme, t]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
