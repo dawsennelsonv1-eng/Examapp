@@ -1,115 +1,107 @@
-# MENFP Prep — Virtual Haitian Professor PWA
+# Laureat AI v6 — Zip 3 of 3 (Polish & Bulletproofing)
 
-A React + Vite + Tailwind + Framer Motion PWA for 9AF / NS4 students preparing for MENFP state exams.
+This zip contains all the **supporting files** that prevent build failures and complete the app's polish. Upload this LAST, after Zip 1 and Zip 2.
 
-## Running locally
+## Files (8 files)
 
-You need **Node.js 18 or newer** installed ([download here](https://nodejs.org/)).
+| File | Path | Why |
+|------|------|-----|
+| `main.jsx` | `src/main.jsx` | Fixes BrowserRouter double-wrap once and for all |
+| `Profile.jsx` | `src/pages/Profile.jsx` | Lets user change personality, language, name, plan — full profile experience |
+| `Reviser.jsx` | `src/pages/Reviser.jsx` | Subject grid — tap a subject to start a Classroom review session |
+| `CameraCapture.jsx` | `src/components/scan/CameraCapture.jsx` | Camera + photo upload + text input fallback (covers all cases) |
+| `SolutionStep.jsx` | `src/components/scan/SolutionStep.jsx` | Reusable step renderer (boxed results, conversions, deductions) |
+| `translations.js` | `src/utils/translations.js` | All French keys defined — no undefined fallbacks crashing things |
+| `index.css` | `src/index.css` | Adds Caveat handwriting font + shimmer animation + safe area insets |
+| `tailwind.config.js` | `tailwind.config.js` (repo root) | Registers handwriting font family + shimmer keyframes |
 
-```bash
-# 1. Install dependencies (only needed once)
-npm install
+## Critical fix in this zip
 
-# 2. Start the dev server
-npm run dev
-```
+**`main.jsx` was wrapping App in BrowserRouter AND App.jsx was wrapping again.** This caused the white screen bug. The new `main.jsx` + the App.jsx from Zip 1 work together: routing wrappers live ONLY in main.jsx, App.jsx just exports `<Routes>`.
 
-Open the URL it prints (usually `http://localhost:5173`) in your browser. You should see the onboarding screen asking "9AF or NS4?".
+## What each file enables
 
-## Deploying to Netlify
+### Profile.jsx
+- See your avatar (first letter of your name)
+- Edit your name inline
+- Switch tutor personality on the fly (Patient / Classique / Ami / Efficace)
+- Switch language preference (Mix / Français / Kreyòl)
+- See your plan (Gratuit / Basic / Premium) with upgrade button
+- Toggle dark/light theme
+- "Reset everything" button (clears all data, restarts onboarding)
 
-### Option A — Drag & drop the built folder (simplest)
+### Reviser.jsx
+- Grid of subjects with subject-specific icons and colors
+- Tap a subject → creates a new Classroom session focused on that subject
+- Tutor opens conversation with "What do you want to review in [subject]?"
 
-```bash
-npm install
-npm run build
-```
+### CameraCapture.jsx (the missing piece)
+- Camera mode (default, environment-facing camera)
+- Photo upload mode (for existing images)
+- **Text input mode** (for when camera doesn't work or you want to type)
+- Cropping guide overlay
+- Preview before submit ("Use" / "Retake")
 
-This creates a `dist/` folder. Drag **that folder** (not the whole project) into Netlify's drop zone at https://app.netlify.com/drop.
+### translations.js
+Previous version had `t("onboarding_title")` calls that returned `undefined` when keys were missing — caused crashes in some browsers. This file defines EVERY key used anywhere. Fallback safety guaranteed.
 
-### Option B — Connect a GitHub repo (recommended)
+### index.css + tailwind.config.js
+The chalkboard in ClassroomSession uses `font-handwriting` class. Without this update, the font falls back to system default (Times New Roman style) and looks bad. Now uses Caveat from Google Fonts → looks like real chalk writing.
 
-1. Push this whole project to a GitHub repository
-2. In Netlify: **Add new site → Import an existing project → GitHub**
-3. Select your repo. Netlify will read `netlify.toml` automatically and use:
-   - Build command: `npm run build`
-   - Publish directory: `dist`
-4. Click deploy.
+The shimmer animation on the "Je comprends pas" button needs the `animate-shimmer` class registered in Tailwind. Without it, the shimmer effect won't appear.
 
-The `netlify.toml` file also sets up SPA routing — without it, refreshing on `/scan` or `/quiz` would give you a 404.
+## Upload order
 
-## What's implemented
+Upload these files AFTER Zip 1 and Zip 2 have been deployed and the build is green.
 
-| Tab | Status |
-|-----|--------|
-| Onboarding (9AF / NS4 selector, FR/HT toggle) | ✅ Full |
-| Tab 1 — Home (countdown, missions, leaderboard) | ✅ Full |
-| Tab 2 — Scan & Solve (camera mock, blur/unblur, TTS, Hypothèse/Formule/Résolution) | ✅ Full |
-| Tab 3 — Quizzes | 🟡 Placeholder |
-| Tab 4 — Exam Vault | 🟡 Placeholder |
-| Tab 5 — Sciences Sociales (presidential timeline) | ✅ Minimal working version |
-| Service worker (offline + push) | ✅ Full |
-| FR/HT language toggle | ✅ Full |
-| Dark/light mode | ✅ Full |
+1. `main.jsx` first (fixes routing)
+2. `index.css` + `tailwind.config.js` (visual foundation)
+3. `translations.js`
+4. `SolutionStep.jsx`
+5. `CameraCapture.jsx`
+6. `Profile.jsx`
+7. `Reviser.jsx`
 
-## Wiring up the real Claude AI backend
+Or commit all 8 in one batch.
 
-The `src/services/webhookClient.js` file has mock data built in, so the Scan & Solve tab works without a backend. When you're ready to connect real Claude AI:
+## After uploading all 3 zips
 
-1. Create Make.com or n8n scenarios that accept POST webhooks and forward the `system` + `input` payload to Claude's API
-2. Replace the URLs in `src/utils/constants.js`:
+Your app is feature-complete. Test sequence:
 
-```js
-export const WEBHOOKS = {
-  SOLVE: "https://hook.make.com/YOUR-REAL-WEBHOOK-ID",
-  // etc
-};
-```
+1. Open in incognito → see new conversational onboarding (5 steps)
+2. Land on home → personalized "Salut [name]" greeting, countdown, missions
+3. Tap SCAN → camera or text → take photo of exercise
+4. See Haitian textbook format result (Données | Solution columns)
+5. Tap pulsing "Je comprends pas" → goes to Classroom with exercise pre-loaded
+6. Teacher greets you by name, starts step-by-step teaching
+7. Données appear on chalkboard one by one with voice
+8. Tap "Oui je comprends" → moves to first section
+9. Tap "Non" → cascade of re-explanations
+10. After completing → "Bravo [name]!"
+11. Go to /profile → see your avatar, change personality, see plan
+12. Go to /quiz → if quizzes generated via /admin, take a quiz
+13. Go to /reviser → tap a subject → opens new Classroom session
+14. Go to /paywall → see plans, payment flow
 
-The Haitian professor system prompt (strict persona, Hypothèse/Formule/Résolution formatting) is already baked into the payload — your webhook just needs to pass it to Claude's `system` parameter.
+## Total file count delivered across all 3 zips
 
-## Project structure
+- **6 API endpoints** (solve, chat, board, tts, generate-quizzes, payment-webhook)
+- **3 context/hook files** (AppContext, useClassroom, useUsage)
+- **3 services** (ttsService, quizService, [no webhookClient — replaced by direct fetches])
+- **3 utilities** (constants, translations, css)
+- **2 components** (AppShell, CameraCapture, SolutionStep, VirtualBoard, ClassroomSession)
+- **8 pages** (Home, Onboarding, ScanSolve, Classroom, Quizzes, Profile, Reviser, Admin, Paywall)
+- **2 root files** (main.jsx, App.jsx, tailwind.config.js)
 
-```
-├── index.html              ← Vite entry point
-├── package.json            ← Dependencies
-├── vite.config.js          ← Build config
-├── netlify.toml            ← Netlify build + SPA redirects
-├── tailwind.config.js
-├── postcss.config.js
-├── public/
-│   ├── sw.js               ← Service worker (offline + push)
-│   ├── manifest.json       ← PWA manifest
-│   ├── offline.html        ← Fallback when offline
-│   └── favicon.svg
-└── src/
-    ├── main.jsx            ← React entry
-    ├── App.jsx             ← Router + tab shell
-    ├── index.css           ← Tailwind directives
-    ├── contexts/
-    │   └── AppContext.jsx  ← Global state (track, lang, theme)
-    ├── pages/              ← The 5 tabs + onboarding
-    ├── components/
-    │   ├── BottomTabBar.jsx
-    │   └── scan/           ← SolutionStep, AudioButton
-    ├── services/
-    │   ├── webhookClient.js ← Claude AI webhook calls
-    │   └── ttsService.js    ← "Eksplike m sa" audio
-    └── utils/
-        ├── translations.js  ← FR + HT dictionaries
-        └── constants.js
-```
+## What's NOT included (post-launch additions)
 
-## Troubleshooting
+- Vercel KV for persistent transaction storage
+- Push notifications
+- Custom domain wire-up
+- Real PDF generation
+- Sentry error tracking
+- Analytics (Plausible / PostHog)
 
-**"Page not found" on Netlify**
-→ You deployed the source files instead of the built output. Run `npm run build` first, then deploy the `dist/` folder — or connect via GitHub so Netlify builds it for you.
+These are not needed to ship the MVP and start earning.
 
-**Blank white screen**
-→ Open browser DevTools → Console. Any red errors? Most likely a missing dependency — re-run `npm install`.
-
-**Service worker not registering**
-→ SWs only work on `https://` or `http://localhost`. They won't register from a file:// URL or on HTTP in production.
-
-**TTS audio doesn't work**
-→ The Web Speech API requires a user interaction before the first `.speak()` call. Tap the 🔊 button yourself; auto-play on load is blocked by browsers.
+🚀 You're complete. Ship and start the TikTok grind.
