@@ -1,19 +1,20 @@
 // src/services/ttsService.js
-// Text-to-speech: tries server-side API first, falls back to browser Web Speech API.
+// Voice playback. Tries /api/tts first (premium quality), falls back to browser Web Speech.
+// Returns audio duration so callers can sync animations.
 
 let currentAudio = null;
 let currentUtterance = null;
 
-export async function speakText(text, lang = "fr-FR") {
+export async function speakText(text, lang = "fr-FR", isPremium = false) {
   stopSpeaking();
-  if (!text) return;
+  if (!text) return { duration: 0 };
 
-  // Try server-side TTS first (better quality)
+  // Try server-side TTS first
   try {
     const response = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, isPremium }),
     });
 
     if (response.ok) {
@@ -22,12 +23,24 @@ export async function speakText(text, lang = "fr-FR") {
       if (data?.data?.audioUrl) {
         // Play AI-generated audio
         currentAudio = new Audio(data.data.audioUrl);
-        await new Promise((resolve, reject) => {
-          currentAudio.onended = resolve;
-          currentAudio.onerror = reject;
-          currentAudio.play().catch(reject);
+
+        // Wait for metadata to get duration
+        await new Promise((resolve) => {
+          currentAudio.onloadedmetadata = resolve;
+          currentAudio.onerror = resolve;
+          setTimeout(resolve, 2000); // safety timeout
         });
-        return;
+
+        const duration = currentAudio.duration || estimateDuration(text);
+
+        // Play and wait for end
+        const playPromise = new Promise((resolve) => {
+          currentAudio.onended = resolve;
+          currentAudio.onerror = resolve;
+        });
+        currentAudio.play().catch(() => {});
+
+        return { duration, promise: playPromise };
       }
 
       if (data?.data?.useBrowserFallback) {
@@ -38,34 +51,38 @@ export async function speakText(text, lang = "fr-FR") {
     console.warn("Server TTS failed, using browser fallback:", err);
   }
 
-  // Fallback to browser
   return browserSpeak(text, lang);
 }
 
 function browserSpeak(text, lang = "fr-FR") {
   if (!("speechSynthesis" in window)) {
-    console.warn("Speech synthesis not supported");
-    return;
+    return { duration: 0 };
   }
 
-  return new Promise((resolve) => {
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = lang;
-    utter.rate = 0.95;
-    utter.pitch = 1.0;
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = lang;
+  utter.rate = 0.95;
+  utter.pitch = 1.0;
 
-    // Try to pick a good French voice if available
-    const voices = speechSynthesis.getVoices();
-    const frenchVoice = voices.find(
-      (v) => v.lang.startsWith("fr") && v.localService
-    );
-    if (frenchVoice) utter.voice = frenchVoice;
+  const voices = speechSynthesis.getVoices();
+  const frenchVoice = voices.find((v) => v.lang.startsWith("fr"));
+  if (frenchVoice) utter.voice = frenchVoice;
 
+  currentUtterance = utter;
+
+  const promise = new Promise((resolve) => {
     utter.onend = resolve;
     utter.onerror = resolve;
-    currentUtterance = utter;
-    speechSynthesis.speak(utter);
   });
+  speechSynthesis.speak(utter);
+
+  return { duration: estimateDuration(text), promise };
+}
+
+function estimateDuration(text) {
+  // Rough estimate: ~150 words per minute for French
+  const wordCount = text.split(/\s+/).length;
+  return (wordCount / 150) * 60;
 }
 
 export function stopSpeaking() {
@@ -81,5 +98,7 @@ export function stopSpeaking() {
 }
 
 export function isSpeaking() {
-  return Boolean(currentAudio) || (typeof speechSynthesis !== "undefined" && speechSynthesis.speaking);
+  if (currentAudio && !currentAudio.paused) return true;
+  if (typeof speechSynthesis !== "undefined" && speechSynthesis.speaking) return true;
+  return false;
 }

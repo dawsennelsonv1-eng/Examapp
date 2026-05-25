@@ -1,6 +1,5 @@
 // src/services/quizService.js
-// Manages quiz generation from past exams.
-// Caches generated quizzes for 1 week per subject.
+// Quiz cache management. Quizzes are generated weekly via /admin and cached for 7 days.
 
 const QUIZ_CACHE_KEY = "laureat.quizCache";
 const ADMIN_TOKEN_KEY = "laureat.adminToken";
@@ -16,18 +15,14 @@ function loadCache() {
 function saveCache(cache) {
   try {
     localStorage.setItem(QUIZ_CACHE_KEY, JSON.stringify(cache));
-  } catch (err) {
-    console.warn("Failed to save quiz cache:", err);
-  }
+  } catch {}
 }
 
 export function getQuizzesForSubject(subject) {
   const cache = loadCache();
   const cached = cache[subject];
-
   if (!cached) return null;
   if (cached.expiresAt < Date.now()) return null;
-
   return cached.questions || [];
 }
 
@@ -44,39 +39,28 @@ export function getAllCachedSubjects() {
     }));
 }
 
-export async function generateQuizzesForSubject({
-  subject,
-  track = "NS4",
-  pastExamsText,
-  count = 50,
-  onProgress,
-}) {
-  const adminToken = localStorage.getItem(ADMIN_TOKEN_KEY) || "laureat-admin-2026";
+export async function generateQuizzesForSubject({ subject, track = "NS4", pastExamsText, count = 50, onProgress }) {
+  const adminToken = localStorage.getItem(ADMIN_TOKEN_KEY) || "";
+  if (!adminToken) throw new Error("Token admin manquant");
 
-  onProgress?.("Génération de 50 questions...");
+  onProgress?.(`Génération de ${count} questions pour ${subject}...`);
 
   const response = await fetch("/api/generate-quizzes", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Admin-Token": adminToken,
-    },
+    headers: { "Content-Type": "application/json", "X-Admin-Token": adminToken },
     body: JSON.stringify({ subject, track, pastExamsText, count }),
   });
 
   if (!response.ok) {
-    const err = await response.json();
-    throw new Error(err.error || "Génération échouée");
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || `Erreur ${response.status}`);
   }
 
   const result = await response.json();
   const quizData = result.data;
-
-  // Cache it
   const cache = loadCache();
   cache[subject] = quizData;
   saveCache(cache);
-
   return quizData;
 }
 
