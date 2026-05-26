@@ -1,10 +1,7 @@
 // src/components/shared/ModelIndicator.jsx
-// Floating badge showing which AI model was used for the current operation.
-// Useful for dev mode to verify cascade fallbacks are working.
-// Can be hidden by user via preferences or in production builds.
+// Floating badge showing which AI model was used.
 
 import { motion } from "framer-motion";
-import { Cpu } from "lucide-react";
 
 const MODEL_DISPLAY = {
   "google/gemini-3.5-flash-lite": { name: "Gemini 3.5 Flash Lite", emoji: "⚡", color: "from-blue-500 to-cyan-600" },
