@@ -1,9 +1,9 @@
 // src/pages/ScanSolve.jsx
-// v8: Adds Share button + PDF export button.
+// v9: Saves to scan history on successful solve, handles ?replay=1 from home history.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, RefreshCw, AlertCircle, Loader2,
   MessageCircleQuestion, FileDown,
@@ -12,16 +12,40 @@ import CameraCapture from "../components/scan/CameraCapture";
 import ModelIndicator from "../components/shared/ModelIndicator";
 import ShareButton from "../components/shared/ShareButton";
 import { useApp } from "../contexts/AppContext";
+import { useScanHistory } from "../hooks/useScanHistory";
 import { exportSolutionToPDF } from "../services/pdfService";
 
 export default function ScanSolve() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { track } = useApp();
+  const { addScan } = useScanHistory();
 
   const [step, setStep] = useState("camera");
   const [capturedImage, setCapturedImage] = useState(null);
   const [solution, setSolution] = useState(null);
   const [error, setError] = useState(null);
+
+  // Handle replay from history
+  useEffect(() => {
+    if (searchParams.get("replay") === "1") {
+      const raw = sessionStorage.getItem("laureat.scanReplay");
+      if (raw) {
+        try {
+          const scan = JSON.parse(raw);
+          sessionStorage.removeItem("laureat.scanReplay");
+          setCapturedImage(scan.capturedImage);
+          setSolution({
+            enonce: scan.enonce,
+            donnees: scan.donnees,
+            sections: scan.sections,
+            traps: scan.traps || [],
+          });
+          setStep("solution");
+        } catch {}
+      }
+    }
+  }, []);
 
   const handleCapture = async (imageDataUrl, textInput) => {
     setCapturedImage(imageDataUrl);
@@ -45,7 +69,7 @@ export default function ScanSolve() {
 
       if (response.status === 422) {
         const body = await response.json();
-        setError(body.message || "L'image n'est pas assez claire.");
+        setError(body.message || "L'image n'est pas assez claire. Mete plis limyè epi pwoche kamera a.");
         setStep("error");
         return;
       }
@@ -56,9 +80,19 @@ export default function ScanSolve() {
 
       setSolution(result.data);
       setStep("solution");
+
+      // Save to history
+      addScan({
+        enonce: result.data.enonce,
+        donnees: result.data.donnees,
+        sections: result.data.sections,
+        traps: result.data.traps,
+        capturedImage: imageDataUrl,
+        subject: "Physique",
+      });
     } catch (err) {
       console.error("Solve error:", err);
-      setError("Impossible de résoudre. Vérifie ta connexion.");
+      setError("Pa gen koneksyon entènèt la. Verifye epi eseye ankò.");
       setStep("error");
     }
   };
@@ -82,9 +116,7 @@ export default function ScanSolve() {
     navigate("/classe?new=1");
   };
 
-  const handlePDF = () => {
-    exportSolutionToPDF(solution);
-  };
+  const handlePDF = () => exportSolutionToPDF(solution);
 
   if (step === "camera") {
     return <CameraCapture onCapture={handleCapture} onClose={() => navigate("/")} />;
@@ -103,43 +135,21 @@ export default function ScanSolve() {
 
         {step === "solution" && (
           <>
-            <ShareButton
-              type="scan_result"
-              payload={{
-                enonce: solution.enonce,
-                donnees: solution.donnees,
-                sections: solution.sections,
-              }}
-              compact
-            />
-            <motion.button
-              whileTap={{ scale: 0.92 }}
-              onClick={handlePDF}
-              className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300"
-              title="Télécharger PDF"
-            >
+            <ShareButton type="scan_result" payload={{ enonce: solution.enonce, donnees: solution.donnees, sections: solution.sections }} compact />
+            <motion.button whileTap={{ scale: 0.92 }} onClick={handlePDF} className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300" title="PDF">
               <FileDown size={16} />
             </motion.button>
             <motion.button
               initial={{ opacity: 0, scale: 0.8 }}
-              animate={{
-                opacity: 1, scale: 1,
-                boxShadow: [
-                  "0 4px 12px rgba(245, 158, 11, 0.3)",
-                  "0 4px 20px rgba(245, 158, 11, 0.6)",
-                  "0 4px 12px rgba(245, 158, 11, 0.3)",
-                ],
-              }}
-              transition={{
-                opacity: { duration: 0.3 }, scale: { duration: 0.3 },
-                boxShadow: { duration: 1.8, repeat: Infinity },
-              }}
-              whileTap={{ scale: 0.95 }}
-              onClick={handleAskTutor}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white font-bold text-xs shadow-md"
-            >
-              <MessageCircleQuestion size={12} />
-              <span>Explique-moi</span>
+              animate={{ opacity: 1, scale: 1, boxShadow: [
+                "0 4px 12px rgba(245, 158, 11, 0.3)",
+                "0 4px 20px rgba(245, 158, 11, 0.6)",
+                "0 4px 12px rgba(245, 158, 11, 0.3)",
+              ]}}
+              transition={{ opacity: { duration: 0.3 }, scale: { duration: 0.3 }, boxShadow: { duration: 1.8, repeat: Infinity }}}
+              whileTap={{ scale: 0.95 }} onClick={handleAskTutor}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white font-bold text-xs shadow-md">
+              <MessageCircleQuestion size={12} /><span>Explique-moi</span>
             </motion.button>
           </>
         )}
@@ -158,9 +168,7 @@ export default function ScanSolve() {
                 </div>
               </div>
             )}
-            {solution?.ocrModel && (
-              <ModelIndicator modelUsed={solution.ocrModel} position="bottom-right" size="xs" />
-            )}
+            {solution?.ocrModel && <ModelIndicator modelUsed={solution.ocrModel} position="bottom-right" size="xs" />}
           </div>
         </div>
       )}
@@ -173,9 +181,7 @@ export default function ScanSolve() {
             <div className="flex-1">
               <div className="font-semibold text-sm text-red-900 dark:text-red-200 mb-1">Oups</div>
               <p className="text-xs text-red-700 dark:text-red-300 leading-relaxed mb-3">{error}</p>
-              <button onClick={handleRetry} className="text-xs font-bold text-red-700 dark:text-red-300 underline">
-                Reprendre une photo
-              </button>
+              <button onClick={handleRetry} className="text-xs font-bold text-red-700 dark:text-red-300 underline">Reprendre une photo</button>
             </div>
           </motion.div>
         )}
@@ -184,9 +190,11 @@ export default function ScanSolve() {
       <AnimatePresence>
         {step === "solution" && solution && (
           <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="px-4 mt-4 space-y-4">
-            <div className="flex justify-end">
-              <ModelIndicator modelUsed={solution.modelUsed} position="inline" size="xs" />
-            </div>
+            {solution.modelUsed && (
+              <div className="flex justify-end">
+                <ModelIndicator modelUsed={solution.modelUsed} position="inline" size="xs" />
+              </div>
+            )}
 
             <section className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm">
               <h2 className="text-[10px] uppercase tracking-widest font-black text-violet-600 dark:text-violet-400 mb-2">Énoncé</h2>
@@ -196,9 +204,7 @@ export default function ScanSolve() {
             <div className="rounded-2xl bg-white dark:bg-slate-900 shadow-sm overflow-hidden ring-1 ring-slate-200 dark:ring-slate-700">
               <div className="grid grid-cols-12">
                 <div className="col-span-4 p-4 bg-violet-50 dark:bg-violet-950/30 border-r border-slate-200 dark:border-slate-700">
-                  <h3 className="text-[10px] uppercase tracking-widest font-black text-violet-700 dark:text-violet-400 mb-3 border-b-2 border-violet-200 dark:border-violet-700 pb-1.5">
-                    Données
-                  </h3>
+                  <h3 className="text-[10px] uppercase tracking-widest font-black text-violet-700 dark:text-violet-400 mb-3 border-b-2 border-violet-200 dark:border-violet-700 pb-1.5">Données</h3>
                   <div className="space-y-1.5 font-mono text-xs text-slate-900 dark:text-slate-100">
                     {solution.donnees?.map((d, i) => (
                       d.isQuestion ? (
@@ -248,9 +254,7 @@ export default function ScanSolve() {
 
             {solution.traps?.length > 0 && (
               <section className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 p-4 border border-amber-200 dark:border-amber-500/30">
-                <h3 className="text-[10px] uppercase tracking-widest font-black text-amber-700 dark:text-amber-400 mb-2">
-                  ⚠️ Pièges courants
-                </h3>
+                <h3 className="text-[10px] uppercase tracking-widest font-black text-amber-700 dark:text-amber-400 mb-2">⚠️ Pièges courants</h3>
                 <ul className="space-y-1.5">
                   {solution.traps.map((trap, i) => (
                     <li key={i} className="text-xs text-amber-900 dark:text-amber-200 flex gap-2">
@@ -261,19 +265,15 @@ export default function ScanSolve() {
               </section>
             )}
 
-            <motion.button
-              whileTap={{ scale: 0.97 }}
-              animate={{
-                boxShadow: [
-                  "0 10px 30px rgba(245, 158, 11, 0.3)",
-                  "0 10px 40px rgba(245, 158, 11, 0.5)",
-                  "0 10px 30px rgba(245, 158, 11, 0.3)",
-                ],
-              }}
-              transition={{ boxShadow: { duration: 2, repeat: Infinity } }}
+            <motion.button whileTap={{ scale: 0.97 }}
+              animate={{ boxShadow: [
+                "0 10px 30px rgba(245, 158, 11, 0.3)",
+                "0 10px 40px rgba(245, 158, 11, 0.5)",
+                "0 10px 30px rgba(245, 158, 11, 0.3)",
+              ]}}
+              transition={{ boxShadow: { duration: 2, repeat: Infinity }}}
               onClick={handleAskTutor}
-              className="w-full mt-2 p-5 rounded-3xl bg-gradient-to-br from-amber-400 via-orange-500 to-red-600 text-white font-bold shadow-xl relative overflow-hidden"
-            >
+              className="w-full mt-2 p-5 rounded-3xl bg-gradient-to-br from-amber-400 via-orange-500 to-red-600 text-white font-bold shadow-xl relative overflow-hidden">
               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full animate-shimmer" />
               <div className="relative flex items-center justify-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
@@ -286,29 +286,14 @@ export default function ScanSolve() {
               </div>
             </motion.button>
 
-            {/* Share + PDF buttons at bottom too */}
             <div className="flex gap-2 mt-4">
-              <ShareButton
-                type="scan_result"
-                payload={{
-                  enonce: solution.enonce,
-                  donnees: solution.donnees,
-                  sections: solution.sections,
-                }}
-                label="Partager"
-              />
-              <motion.button
-                whileTap={{ scale: 0.97 }}
-                onClick={handlePDF}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold text-sm"
-              >
-                <FileDown size={16} />
-                Télécharger PDF
+              <ShareButton type="scan_result" payload={{ enonce: solution.enonce, donnees: solution.donnees, sections: solution.sections }} label="Partager" />
+              <motion.button whileTap={{ scale: 0.97 }} onClick={handlePDF}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold text-sm">
+                <FileDown size={16} />Télécharger PDF
               </motion.button>
             </div>
-            <p className="text-center text-[11px] text-slate-500 mt-2">
-              💡 Partage avec un camarade qui pourrait avoir besoin
-            </p>
+            <p className="text-center text-[11px] text-slate-500 mt-2">💡 Partage avec un camarade qui pourrait avoir besoin</p>
           </motion.div>
         )}
       </AnimatePresence>
