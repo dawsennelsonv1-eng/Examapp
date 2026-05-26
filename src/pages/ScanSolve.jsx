@@ -1,16 +1,18 @@
 // src/pages/ScanSolve.jsx
-// Wave 1: Adds "Explique-moi" button top-right, ModelIndicator, KaTeX rendering.
+// v8: Adds Share button + PDF export button.
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, RefreshCw, AlertCircle, Loader2,
-  Sparkles, MessageCircleQuestion,
+  MessageCircleQuestion, FileDown,
 } from "lucide-react";
 import CameraCapture from "../components/scan/CameraCapture";
 import ModelIndicator from "../components/shared/ModelIndicator";
+import ShareButton from "../components/shared/ShareButton";
 import { useApp } from "../contexts/AppContext";
+import { exportSolutionToPDF } from "../services/pdfService";
 
 export default function ScanSolve() {
   const navigate = useNavigate();
@@ -43,21 +45,20 @@ export default function ScanSolve() {
 
       if (response.status === 422) {
         const body = await response.json();
-        setError(body.message || "L'image n'est pas assez claire. Reprends la photo.");
+        setError(body.message || "L'image n'est pas assez claire.");
         setStep("error");
         return;
       }
-
-      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      if (!response.ok) throw new Error(`Server ${response.status}`);
 
       const result = await response.json();
-      if (!result?.data) throw new Error("Réponse invalide du serveur");
+      if (!result?.data) throw new Error("Invalid response");
 
       setSolution(result.data);
       setStep("solution");
     } catch (err) {
       console.error("Solve error:", err);
-      setError("Impossible de résoudre. Vérifie ta connexion et réessaye.");
+      setError("Impossible de résoudre. Vérifie ta connexion.");
       setStep("error");
     }
   };
@@ -81,73 +82,73 @@ export default function ScanSolve() {
     navigate("/classe?new=1");
   };
 
+  const handlePDF = () => {
+    exportSolutionToPDF(solution);
+  };
+
   if (step === "camera") {
     return <CameraCapture onCapture={handleCapture} onClose={() => navigate("/")} />;
   }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-32">
-      {/* Header WITH top-right Explique-moi button */}
-      <header className="sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center gap-3">
-        <button
-          onClick={() => navigate("/")}
-          className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300"
-        >
+      <header className="sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center gap-2">
+        <button onClick={() => navigate("/")} className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300">
           <ArrowLeft size={18} />
         </button>
         <div className="flex-1 min-w-0">
           <div className="font-bold text-sm text-slate-900 dark:text-white">Solution</div>
-          <div className="text-[11px] text-slate-500 dark:text-slate-400">
-            Niveau {track || "NS4"}
-          </div>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400">Niveau {track || "NS4"}</div>
         </div>
 
-        {/* TOP-RIGHT Explique-moi button (only when solution is shown) */}
         {step === "solution" && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{
-              opacity: 1,
-              scale: 1,
-              boxShadow: [
-                "0 4px 12px rgba(245, 158, 11, 0.3)",
-                "0 4px 20px rgba(245, 158, 11, 0.6)",
-                "0 4px 12px rgba(245, 158, 11, 0.3)",
-              ],
-            }}
-            transition={{
-              opacity: { duration: 0.3 },
-              scale: { duration: 0.3 },
-              boxShadow: { duration: 1.8, repeat: Infinity },
-            }}
-            whileTap={{ scale: 0.95 }}
-            onClick={handleAskTutor}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white font-bold text-xs shadow-md"
-          >
-            <MessageCircleQuestion size={14} />
-            <span>Explique-moi</span>
-          </motion.button>
-        )}
-
-        {step === "solution" && (
-          <button
-            onClick={handleRetry}
-            className="text-xs font-semibold text-violet-600 dark:text-violet-400 flex items-center gap-1"
-          >
-            <RefreshCw size={14} />
-          </button>
+          <>
+            <ShareButton
+              type="scan_result"
+              payload={{
+                enonce: solution.enonce,
+                donnees: solution.donnees,
+                sections: solution.sections,
+              }}
+              compact
+            />
+            <motion.button
+              whileTap={{ scale: 0.92 }}
+              onClick={handlePDF}
+              className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300"
+              title="Télécharger PDF"
+            >
+              <FileDown size={16} />
+            </motion.button>
+            <motion.button
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{
+                opacity: 1, scale: 1,
+                boxShadow: [
+                  "0 4px 12px rgba(245, 158, 11, 0.3)",
+                  "0 4px 20px rgba(245, 158, 11, 0.6)",
+                  "0 4px 12px rgba(245, 158, 11, 0.3)",
+                ],
+              }}
+              transition={{
+                opacity: { duration: 0.3 }, scale: { duration: 0.3 },
+                boxShadow: { duration: 1.8, repeat: Infinity },
+              }}
+              whileTap={{ scale: 0.95 }}
+              onClick={handleAskTutor}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white font-bold text-xs shadow-md"
+            >
+              <MessageCircleQuestion size={12} />
+              <span>Explique-moi</span>
+            </motion.button>
+          </>
         )}
       </header>
 
-      {/* Captured image preview */}
       {capturedImage && (
         <div className="px-4 pt-4">
           <div className="relative rounded-xl overflow-hidden bg-slate-200 dark:bg-slate-800 shadow-md">
-            <img
-              src={capturedImage}
-              alt="Exercice capturé"
-              className="w-full max-h-40 object-cover"
-            />
+            <img src={capturedImage} alt="Exercice" className="w-full max-h-40 object-cover" />
             {step === "solving" && (
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-sm">
                 <div className="text-white text-center">
@@ -157,7 +158,6 @@ export default function ScanSolve() {
                 </div>
               </div>
             )}
-            {/* Show OCR model used */}
             {solution?.ocrModel && (
               <ModelIndicator modelUsed={solution.ocrModel} position="bottom-right" size="xs" />
             )}
@@ -165,14 +165,10 @@ export default function ScanSolve() {
         </div>
       )}
 
-      {/* Error */}
       <AnimatePresence>
         {step === "error" && (
-          <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="mx-4 mt-4 p-4 rounded-xl bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-500/30 flex gap-3"
-          >
+          <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
+            className="mx-4 mt-4 p-4 rounded-xl bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-500/30 flex gap-3">
             <AlertCircle size={20} className="text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
               <div className="font-semibold text-sm text-red-900 dark:text-red-200 mb-1">Oups</div>
@@ -185,23 +181,15 @@ export default function ScanSolve() {
         )}
       </AnimatePresence>
 
-      {/* Solution */}
       <AnimatePresence>
         {step === "solution" && solution && (
-          <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="px-4 mt-4 space-y-4"
-          >
-            {/* Solver model badge */}
+          <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="px-4 mt-4 space-y-4">
             <div className="flex justify-end">
               <ModelIndicator modelUsed={solution.modelUsed} position="inline" size="xs" />
             </div>
 
             <section className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm">
-              <h2 className="text-[10px] uppercase tracking-widest font-black text-violet-600 dark:text-violet-400 mb-2">
-                Énoncé
-              </h2>
+              <h2 className="text-[10px] uppercase tracking-widest font-black text-violet-600 dark:text-violet-400 mb-2">Énoncé</h2>
               <p className="text-sm text-slate-900 dark:text-slate-100 leading-relaxed">{solution.enonce}</p>
             </section>
 
@@ -213,18 +201,46 @@ export default function ScanSolve() {
                   </h3>
                   <div className="space-y-1.5 font-mono text-xs text-slate-900 dark:text-slate-100">
                     {solution.donnees?.map((d, i) => (
-                      <DonneeRow key={i} donnee={d} />
+                      d.isQuestion ? (
+                        <div key={i} className="font-semibold text-violet-700 dark:text-violet-300">
+                          {d.symbol} = <span className="text-amber-600 dark:text-amber-400">?</span>
+                        </div>
+                      ) : (
+                        <div key={i}>
+                          <span className="font-semibold">{d.symbol}</span>
+                          <span className="text-slate-500"> = </span>
+                          <span className="font-bold text-slate-900 dark:text-white">{d.value}</span>
+                          {d.unit && <span className="text-slate-600 dark:text-slate-400 ml-1">{d.unit}</span>}
+                        </div>
+                      )
                     ))}
                   </div>
                 </div>
 
                 <div className="col-span-8 p-4">
                   {solution.sections?.map((section, i) => (
-                    <SolutionSection
-                      key={i}
-                      section={section}
-                      isLast={i === solution.sections.length - 1}
-                    />
+                    <div key={i} className={i < solution.sections.length - 1 ? "pb-4 mb-4 border-b border-slate-100 dark:border-slate-800" : ""}>
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white mb-2 flex items-baseline gap-1.5">
+                        <span className="text-violet-600 dark:text-violet-400">{section.number}-</span>
+                        <span className="italic text-slate-700 dark:text-slate-300">{section.verb}</span>{" "}
+                        <span className="text-slate-600 dark:text-slate-400 font-normal">{section.title}</span>
+                      </h4>
+                      <div className="space-y-1.5 pl-2 font-mono text-xs">
+                        {section.steps?.map((step, j) => (
+                          step.type === "result" && step.boxed ? (
+                            <div key={j} className="my-2 inline-block">
+                              <div className="px-3 py-1.5 border-2 border-emerald-500 dark:border-emerald-400 rounded-md bg-emerald-50 dark:bg-emerald-950/30 font-bold text-emerald-700 dark:text-emerald-300">
+                                {step.content}
+                              </div>
+                            </div>
+                          ) : step.type === "conversion" ? (
+                            <div key={j} className="text-blue-700 dark:text-blue-400 italic">{step.content}</div>
+                          ) : (
+                            <div key={j} className="text-slate-700 dark:text-slate-300">{step.content}</div>
+                          )
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -238,15 +254,13 @@ export default function ScanSolve() {
                 <ul className="space-y-1.5">
                   {solution.traps.map((trap, i) => (
                     <li key={i} className="text-xs text-amber-900 dark:text-amber-200 flex gap-2">
-                      <span>•</span>
-                      <span className="leading-relaxed">{trap}</span>
+                      <span>•</span><span className="leading-relaxed">{trap}</span>
                     </li>
                   ))}
                 </ul>
               </section>
             )}
 
-            {/* Big bottom CTA (still useful, also there) */}
             <motion.button
               whileTap={{ scale: 0.97 }}
               animate={{
@@ -271,76 +285,33 @@ export default function ScanSolve() {
                 </div>
               </div>
             </motion.button>
+
+            {/* Share + PDF buttons at bottom too */}
+            <div className="flex gap-2 mt-4">
+              <ShareButton
+                type="scan_result"
+                payload={{
+                  enonce: solution.enonce,
+                  donnees: solution.donnees,
+                  sections: solution.sections,
+                }}
+                label="Partager"
+              />
+              <motion.button
+                whileTap={{ scale: 0.97 }}
+                onClick={handlePDF}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold text-sm"
+              >
+                <FileDown size={16} />
+                Télécharger PDF
+              </motion.button>
+            </div>
+            <p className="text-center text-[11px] text-slate-500 mt-2">
+              💡 Partage avec un camarade qui pourrait avoir besoin
+            </p>
           </motion.div>
         )}
       </AnimatePresence>
     </div>
   );
-}
-
-function DonneeRow({ donnee }) {
-  if (donnee.isQuestion) {
-    return (
-      <div className="font-semibold text-violet-700 dark:text-violet-300">
-        {donnee.symbol} = <span className="text-amber-600 dark:text-amber-400">?</span>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <span className="font-semibold">{donnee.symbol}</span>
-      <span className="text-slate-500"> = </span>
-      <span className="font-bold text-slate-900 dark:text-white">{donnee.value}</span>
-      {donnee.unit && <span className="text-slate-600 dark:text-slate-400 ml-1">{donnee.unit}</span>}
-    </div>
-  );
-}
-
-function SolutionSection({ section, isLast }) {
-  return (
-    <div className={`${isLast ? "" : "pb-4 mb-4 border-b border-slate-100 dark:border-slate-800"}`}>
-      <h4 className="text-xs font-bold text-slate-900 dark:text-white mb-2 flex items-baseline gap-1.5">
-        <span className="text-violet-600 dark:text-violet-400">{section.number}-</span>
-        <span className="italic text-slate-700 dark:text-slate-300">{section.verb}</span>{" "}
-        <span className="text-slate-600 dark:text-slate-400 font-normal">{section.title}</span>
-      </h4>
-      <div className="space-y-1.5 pl-2 font-mono text-xs">
-        {section.steps?.map((step, i) => (
-          <StepLine key={i} step={step} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function StepLine({ step }) {
-  if (step.type === "result" && step.boxed) {
-    return (
-      <div className="my-2 inline-block">
-        <div className="px-3 py-1.5 border-2 border-emerald-500 dark:border-emerald-400 rounded-md bg-emerald-50 dark:bg-emerald-950/30 font-bold text-emerald-700 dark:text-emerald-300">
-          {step.content}
-        </div>
-      </div>
-    );
-  }
-  if (step.type === "conversion") {
-    return (
-      <div className="text-blue-700 dark:text-blue-400 italic">
-        {step.content}
-        {step.note && <span className="text-[10px] ml-2 opacity-75">({step.note})</span>}
-      </div>
-    );
-  }
-  if (step.type === "deduction") {
-    return (
-      <div className="text-slate-700 dark:text-slate-300">
-        <span className="italic text-violet-600 dark:text-violet-400">→ </span>
-        {step.content}
-      </div>
-    );
-  }
-  if (step.type === "note") {
-    return <div className="text-slate-500 dark:text-slate-400 text-xs italic font-sans">{step.content}</div>;
-  }
-  return <div className="text-slate-700 dark:text-slate-300">{step.content}</div>;
 }
