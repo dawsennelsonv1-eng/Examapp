@@ -1,61 +1,74 @@
 // src/components/classroom/ClassroomSession.jsx
-// Interactive teaching: virtual board grows step-by-step as tutor speaks.
-// Tutor explains → asks "Eske w konprann?" → user clicks Oui/Non → next step.
-// Failed attempts cascade: different words → analogy → kreyòl → diagram → ask specifically.
+// Wave 2: Full interactive classroom with segmented playback, multi-board, voice input,
+// suggested questions chips, tutor switching with context preservation.
 
 import { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import {
-  ArrowLeft, Send, Maximize2, Minimize2, Loader2,
-  Sparkles, User, Volume2, VolumeX, ThumbsUp, ThumbsDown,
-  PencilRuler,
-} from "lucide-react";
+import { motion } from "framer-motion";
+import { ArrowLeft, Send, Maximize2, Minimize2, Loader2, Users, ThumbsUp, ThumbsDown } from "lucide-react";
 import { useClassroomSessions } from "../../hooks/useClassroom";
 import { useApp } from "../../contexts/AppContext";
-import { speakText, stopSpeaking } from "../../services/ttsService";
-import VirtualBoard from "./VirtualBoard";
+import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from "../../services/ttsService";
+import { PERSONALITIES, BOARD_TYPES } from "../../utils/constants";
+import MultiBoard from "./MultiBoard";
+import MessageBubble from "./MessageBubble";
+import SuggestedQuestions from "./SuggestedQuestions";
+import VoiceInputButton from "./VoiceInputButton";
+import TutorSwitchModal from "./TutorSwitchModal";
+import TutorAvatar from "../shared/TutorAvatar";
+import ModelIndicator from "../shared/ModelIndicator";
+
+function defaultBoards() {
+  return [
+    { id: "board_enonce", type: "enonce", name: "Énoncé", donnees: [], items: [] },
+    { id: "board_solution", type: "solution", name: "Solution", items: [] },
+    { id: "board_visuel", type: "visuel", name: "Visuel", svg: null },
+  ];
+}
 
 export default function ClassroomSession({ session, onExit }) {
   const { appendMessage, updateSession } = useClassroomSessions();
   const { preferences, planTier } = useApp();
+
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [boardExpanded, setBoardExpanded] = useState(true);
   const [localMessages, setLocalMessages] = useState(session.messages || []);
+
+  // Boards state — persisted in session.boards if exists, else default
+  const [boards, setBoards] = useState(session.boards || defaultBoards());
+  const [activeBoardId, setActiveBoardId] = useState(session.activeBoardId || boards[0]?.id);
+  const [tutorWritingOn, setTutorWritingOn] = useState(null);
+
+  // Persona — can change mid-session
+  const [currentPersonaId, setCurrentPersonaId] = useState(
+    session.currentPersonaId || preferences?.personality || "joseph"
+  );
+  const [showTutorSwitch, setShowTutorSwitch] = useState(false);
+
+  // Voice + speaking state
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
-  const [currentBoardState, setCurrentBoardState] = useState(session.boardState || {
-    donnees: [],
-    activeSteps: [],
-    diagramSvg: null,
-  });
-  const [currentStep, setCurrentStep] = useState(session.currentStep || "intro");
+  const [isPaused, setIsPaused] = useState(false);
+
+  // Conversation state
   const [failCount, setFailCount] = useState(session.failCount || 0);
-  const [currentSectionNumber, setCurrentSectionNumber] = useState(0);
+  const [suggestedQuestions, setSuggestedQuestions] = useState([]);
+  const [lastModelUsed, setLastModelUsed] = useState(null);
+  const [lastTTSModel, setLastTTSModel] = useState(null);
+  const [pendingConfirmation, setPendingConfirmation] = useState(false);
+
   const messagesEndRef = useRef(null);
   const hasInitiated = useRef(false);
-
   const isPremium = planTier === "premium";
 
-  // Initial greeting + start teaching if exercise loaded
+  // Initial greeting on first mount
   useEffect(() => {
     if (hasInitiated.current) return;
     hasInitiated.current = true;
-
     if (localMessages.length === 0) {
       if (session.exercise) {
-        // Tutor introduces the exercise
         startExerciseTeaching();
       } else {
-        // Open-ended greeting
-        const greeting = {
-          id: `msg_${Date.now()}`,
-          role: "tutor",
-          content: `Bonjou ${preferences?.name || ""} ! Ki sa ou vle nou travay ansanm jodi a ?`,
-          timestamp: Date.now(),
-        };
-        appendMessage(session.id, greeting);
-        setLocalMessages([greeting]);
-        speakMessage(greeting);
+        sendGreeting();
       }
     }
   }, []); // eslint-disable-line
@@ -68,56 +81,174 @@ export default function ClassroomSession({ session, onExit }) {
     return () => stopSpeaking();
   }, []);
 
-  const startExerciseTeaching = async () => {
-    const exercise = session.exercise;
-    const introMsg = {
+  // Auto-save boards whenever they change
+  useEffect(() => {
+    updateSession(session.id, { boards, activeBoardId, currentPersonaId, failCount });
+  }, [boards, activeBoardId, currentPersonaId, failCount]); // eslint-disable-line
+
+  const sendGreeting = () => {
+    const persona = PERSONALITIES.find((p) => p.id === currentPersonaId);
+    const name = preferences?.name ? `${preferences.name}` : "";
+    const greeting = {
       id: `msg_${Date.now()}`,
       role: "tutor",
-      content: `Bon ${preferences?.name || ""}, gade. Nou pral travay sou egzèsis sa a ansanm, etap pa etap.
-
-Premye bagay: idantifye Données yo. M ap kòmanse mete yo sou tableau a.`,
+      personaId: currentPersonaId,
+      segments: [
+        {
+          type: "acknowledge",
+          text: `Bonjou ${name} ! M se ${persona?.name}. Ki sa w vle nou travay ansanm jodi a ?`,
+          speakable: `Bonjou ${name}. M se ${persona?.name}. Ki sa w vle nou travay ansanm jodi a ?`,
+        },
+      ],
+      content: `Bonjou ${name} ! M se ${persona?.name}. Ki sa w vle nou travay ansanm jodi a ?`,
       timestamp: Date.now(),
     };
-    setLocalMessages([introMsg]);
-    appendMessage(session.id, introMsg);
-    setCurrentStep("donnees");
-    speakMessage(introMsg);
+    setLocalMessages([greeting]);
+    appendMessage(session.id, greeting);
+    speakMessage(greeting);
+  };
 
-    // Reveal données one by one (sync with voice timing)
+  const startExerciseTeaching = async () => {
+    const exercise = session.exercise;
+    const name = preferences?.name || "";
+
+    // Pre-populate énoncé board with the exercise
+    const enonceBoard = {
+      id: "board_enonce",
+      type: "enonce",
+      name: "Énoncé",
+      donnees: [], // start empty, will be filled as tutor reveals
+      items: [],
+    };
+    const solutionBoard = { id: "board_solution", type: "solution", name: "Solution", items: [] };
+    const visuelBoard = { id: "board_visuel", type: "visuel", name: "Visuel", svg: null };
+    const newBoards = [enonceBoard, solutionBoard, visuelBoard];
+    setBoards(newBoards);
+    setActiveBoardId("board_enonce");
+    setTutorWritingOn("board_enonce");
+
+    const intro = {
+      id: `msg_${Date.now()}`,
+      role: "tutor",
+      personaId: currentPersonaId,
+      segments: [
+        {
+          type: "acknowledge",
+          text: `Bon ${name}, gade. Nou pral travay sou egzèsis sa a ansanm.`,
+          speakable: `Bon ${name}, gade. Nou pral travay sou egzèsis sa a ansanm.`,
+        },
+        {
+          type: "explain",
+          text: `Premye etap: m ap mete Données yo sou tablo a.`,
+          speakable: `Premye etap. M ap mete Données yo sou tablo a.`,
+        },
+      ],
+      content: `Bon ${name}, gade. M ap mete Données yo sou tablo a.`,
+      timestamp: Date.now(),
+    };
+    setLocalMessages([intro]);
+    appendMessage(session.id, intro);
+    speakMessage(intro);
+
+    // Reveal données on enonce board one by one
     await new Promise((r) => setTimeout(r, 1500));
     for (const d of exercise.donnees || []) {
-      setCurrentBoardState((prev) => ({
-        ...prev,
-        donnees: [...prev.donnees, d],
-      }));
-      await new Promise((r) => setTimeout(r, 600));
+      setBoards((prev) =>
+        prev.map((b) =>
+          b.id === "board_enonce" ? { ...b, donnees: [...b.donnees, d] } : b
+        )
+      );
+      await new Promise((r) => setTimeout(r, 700));
     }
 
-    // After all données revealed, ask comprehension
+    // Ask comprehension
     await new Promise((r) => setTimeout(r, 800));
     const checkMsg = {
       id: `msg_${Date.now()}_check`,
       role: "tutor",
-      content: "Bon, donnée yo sou tableau a. Eske w konprann sa nou genyen ?",
+      personaId: currentPersonaId,
+      segments: [
+        {
+          type: "question",
+          text: "Eske w konprann tout Données yo ?",
+          speakable: "Eske w konprann tout Données yo ?",
+        },
+      ],
+      content: "Eske w konprann tout Données yo ?",
       timestamp: Date.now(),
       needsConfirmation: true,
     };
     setLocalMessages((prev) => [...prev, checkMsg]);
     appendMessage(session.id, checkMsg);
+    setPendingConfirmation(true);
     speakMessage(checkMsg);
+    setTutorWritingOn(null);
   };
 
   const speakMessage = async (msg) => {
-    if (!msg.content) return;
+    if (!msg.segments && !msg.content) return;
     setSpeakingMessageId(msg.id);
+    setIsPaused(false);
     try {
-      const speakable = msg.speakable || stripFormulasForSpeech(msg.content);
-      await speakText(speakable, "fr-FR", isPremium);
+      const text = msg.segments
+        ? msg.segments.map((s) => s.speakable || s.text).join(" ")
+        : msg.content;
+      const result = await speakText(text, "fr-FR", {
+        isPremium,
+        persona: msg.personaId || currentPersonaId,
+        onModelUsed: (m) => setLastTTSModel(m),
+      });
+      if (result?.promise) await result.promise;
     } catch (err) {
       console.warn("Speech failed:", err);
     } finally {
       setSpeakingMessageId(null);
+      setIsPaused(false);
     }
+  };
+
+  const handlePauseResume = (msgId) => {
+    if (isPaused) {
+      resumeSpeaking();
+      setIsPaused(false);
+    } else {
+      pauseSpeaking();
+      setIsPaused(true);
+    }
+  };
+
+  const handleStopSpeak = () => {
+    stopSpeaking();
+    setSpeakingMessageId(null);
+    setIsPaused(false);
+  };
+
+  const applyBoardActions = async (boardActions, msgId) => {
+    if (!Array.isArray(boardActions) || !boardActions.length) return;
+
+    for (const action of boardActions) {
+      const boardId = `board_${action.board}`;
+      setTutorWritingOn(boardId);
+      setActiveBoardId(boardId);
+
+      if (action.action === "add" && action.item) {
+        setBoards((prev) =>
+          prev.map((b) => {
+            if (b.id !== boardId) return b;
+            if (action.item.type === "donnee" || b.type === "enonce") {
+              return { ...b, donnees: [...(b.donnees || []), action.item] };
+            }
+            return { ...b, items: [...(b.items || []), action.item] };
+          })
+        );
+      } else if (action.action === "clear") {
+        setBoards((prev) =>
+          prev.map((b) => (b.id === boardId ? { ...b, items: [], donnees: [] } : b))
+        );
+      }
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    setTutorWritingOn(null);
   };
 
   const handleSend = async (overrideText = null) => {
@@ -128,6 +259,7 @@ Premye bagay: idantifye Données yo. M ap kòmanse mete yo sou tableau a.`,
       id: `msg_${Date.now()}`,
       role: "user",
       content: text,
+      text,
       timestamp: Date.now(),
     };
 
@@ -136,6 +268,8 @@ Premye bagay: idantifye Données yo. M ap kòmanse mete yo sou tableau a.`,
     appendMessage(session.id, userMsg);
     setInput("");
     setSending(true);
+    setPendingConfirmation(false);
+    setSuggestedQuestions([]);
 
     try {
       const response = await fetch("/api/chat", {
@@ -145,81 +279,78 @@ Premye bagay: idantifye Données yo. M ap kòmanse mete yo sou tableau a.`,
           sessionId: session.id,
           context: {
             exercise: session.exercise,
-            currentStep,
-            boardState: currentBoardState,
+            boards: boards.map((b) => ({ id: b.id, type: b.type, name: b.name })),
+            activeBoard: activeBoardId,
           },
           messages: newMessages.map((m) => ({
             role: m.role === "tutor" ? "assistant" : "user",
-            content: m.content,
+            content: m.content || m.text,
           })),
           userMessage: text,
-          preferences: preferences || { language: "mix", personality: "patient" },
+          preferences: { ...preferences, personality: currentPersonaId },
           teachingMode: session.exercise ? "step-by-step" : "general",
-          currentStep,
           failCount,
+          activeBoard: activeBoardId?.replace("board_", ""),
         }),
       });
 
       if (!response.ok) throw new Error("API unavailable");
 
       const data = await response.json();
+      const segments = data?.data?.segments || [];
+      const combinedText = segments.map((s) => s.text).join("\n\n");
+
       const tutorMsg = {
         id: `msg_${Date.now() + 1}`,
         role: "tutor",
-        content: data?.data?.reply || "M ap reflechi sou sa...",
-        speakable: data?.data?.speakable,
+        personaId: currentPersonaId,
+        segments,
+        content: combinedText,
         timestamp: Date.now(),
         needsConfirmation: data?.data?.needsConfirmation,
       };
       setLocalMessages((prev) => [...prev, tutorMsg]);
       appendMessage(session.id, tutorMsg);
 
-      // Apply board update
-      const boardUpdate = data?.data?.boardUpdate;
-      if (boardUpdate && boardUpdate.action === "add") {
-        if (boardUpdate.target === "donnees" && boardUpdate.content) {
-          setCurrentBoardState((prev) => ({
-            ...prev,
-            donnees: [
-              ...prev.donnees,
-              typeof boardUpdate.content === "string"
-                ? { symbol: "?", value: boardUpdate.content, unit: "" }
-                : boardUpdate.content,
-            ],
-          }));
-        } else if (boardUpdate.target === "solution" && boardUpdate.content) {
-          setCurrentBoardState((prev) => ({
-            ...prev,
-            activeSteps: [
-              ...prev.activeSteps,
-              typeof boardUpdate.content === "string"
-                ? { type: "deduction", content: boardUpdate.content }
-                : boardUpdate.content,
-            ],
-          }));
+      setLastModelUsed(data?.data?.modelUsed);
+
+      // Apply board actions from all segments sequentially
+      for (const seg of segments) {
+        if (Array.isArray(seg.boardActions) && seg.boardActions.length) {
+          await applyBoardActions(seg.boardActions);
         }
       }
 
-      // Request diagram if AI suggested
+      // Set suggested questions
+      if (Array.isArray(data?.data?.suggestedQuestions) && data.data.suggestedQuestions.length) {
+        setSuggestedQuestions(data.data.suggestedQuestions);
+      }
+
+      // Set confirmation flag
+      if (data?.data?.needsConfirmation) {
+        setPendingConfirmation(true);
+      }
+
+      // Tutor switch suggestion
+      if (data?.data?.tutorSwitchSuggestion || failCount >= 3) {
+        setShowTutorSwitch(true);
+      }
+
+      // Diagram request
       if (data?.data?.shouldDrawDiagram && data?.data?.diagramDescription) {
         requestDiagram(data.data.diagramDescription);
       }
 
-      // Speak the response
+      // Speak
       speakMessage(tutorMsg);
-
-      // Persist board state
-      updateSession(session.id, {
-        boardState: currentBoardState,
-        currentStep,
-        failCount,
-      });
     } catch (err) {
       console.error("Chat error:", err);
       const errorMsg = {
         id: `msg_${Date.now() + 1}`,
         role: "tutor",
-        content: "Pa gen koneksyon entènèt la. Eseye ankò.",
+        personaId: currentPersonaId,
+        segments: [{ type: "acknowledge", text: "Pa gen koneksyon. Eseye ankò.", speakable: "Pa gen koneksyon. Eseye ankò." }],
+        content: "Pa gen koneksyon. Eseye ankò.",
         timestamp: Date.now(),
       };
       setLocalMessages((prev) => [...prev, errorMsg]);
@@ -229,63 +360,25 @@ Premye bagay: idantifye Données yo. M ap kòmanse mete yo sou tableau a.`,
     }
   };
 
-  const handleConfirm = async (understood) => {
+  const handleConfirm = (understood) => {
+    setPendingConfirmation(false);
     if (understood) {
       setFailCount(0);
-      // Move to next step
-      await advanceToNextStep();
+      handleSend("Wi m konprann. Ann kontinye.");
     } else {
-      setFailCount((prev) => prev + 1);
-      // Ask the AI to re-explain differently
-      const newFailCount = failCount + 1;
+      const newFail = failCount + 1;
+      setFailCount(newFail);
       let prompt;
-      if (newFailCount === 1) {
-        prompt = "M pa konprann. Eksplike m yon lòt jan tanpri.";
-      } else if (newFailCount === 2) {
-        prompt = "M toujou pa konprann. Bay yon egzanp konkrè.";
-      } else if (newFailCount === 3) {
-        prompt = "Map gen difikilte. Eksplike m sa an kreyòl ak yon schema tanpri.";
-      } else {
-        prompt = "Pou m kapab ede w konprann pi byen, di m egzakteman ki sa w pa konprann.";
-      }
+      if (newFail === 1) prompt = "M pa konprann. Eksplike m yon lòt jan tanpri.";
+      else if (newFail === 2) prompt = "M toujou pa konprann. Bay yon egzanp konkrè.";
+      else if (newFail === 3) prompt = "M ap gen difikilte. Eksplike m an kreyòl ak yon schema.";
+      else prompt = "Pou m kapab ede w konprann pi byen, ki sa egzakteman ou pa konprann ?";
       handleSend(prompt);
     }
   };
 
-  const advanceToNextStep = async () => {
-    const exercise = session.exercise;
-    if (!exercise) return;
-
-    if (currentStep === "donnees") {
-      // Move to first section
-      setCurrentStep("section_1");
-      setCurrentSectionNumber(1);
-      handleSend(`Bon, m konprann données yo. Kòmanse pwemyè etap la tanpri.`);
-    } else if (currentStep.startsWith("section_")) {
-      const sectionIdx = parseInt(currentStep.split("_")[1]);
-      const nextIdx = sectionIdx + 1;
-      if (nextIdx <= (exercise.sections?.length || 0)) {
-        setCurrentStep(`section_${nextIdx}`);
-        setCurrentSectionNumber(nextIdx);
-        setCurrentBoardState((prev) => ({ ...prev, activeSteps: [] }));
-        handleSend(`Pase nan etap ${nextIdx} tanpri.`);
-      } else {
-        // Done!
-        setCurrentStep("done");
-        const doneMsg = {
-          id: `msg_${Date.now()}`,
-          role: "tutor",
-          content: `Bravo ${preferences?.name || ""}! Nou fin solisyone egzèsis la ansanm. Eske ou genyen yon lòt kesyon ?`,
-          timestamp: Date.now(),
-        };
-        setLocalMessages((prev) => [...prev, doneMsg]);
-        appendMessage(session.id, doneMsg);
-        speakMessage(doneMsg);
-      }
-    }
-  };
-
   const requestDiagram = async (description) => {
+    setTutorWritingOn("board_visuel");
     try {
       const response = await fetch("/api/board", {
         method: "POST",
@@ -300,11 +393,50 @@ Premye bagay: idantifye Données yo. M ap kòmanse mete yo sou tableau a.`,
       if (response.ok) {
         const data = await response.json();
         if (data?.data?.svg) {
-          setCurrentBoardState((prev) => ({ ...prev, diagramSvg: data.data.svg }));
+          setBoards((prev) =>
+            prev.map((b) => (b.id === "board_visuel" ? { ...b, svg: data.data.svg } : b))
+          );
+          setActiveBoardId("board_visuel");
         }
       }
     } catch (err) {
       console.warn("Diagram request failed:", err);
+    } finally {
+      setTutorWritingOn(null);
+    }
+  };
+
+  const handleTutorSwitch = (newPersonaId) => {
+    const oldPersona = PERSONALITIES.find((p) => p.id === currentPersonaId);
+    const newPersona = PERSONALITIES.find((p) => p.id === newPersonaId);
+    setCurrentPersonaId(newPersonaId);
+    setFailCount(0);
+    setShowTutorSwitch(false);
+
+    const switchMsg = {
+      id: `msg_${Date.now()}`,
+      role: "tutor",
+      personaId: newPersonaId,
+      segments: [
+        {
+          type: "acknowledge",
+          text: `Bonjou, m se ${newPersona?.name}. M wè ${oldPersona?.name} t ap eksplike w yon bagay men li pa klè ase. Kite m eseye nan jan pa m...`,
+          speakable: `Bonjou, m se ${newPersona?.name}. Kite m eseye eksplike w sa nan jan pa m.`,
+        },
+      ],
+      content: `Bonjou, m se ${newPersona?.name}.`,
+      timestamp: Date.now(),
+    };
+    setLocalMessages((prev) => [...prev, switchMsg]);
+    appendMessage(session.id, switchMsg);
+    speakMessage(switchMsg);
+  };
+
+  const onBoardChange = (newBoardId) => {
+    setActiveBoardId(newBoardId);
+    // If user switches away from where tutor is writing, send a context message
+    if (tutorWritingOn && newBoardId !== tutorWritingOn && !sending) {
+      // Optionally trigger tutor question — for now just track
     }
   };
 
@@ -315,13 +447,12 @@ Premye bagay: idantifye Données yo. M ap kòmanse mete yo sou tableau a.`,
     }
   };
 
-  const lastMessage = localMessages[localMessages.length - 1];
-  const showConfirmButtons = lastMessage?.role === "tutor" && lastMessage?.needsConfirmation;
+  const currentPersona = PERSONALITIES.find((p) => p.id === currentPersonaId);
 
   return (
     <div className="fixed inset-0 z-40 bg-slate-100 dark:bg-slate-950 flex flex-col">
       {/* Header */}
-      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center gap-3 flex-shrink-0">
+      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-2.5 flex items-center gap-2 flex-shrink-0">
         <button
           onClick={() => {
             stopSpeaking();
@@ -331,14 +462,23 @@ Premye bagay: idantifye Données yo. M ap kòmanse mete yo sou tableau a.`,
         >
           <ArrowLeft size={18} />
         </button>
+        <TutorAvatar personaId={currentPersonaId} size="sm" />
         <div className="flex-1 min-w-0">
           <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
-            {session.title}
+            {currentPersona?.name} · {session.title}
           </div>
           <div className="text-[11px] text-slate-500 dark:text-slate-400">
-            {session.subject} {session.exercise ? "· Étape par étape" : ""}
+            {session.subject || "Général"}
+            {lastModelUsed && <span className="ml-2">· {lastModelUsed.split("/").pop()}</span>}
           </div>
         </div>
+        <button
+          onClick={() => setShowTutorSwitch(true)}
+          className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400"
+          title="Changer de prof"
+        >
+          <Users size={16} />
+        </button>
         <button
           onClick={() => setBoardExpanded(!boardExpanded)}
           className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400"
@@ -347,63 +487,81 @@ Premye bagay: idantifye Données yo. M ap kòmanse mete yo sou tableau a.`,
         </button>
       </header>
 
-      {/* Virtual board */}
+      {/* Multi-board */}
       <motion.div
-        animate={{
-          height: boardExpanded ? "55%" : "30%",
-        }}
+        animate={{ height: boardExpanded ? "50%" : "25%" }}
         transition={{ duration: 0.3 }}
-        className="flex-shrink-0 p-3"
+        className="flex-shrink-0 px-2 pt-2"
       >
-        <VirtualBoard
-          boardState={currentBoardState}
+        <MultiBoard
+          boards={boards}
+          activeBoardId={activeBoardId}
+          onChangeBoard={onBoardChange}
+          tutorWritingOn={tutorWritingOn}
           exercise={session.exercise}
-          currentSectionNumber={currentSectionNumber}
         />
       </motion.div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 pb-2 space-y-3">
+      <div className="flex-1 overflow-y-auto px-3 pt-3 pb-1 space-y-3">
         {localMessages.map((msg) => (
           <MessageBubble
             key={msg.id}
             message={msg}
-            isSpeaking={speakingMessageId === msg.id}
-            onSpeak={() => speakMessage(msg)}
-            onStop={() => {
-              stopSpeaking();
-              setSpeakingMessageId(null);
-            }}
+            isUser={msg.role === "user"}
+            isSpeaking={speakingMessageId === msg.id && !isPaused}
+            isPaused={speakingMessageId === msg.id && isPaused}
+            onPlay={() => speakMessage(msg)}
+            onPause={() => handlePauseResume(msg.id)}
+            onStop={handleStopSpeak}
+            personaId={msg.personaId || currentPersonaId}
           />
         ))}
-        {sending && <TypingIndicator />}
+        {sending && (
+          <div className="flex gap-2 items-center text-slate-500 dark:text-slate-400 text-xs pl-2">
+            <TutorAvatar personaId={currentPersonaId} size="xs" speaking />
+            <span>écrit...</span>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Confirmation buttons (when teacher asks "Eske w konprann?") */}
-      {showConfirmButtons && !sending && (
+      {/* Confirmation buttons */}
+      {pendingConfirmation && !sending && (
         <motion.div
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="px-4 pb-2 flex gap-2 flex-shrink-0"
+          className="px-3 pb-2 flex gap-2 flex-shrink-0"
         >
           <motion.button
             whileTap={{ scale: 0.95 }}
             onClick={() => handleConfirm(true)}
-            className="flex-1 py-3 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white font-bold shadow-md flex items-center justify-center gap-2"
+            className="flex-1 py-2.5 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white font-bold text-sm shadow-md flex items-center justify-center gap-2"
           >
-            <ThumbsUp size={18} />
-            Oui, je comprends
+            <ThumbsUp size={16} />
+            Wi, m konprann
           </motion.button>
           <motion.button
             whileTap={{ scale: 0.95 }}
             onClick={() => handleConfirm(false)}
-            className="flex-1 py-3 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 text-white font-bold shadow-md flex items-center justify-center gap-2"
+            className="flex-1 py-2.5 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 text-white font-bold text-sm shadow-md flex items-center justify-center gap-2"
           >
-            <ThumbsDown size={18} />
-            Non, explique encore
+            <ThumbsDown size={16} />
+            Non, eksplike ankò
           </motion.button>
         </motion.div>
+      )}
+
+      {/* Suggested questions */}
+      {!sending && suggestedQuestions.length > 0 && !pendingConfirmation && (
+        <SuggestedQuestions
+          questions={suggestedQuestions}
+          onPick={(q) => {
+            setSuggestedQuestions([]);
+            handleSend(q);
+          }}
+          onDismiss={() => setSuggestedQuestions([])}
+        />
       )}
 
       {/* Composer */}
@@ -420,6 +578,10 @@ Premye bagay: idantifye Données yo. M ap kòmanse mete yo sou tableau a.`,
               className="flex-1 bg-transparent text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none"
             />
           </div>
+          <VoiceInputButton
+            onTranscribed={(text) => handleSend(text)}
+            disabled={sending}
+          />
           <motion.button
             whileTap={{ scale: 0.9 }}
             onClick={() => handleSend()}
@@ -430,80 +592,13 @@ Premye bagay: idantifye Données yo. M ap kòmanse mete yo sou tableau a.`,
           </motion.button>
         </div>
       </div>
+
+      <TutorSwitchModal
+        isOpen={showTutorSwitch}
+        currentPersonaId={currentPersonaId}
+        onClose={() => setShowTutorSwitch(false)}
+        onSwitch={handleTutorSwitch}
+      />
     </div>
   );
-}
-
-function MessageBubble({ message, isSpeaking, onSpeak, onStop }) {
-  const isUser = message.role === "user";
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={`flex gap-2 ${isUser ? "justify-end" : "justify-start"}`}
-    >
-      {!isUser && (
-        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 flex items-center justify-center flex-shrink-0 shadow-sm">
-          <Sparkles size={14} className="text-white" />
-        </div>
-      )}
-      <div className={`max-w-[75%] flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}>
-        <div
-          className={`rounded-2xl px-4 py-2.5 ${
-            isUser
-              ? "bg-violet-600 text-white rounded-br-sm"
-              : "bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-bl-sm shadow-sm"
-          }`}
-        >
-          <p className="text-sm leading-relaxed whitespace-pre-wrap">
-            {message.content}
-          </p>
-        </div>
-        {!isUser && (
-          <button
-            onClick={isSpeaking ? onStop : onSpeak}
-            className="flex items-center gap-1 px-2 py-1 text-[11px] text-slate-500 dark:text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
-          >
-            {isSpeaking ? <VolumeX size={12} /> : <Volume2 size={12} />}
-            {isSpeaking ? "Arrêter" : "Écouter"}
-          </button>
-        )}
-      </div>
-      {isUser && (
-        <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
-          <User size={14} className="text-slate-600 dark:text-slate-300" />
-        </div>
-      )}
-    </motion.div>
-  );
-}
-
-function TypingIndicator() {
-  return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-2 justify-start">
-      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 flex items-center justify-center flex-shrink-0">
-        <Sparkles size={14} className="text-white" />
-      </div>
-      <div className="bg-white dark:bg-slate-800 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm flex items-center gap-1">
-        {[0, 0.2, 0.4].map((delay, i) => (
-          <motion.span
-            key={i}
-            animate={{ opacity: [0.3, 1, 0.3] }}
-            transition={{ duration: 1.2, repeat: Infinity, delay }}
-            className="w-2 h-2 rounded-full bg-slate-400"
-          />
-        ))}
-      </div>
-    </motion.div>
-  );
-}
-
-function stripFormulasForSpeech(text) {
-  // Remove LaTeX-like math markers, keep readable text
-  return text
-    .replace(/\\\(|\\\)|\\\[|\\\]/g, "")
-    .replace(/\$\$/g, "")
-    .replace(/\$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
 }
