@@ -1,9 +1,10 @@
 // src/hooks/useClassroom.js
-// Wave 2: Sessions store boards state, persona switches, activeBoardId.
+// v8: Tracks last session summary for "Pwofesè remember" feature.
 
 import { useCallback, useEffect, useState } from "react";
 
 const SESSIONS_KEY = "laureat.classroom.sessions";
+const LAST_SESSION_SUMMARY_KEY = "laureat.lastSessionSummary";
 
 function loadFromStorage() {
   try {
@@ -92,6 +93,33 @@ export function useClassroomSessions() {
 
   const getSession = useCallback((id) => loadFromStorage().find((s) => s.id === id), []);
 
+  // PWOFESÈ REMEMBER: capture summary on session close
+  const captureSessionSummary = useCallback((session) => {
+    if (!session) return;
+    const summary = {
+      sessionId: session.id,
+      subject: session.subject,
+      title: session.title,
+      lastTopic: session.exercise?.enonce?.substring(0, 100) || session.title,
+      lastPersonaId: session.currentPersonaId,
+      didComplete: session.currentStep === "done",
+      failedAttempts: session.failCount || 0,
+      timestamp: Date.now(),
+    };
+    try {
+      localStorage.setItem(LAST_SESSION_SUMMARY_KEY, JSON.stringify(summary));
+    } catch {}
+  }, []);
+
+  const getLastSessionSummary = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(LAST_SESSION_SUMMARY_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const sortedSessions = [...sessions].sort((a, b) => b.lastViewedAt - a.lastViewedAt);
 
   return {
@@ -101,5 +129,7 @@ export function useClassroomSessions() {
     appendMessage,
     deleteSession,
     getSession,
+    captureSessionSummary,
+    getLastSessionSummary,
   };
 }
