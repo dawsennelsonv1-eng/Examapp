@@ -1,6 +1,5 @@
 // src/hooks/useClassroom.js
-// Manages classroom sessions in localStorage.
-// Sessions store: exercise data, conversation, board state, current step.
+// Wave 2: Sessions store boards state, persona switches, activeBoardId.
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -19,9 +18,7 @@ export function useClassroomSessions() {
 
   useEffect(() => {
     const onStorage = (e) => {
-      if (e.key === SESSIONS_KEY) {
-        setSessions(loadFromStorage());
-      }
+      if (e.key === SESSIONS_KEY) setSessions(loadFromStorage());
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
@@ -29,27 +26,27 @@ export function useClassroomSessions() {
 
   const persist = useCallback((list) => {
     try {
-      const trimmed = list.slice(-30); // keep last 30 sessions
+      const trimmed = list.slice(-30);
       localStorage.setItem(SESSIONS_KEY, JSON.stringify(trimmed));
       setSessions(trimmed);
     } catch {}
   }, []);
 
   const createSession = useCallback(
-    ({ subject, title, exercise = null, firstMessage = null }) => {
+    ({ subject, title, exercise = null, firstMessage = null, personaId = null }) => {
       const session = {
         id: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         subject: subject || "Général",
         title: title || "Nouvelle conversation",
-        exercise, // Full exercise data from scan (enonce, donnees, sections)
+        exercise,
         messages: firstMessage ? [firstMessage] : [],
-        boardState: {
-          donnees: [], // Données revealed so far
-          activeSection: null,
-          activeSteps: [], // Steps revealed in current section
-          diagramSvg: null,
-        },
-        currentStep: "intro", // intro | donnees | section_1 | section_2 | done
+        boards: [
+          { id: "board_enonce", type: "enonce", name: "Énoncé", donnees: [], items: [] },
+          { id: "board_solution", type: "solution", name: "Solution", items: [] },
+          { id: "board_visuel", type: "visuel", name: "Visuel", svg: null },
+        ],
+        activeBoardId: "board_enonce",
+        currentPersonaId: personaId,
         failCount: 0,
         createdAt: Date.now(),
         lastViewedAt: Date.now(),
@@ -77,9 +74,7 @@ export function useClassroomSessions() {
     (id, message) => {
       const current = loadFromStorage();
       const next = current.map((s) =>
-        s.id === id
-          ? { ...s, messages: [...s.messages, message], lastViewedAt: Date.now() }
-          : s
+        s.id === id ? { ...s, messages: [...s.messages, message], lastViewedAt: Date.now() } : s
       );
       persist(next);
       return next.find((s) => s.id === id);
@@ -95,13 +90,9 @@ export function useClassroomSessions() {
     [persist]
   );
 
-  const getSession = useCallback((id) => {
-    return loadFromStorage().find((s) => s.id === id);
-  }, []);
+  const getSession = useCallback((id) => loadFromStorage().find((s) => s.id === id), []);
 
-  const sortedSessions = [...sessions].sort(
-    (a, b) => b.lastViewedAt - a.lastViewedAt
-  );
+  const sortedSessions = [...sessions].sort((a, b) => b.lastViewedAt - a.lastViewedAt);
 
   return {
     sessions: sortedSessions,
