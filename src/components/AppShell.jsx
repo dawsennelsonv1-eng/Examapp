@@ -1,12 +1,12 @@
 // src/components/AppShell.jsx
-// Main app shell: top header + page content + BottomTabBar.
-// Replaces the old Layout.jsx. Uses the original BottomTabBar that the user prefers.
+// v9: Mounts FirstLaunchTutorial after onboarding.
 
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Bell, User, Flame } from "lucide-react";
+import { Bell, Flame } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
 import BottomTabBar from "./BottomTabBar";
+import FirstLaunchTutorial from "./shared/FirstLaunchTutorial";
 
 export default function AppShell() {
   const location = useLocation();
@@ -19,6 +19,7 @@ export default function AppShell() {
         <Outlet />
       </main>
       {!hideChrome && <BottomTabBar />}
+      <FirstLaunchTutorial />
     </div>
   );
 }
@@ -38,11 +39,8 @@ function TopHeader() {
       <button className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300">
         <Bell size={18} />
       </button>
-      <motion.button
-        whileTap={{ scale: 0.92 }}
-        onClick={() => navigate("/profile")}
-        className="w-9 h-9 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 flex items-center justify-center text-white shadow-md font-bold text-sm"
-      >
+      <motion.button whileTap={{ scale: 0.92 }} onClick={() => navigate("/profile")}
+        className="w-9 h-9 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 flex items-center justify-center text-white shadow-md font-bold text-sm">
         {initial}
       </motion.button>
     </header>
