@@ -1,5 +1,5 @@
 // src/pages/ScanSolve.jsx
-// v9: Saves to scan history on successful solve, handles ?replay=1 from home history.
+// FINAL: top-right Explique-moi button + Share + PDF + scan history save + replay.
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -26,7 +26,6 @@ export default function ScanSolve() {
   const [solution, setSolution] = useState(null);
   const [error, setError] = useState(null);
 
-  // Handle replay from history
   useEffect(() => {
     if (searchParams.get("replay") === "1") {
       const raw = sessionStorage.getItem("laureat.scanReplay");
@@ -81,7 +80,6 @@ export default function ScanSolve() {
       setSolution(result.data);
       setStep("solution");
 
-      // Save to history
       addScan({
         enonce: result.data.enonce,
         donnees: result.data.donnees,

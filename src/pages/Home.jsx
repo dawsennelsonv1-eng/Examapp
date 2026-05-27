@@ -1,5 +1,5 @@
 // src/pages/Home.jsx
-// v9: Adds scan history section + Pwofesè remember welcome banner.
+// FINAL: Pwofesè remember banner + scan history section + missions + leaderboard.
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
@@ -28,9 +28,8 @@ export default function Home() {
   const name = preferences?.name || "champion";
 
   const [showRememberBanner, setShowRememberBanner] = useState(true);
-  const lastSession = getLastSessionSummary();
+  const lastSession = getLastSessionSummary ? getLastSessionSummary() : null;
 
-  // Show banner only if last session was within 7 days and not dismissed
   const showBanner = showRememberBanner && lastSession && (Date.now() - lastSession.timestamp < 7 * 24 * 60 * 60 * 1000);
   const tutorPersona = PERSONALITIES.find((p) => p.id === (lastSession?.lastPersonaId || preferences?.personality)) || PERSONALITIES[0];
 
@@ -87,7 +86,6 @@ export default function Home() {
       </header>
 
       <main className="px-4 py-6 space-y-6 -mt-4 relative z-10">
-        {/* Pwofesè remember banner */}
         <AnimatePresence>
           {showBanner && (
             <motion.div
@@ -125,7 +123,6 @@ export default function Home() {
           )}
         </AnimatePresence>
 
-        {/* Classroom CTA */}
         <motion.button initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} whileTap={{ scale: 0.98 }} onClick={() => navigate("/classe")}
           className="w-full rounded-2xl bg-gradient-to-br from-amber-400 via-orange-500 to-red-600 p-4 text-white shadow-lg shadow-orange-500/30 flex items-center gap-3">
           <div className="w-12 h-12 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
@@ -138,10 +135,8 @@ export default function Home() {
           <ChevronRight size={22} />
         </motion.button>
 
-        {/* Scan history */}
         <ScanHistoryCard />
 
-        {/* Missions */}
         <section>
           <div className="flex items-center gap-2 mb-3 px-1">
             <Target size={16} className="text-violet-600 dark:text-violet-400" />
@@ -170,7 +165,6 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Leaderboard */}
         <section>
           <div className="flex items-center gap-2 mb-3 px-1">
             <Trophy size={16} className="text-amber-500" />

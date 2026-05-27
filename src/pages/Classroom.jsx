@@ -1,5 +1,5 @@
 // src/pages/Classroom.jsx
-// v9: Captures session summary on exit for Pwofesè remember.
+// FINAL: uses the new ClassroomSession with multi-board + voice + tutor switching.
 
 import { useEffect } from "react";
 import { motion } from "framer-motion";
@@ -18,7 +18,6 @@ export default function Classroom() {
 
   const activeSession = activeSessionId ? getSession(activeSessionId) : null;
 
-  // Auto-create session from pending exercise
   useEffect(() => {
     if (!isNew) return;
     try {
@@ -59,8 +58,7 @@ export default function Classroom() {
   const openSession = (id) => setSearchParams({ session: id });
 
   const exitSession = () => {
-    // Capture summary before exiting
-    if (activeSession) {
+    if (activeSession && captureSessionSummary) {
       captureSessionSummary(activeSession);
     }
     setSearchParams({});
@@ -82,7 +80,7 @@ export default function Classroom() {
         </p>
       </div>
 
-      {sessions.length > 0 && sessions[0].messages.length > 0 && (
+      {sessions.length > 0 && sessions[0].messages?.length > 0 && (
         <section className="px-4 mb-4">
           <motion.button initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} whileTap={{ scale: 0.98 }} onClick={() => openSession(sessions[0].id)}
             className="w-full p-4 rounded-2xl bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-700 text-white shadow-lg shadow-violet-500/30 flex items-center gap-4 text-left">
@@ -141,7 +139,7 @@ function QuickAction({ icon: Icon, label, sublabel, color, onClick, badge }) {
 }
 
 function SessionCard({ session, delay, onClick }) {
-  const lastMessage = session.messages[session.messages.length - 1];
+  const lastMessage = session.messages?.[session.messages.length - 1];
   const preview = lastMessage?.content || "Conversation vide";
   return (
     <motion.button initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay }} whileTap={{ scale: 0.98 }} onClick={onClick}
