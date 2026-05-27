@@ -1,5 +1,5 @@
 // src/components/AppShell.jsx
-// v9: Mounts FirstLaunchTutorial after onboarding.
+// FINAL: mounts FirstLaunchTutorial after onboarding.
 
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
