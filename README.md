@@ -1,107 +1,54 @@
-# Laureat AI v6 — Zip 3 of 3 (Polish & Bulletproofing)
+# Laureat Glue Zip — Wire Up Missing Connections
 
-This zip contains all the **supporting files** that prevent build failures and complete the app's polish. Upload this LAST, after Zip 1 and Zip 2.
+## The Real Problem (Diagnosis)
 
-## Files (8 files)
+✅ **ALL 20 components are in your repo** (verified via GitHub).
 
-| File | Path | Why |
-|------|------|-----|
-| `main.jsx` | `src/main.jsx` | Fixes BrowserRouter double-wrap once and for all |
-| `Profile.jsx` | `src/pages/Profile.jsx` | Lets user change personality, language, name, plan — full profile experience |
-| `Reviser.jsx` | `src/pages/Reviser.jsx` | Subject grid — tap a subject to start a Classroom review session |
-| `CameraCapture.jsx` | `src/components/scan/CameraCapture.jsx` | Camera + photo upload + text input fallback (covers all cases) |
-| `SolutionStep.jsx` | `src/components/scan/SolutionStep.jsx` | Reusable step renderer (boxed results, conversions, deductions) |
-| `translations.js` | `src/utils/translations.js` | All French keys defined — no undefined fallbacks crashing things |
-| `index.css` | `src/index.css` | Adds Caveat handwriting font + shimmer animation + safe area insets |
-| `tailwind.config.js` | `tailwind.config.js` (repo root) | Registers handwriting font family + shimmer keyframes |
+❌ **But the "wrapper" pages that USE them weren't updated to v9.**
 
-## Critical fix in this zip
+The components (MultiBoard, MessageBubble, ShareButton, FirstLaunchTutorial, etc.) exist but the pages that mount them — ScanSolve, Classroom, Home, AppShell, App — were never updated to the v9 versions that ACTUALLY IMPORT them.
 
-**`main.jsx` was wrapping App in BrowserRouter AND App.jsx was wrapping again.** This caused the white screen bug. The new `main.jsx` + the App.jsx from Zip 1 work together: routing wrappers live ONLY in main.jsx, App.jsx just exports `<Routes>`.
+That's why you see scan results without the Explique-moi button, classroom without multi-board, etc.
 
-## What each file enables
+## What This Zip Does
 
-### Profile.jsx
-- See your avatar (first letter of your name)
-- Edit your name inline
-- Switch tutor personality on the fly (Patient / Classique / Ami / Efficace)
-- Switch language preference (Mix / Français / Kreyòl)
-- See your plan (Gratuit / Basic / Premium) with upgrade button
-- Toggle dark/light theme
-- "Reset everything" button (clears all data, restarts onboarding)
+Replaces 6 "wrapper" files with their final v9 versions that wire up all the existing components.
 
-### Reviser.jsx
-- Grid of subjects with subject-specific icons and colors
-- Tap a subject → creates a new Classroom session focused on that subject
-- Tutor opens conversation with "What do you want to review in [subject]?"
+| File | Path | Action |
+|------|------|--------|
+| `ScanSolve.jsx` | `src/pages/ScanSolve.jsx` | REPLACE — top-right Explique-moi + Share + PDF + scan history save |
+| `Classroom.jsx` | `src/pages/Classroom.jsx` | REPLACE — uses new ClassroomSession with multi-board |
+| `Home.jsx` | `src/pages/Home.jsx` | REPLACE — Pwofesè remember banner + scan history section |
+| `AppShell.jsx` | `src/components/AppShell.jsx` | REPLACE — mounts FirstLaunchTutorial |
+| `App.jsx` | `src/App.jsx` | REPLACE — adds /share/:shareId route |
+| `chat.js` | `api/chat.js` | REPLACE — tightened prompts, no over-explain, JSON cleanup |
 
-### CameraCapture.jsx (the missing piece)
-- Camera mode (default, environment-facing camera)
-- Photo upload mode (for existing images)
-- **Text input mode** (for when camera doesn't work or you want to type)
-- Cropping guide overlay
-- Preview before submit ("Use" / "Retake")
+## Upload Sequence
 
-### translations.js
-Previous version had `t("onboarding_title")` calls that returned `undefined` when keys were missing — caused crashes in some browsers. This file defines EVERY key used anywhere. Fallback safety guaranteed.
+1. `api/chat.js`
+2. `src/App.jsx`
+3. `src/components/AppShell.jsx`
+4. `src/pages/Home.jsx`
+5. `src/pages/ScanSolve.jsx`
+6. `src/pages/Classroom.jsx`
 
-### index.css + tailwind.config.js
-The chalkboard in ClassroomSession uses `font-handwriting` class. Without this update, the font falls back to system default (Times New Roman style) and looks bad. Now uses Caveat from Google Fonts → looks like real chalk writing.
+Commit message: `Wire up v7-v9 features into pages`
 
-The shimmer animation on the "Je comprends pas" button needs the `animate-shimmer` class registered in Tailwind. Without it, the shimmer effect won't appear.
+## After Upload, Test This Order
 
-## Upload order
+1. **Clear browser cache / use incognito** (very important — old JS will block new features)
+2. Open app → if fresh user, tutorial popup appears ✓
+3. Scan an exercise → top-right has the orange "Explique-moi" button ✓
+4. Solution page has Share + PDF buttons ✓
+5. Tap Explique-moi → lands in classroom with multi-board + tutor avatar ✓
+6. Swipe between Énoncé / Solution / Visuel boards ✓
+7. Voice input mic button next to send ✓
+8. Reload home → see scan in "Récents" + tutor remember banner ✓
 
-Upload these files AFTER Zip 1 and Zip 2 have been deployed and the build is green.
+## If Something Still Doesn't Work
 
-1. `main.jsx` first (fixes routing)
-2. `index.css` + `tailwind.config.js` (visual foundation)
-3. `translations.js`
-4. `SolutionStep.jsx`
-5. `CameraCapture.jsx`
-6. `Profile.jsx`
-7. `Reviser.jsx`
+The most common cause: **browser cache**. Hard reload (Ctrl+Shift+R or use incognito tab).
 
-Or commit all 8 in one batch.
+If you still don't see a feature after that, screenshot it and send. We'll fix the specific wire.
 
-## After uploading all 3 zips
-
-Your app is feature-complete. Test sequence:
-
-1. Open in incognito → see new conversational onboarding (5 steps)
-2. Land on home → personalized "Salut [name]" greeting, countdown, missions
-3. Tap SCAN → camera or text → take photo of exercise
-4. See Haitian textbook format result (Données | Solution columns)
-5. Tap pulsing "Je comprends pas" → goes to Classroom with exercise pre-loaded
-6. Teacher greets you by name, starts step-by-step teaching
-7. Données appear on chalkboard one by one with voice
-8. Tap "Oui je comprends" → moves to first section
-9. Tap "Non" → cascade of re-explanations
-10. After completing → "Bravo [name]!"
-11. Go to /profile → see your avatar, change personality, see plan
-12. Go to /quiz → if quizzes generated via /admin, take a quiz
-13. Go to /reviser → tap a subject → opens new Classroom session
-14. Go to /paywall → see plans, payment flow
-
-## Total file count delivered across all 3 zips
-
-- **6 API endpoints** (solve, chat, board, tts, generate-quizzes, payment-webhook)
-- **3 context/hook files** (AppContext, useClassroom, useUsage)
-- **3 services** (ttsService, quizService, [no webhookClient — replaced by direct fetches])
-- **3 utilities** (constants, translations, css)
-- **2 components** (AppShell, CameraCapture, SolutionStep, VirtualBoard, ClassroomSession)
-- **8 pages** (Home, Onboarding, ScanSolve, Classroom, Quizzes, Profile, Reviser, Admin, Paywall)
-- **2 root files** (main.jsx, App.jsx, tailwind.config.js)
-
-## What's NOT included (post-launch additions)
-
-- Vercel KV for persistent transaction storage
-- Push notifications
-- Custom domain wire-up
-- Real PDF generation
-- Sentry error tracking
-- Analytics (Plausible / PostHog)
-
-These are not needed to ship the MVP and start earning.
-
-🚀 You're complete. Ship and start the TikTok grind.
+🚀 Almost there.
