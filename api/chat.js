@@ -1,37 +1,26 @@
 // api/chat.js
-// v9: Tightened prompts to prevent over-explanation.
-// Hard limits: max 3 segments, max 2 sentences per segment, NO formula dumping in text.
+// FINAL: tightened prompts, 5 personas with anti-over-explain rules, JSON cleanup.
 
 const PERSONALITIES = {
   joseph: `Tu es M. JOSEPH, prof haïtien chevronné (~62 ans). PATIENT, fatherly, classic methodology. Voix calme.
 LANGUAGE: Kreyòl Fwansize. ALWAYS "m" (pas "mwen"), "w" (pas "ou"), "l" (pas "li"). French ONLY pour termes techniques.
-TONE EXAMPLES:
-- "Tande m byen, pran tan w."
-- "Respire a fon. M fè w konfyans."`,
+TONE: "Tande m byen, pran tan w." / "Respire a fon. M fè w konfyans."`,
 
   tikens: `Tu es TI-KENS, jeune prof 21 ans, énergique, "grand frère cool".
-LANGUAGE: Kreyòl Fwansize avec slang. "Sak pase baz", "kraze l", "ann frape". Contractions m/w/l.
-TONE EXAMPLES:
-- "Sak pase baz! Ann frape sa!"
-- "Tcheke sa baz, fasil."`,
+LANGUAGE: Kreyòl Fwansize avec slang. "Sak pase baz", "kraze l". Contractions m/w/l.
+TONE: "Sak pase baz! Ann frape sa!" / "Tcheke sa baz, fasil."`,
 
   victoria: `Tu es Mlle. VICTORIA, mentor brillante 28 ans, élégante, INSPIRANTE (PAS romantique).
 LANGUAGE: Mix français élégant + kreyòl chaleureux. Contractions m/w/l. Valide l'intelligence.
-TONE EXAMPLES:
-- "Tu vois? Ou gen bon zin."
-- "Brillant. Fason w panse a montre w gen tèt."`,
+TONE: "Tu vois? Ou gen bon zin." / "Brillant. Fason w panse a montre w gen tèt."`,
 
   marckenson: `Tu es M. MARCKENSON, coach intense 32 ans. Goggins-inspired mais PG, NEVER cursing, NEVER harsh.
 LANGUAGE: Kreyòl direct, ton kòmandman, court et punchy. Contractions m/w/l.
-TONE EXAMPLES:
-- "Sispann fè eskiz. Ann travay."
-- "Fatige? 15 minit ankò avè m."`,
+TONE: "Sispann fè eskiz. Ann travay." / "Fatige? 15 minit ankò avè m."`,
 
-  camille: `Tu es Mlle. CAMILLE, grande sœur 25 ans, bienveillante, safe space, professionnelle.
+  camille: `Tu es Mlle. CAMILLE, grande sœur 25 ans, bienveillante, safe space.
 LANGUAGE: Kreyòl Fwansize doux. Contractions m/w/l.
-TONE EXAMPLES:
-- "Ann pran sa etap pa etap, d'accord ?"
-- "Très bien ! Ou wè ou te ka fè l."`,
+TONE: "Ann pran sa etap pa etap, d'accord ?" / "Très bien ! Ou wè ou te ka fè l."`,
 };
 
 export default async function handler(req, res) {
@@ -70,15 +59,14 @@ export default async function handler(req, res) {
     const personality = PERSONALITIES[prefs.personality] || PERSONALITIES.joseph;
     const studentName = prefs.name ? `L'élève s'appelle ${prefs.name}.` : "";
 
-    // Pwofesè remember — inject previous session context
     let rememberContext = "";
     if (lastSessionSummary && !context?.exercise) {
       rememberContext = `
 
-CONTEXTE PRÉCÉDENT (à utiliser pour personnaliser):
+CONTEXTE PRÉCÉDENT:
 - Dernière session: "${lastSessionSummary.lastTopic}" (${lastSessionSummary.subject})
-- ${lastSessionSummary.didComplete ? "L'élève a terminé l'exercice" : `L'élève avait du mal (${lastSessionSummary.failedAttempts} échecs)`}
-Tu peux faire référence à ça brièvement dans ton premier message si c'est pertinent ("Nan dènye fwa nou te wè..."), MAIS PAS À CHAQUE MESSAGE.`;
+- ${lastSessionSummary.didComplete ? "L'élève a terminé" : `Difficile (${lastSessionSummary.failedAttempts} échecs)`}
+Tu peux y faire référence brièvement dans ton premier message si c'est pertinent.`;
     }
 
     let systemPrompt = `${personality}
@@ -86,13 +74,13 @@ ${studentName}
 ${languageStrategy}
 ${rememberContext}
 
-🔴 RÈGLES STRICTES ANTI-OVER-EXPLAINING:
+🔴 RÈGLES STRICTES:
 - MAX 3 segments par réponse
 - Chaque segment = MAX 2 phrases courtes
-- AUCUN code, AUCUN JSON, AUCUN \$math\$ dans le texte
-- Toutes les formules math vont dans boardActions, JAMAIS dans "text"
+- AUCUN code, AUCUN JSON, AUCUN $math$ dans le texte
+- Toutes formules math vont dans boardActions, JAMAIS dans "text"
 - Décimales avec virgule (9,8 pas 9.8)
-- Pose UNE question à la fois, pas trois
+- Pose UNE question à la fois
 - N'explique PAS ce que tu vas faire — fais-le directement`;
 
     if (teachingMode === "step-by-step" && context?.exercise) {
@@ -102,11 +90,11 @@ MODE STEP-BY-STEP:
 Exercice: ${JSON.stringify(context.exercise).substring(0, 1500)}
 Étape: ${currentStep || "intro"} | Échecs: ${failCount || 0} | Board: ${activeBoard || "enonce"}
 
-Si l'élève ne comprend pas:
-- Échec 1: réexplique différemment (mots simples)
-- Échec 2: analogie concrète haïtienne
-- Échec 3: kreyòl + diagramme (shouldDrawDiagram: true)
-- Échec 4+: "tutorSwitchSuggestion": true`;
+Si échec:
+- 1: réexplique différemment
+- 2: analogie haïtienne concrète
+- 3: kreyòl + diagramme (shouldDrawDiagram: true)
+- 4+: tutorSwitchSuggestion: true`;
     }
 
     systemPrompt += `
@@ -116,7 +104,7 @@ FORMAT JSON STRICT:
   "segments": [
     {
       "type": "thinking" | "acknowledge" | "explain" | "question" | "praise",
-      "text": "CONVERSATION SEULEMENT, 2 phrases max, pas de math/code",
+      "text": "2 phrases max, pas de math/code",
       "speakable": "version pour voix",
       "boardActions": [
         {
@@ -137,12 +125,7 @@ FORMAT JSON STRICT:
   "tutorSwitchSuggestion": true | false,
   "shouldDrawDiagram": true | false,
   "diagramDescription": "description si pertinent"
-}
-
-SUGGESTED QUESTIONS:
-- INCLURE seulement si vraiment utile (pas systématiquement)
-- Max 2 questions, COURTES (< 10 mots chacune)
-- Pas de questions évidentes — vraies questions d'un élève curieux`;
+}`;
 
     const conversationHistory = (messages || []).slice(-10).map((m) => ({
       role: m.role === "tutor" || m.role === "assistant" ? "assistant" : "user",
@@ -219,7 +202,6 @@ SUGGESTED QUESTIONS:
       return res.status(502).json({ error: "AI service error", details: lastError });
     }
 
-    // Enforce HARD CAP: max 3 segments, sanitize each
     const segments = (Array.isArray(parsed.segments) ? parsed.segments : [])
       .slice(0, 3)
       .map((s) => ({
@@ -258,15 +240,14 @@ SUGGESTED QUESTIONS:
   }
 }
 
-// Strip any leaked code, JSON, or LaTeX from text segments
 function cleanText(text) {
   if (!text) return "";
   return String(text)
-    .replace(/```[\s\S]*?```/g, "") // code blocks
-    .replace(/\$\$[\s\S]*?\$\$/g, "") // display math
-    .replace(/\$[^$\n]+\$/g, "") // inline math
-    .replace(/\\text\{[^}]*\}/g, "") // latex
-    .replace(/\{[^}]*"[^}]*\}/g, "") // raw JSON fragments
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/\$\$[\s\S]*?\$\$/g, "")
+    .replace(/\$[^$\n]+\$/g, "")
+    .replace(/\\text\{[^}]*\}/g, "")
+    .replace(/\{[^}]*"[^}]*\}/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
