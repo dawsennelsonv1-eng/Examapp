@@ -1,5 +1,5 @@
 // src/App.jsx
-// v8: Adds /share/:shareId public route (no auth, no shell).
+// FINAL: includes /share/:shareId public route for share-via-link.
 
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useApp } from "./contexts/AppContext";
@@ -18,7 +18,7 @@ import Share from "./pages/Share";
 export default function App() {
   return (
     <Routes>
-      {/* Public — anyone can view */}
+      {/* Public — anyone can view (no auth, no shell) */}
       <Route path="/share/:shareId" element={<Share />} />
 
       {/* Standalone (no tab bar) */}
