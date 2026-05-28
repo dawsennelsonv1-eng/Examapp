@@ -1,21 +1,37 @@
 // src/components/classroom/VoiceInputButton.jsx
-// v12: Tap-to-toggle (NOT hold). First tap starts, second tap stops & sends.
-// Uses createVoiceRecorder from ttsService for consistency.
+// v13: Tap-to-toggle. Sends mimeType to backend. Shows user-facing errors.
 
 import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Mic, Loader2 } from "lucide-react";
-import { createVoiceRecorder } from "../../services/ttsService";
 
-export default function VoiceInputButton({ onTranscribed, disabled }) {
+export default function VoiceInputButton({ onTranscribed, onError, disabled }) {
   const [state, setState] = useState("idle"); // idle | recording | processing
   const recorderRef = useRef(null);
+  const streamRef = useRef(null);
+  const chunksRef = useRef([]);
+  const mimeRef = useRef("");
+  const timeoutRef = useRef(null);
 
   useEffect(() => {
-    return () => {
-      try { recorderRef.current?.stop(); } catch {}
-    };
+    return () => cleanup();
   }, []);
+
+  const cleanup = () => {
+    try {
+      if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    } catch {}
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+  };
+
+  const notifyError = (msg) => {
+    if (onError) onError(msg);
+    else console.warn("Voice error:", msg);
+  };
 
   const handleClick = async (e) => {
     e.preventDefault();
@@ -23,33 +39,121 @@ export default function VoiceInputButton({ onTranscribed, disabled }) {
     if (disabled || state === "processing") return;
 
     if (state === "recording") {
-      recorderRef.current?.stop();
-      setState("processing");
+      if (recorderRef.current?.state === "recording") {
+        recorderRef.current.stop();
+      }
       return;
     }
 
-    // Start
-    const rec = createVoiceRecorder();
-    recorderRef.current = rec;
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        notifyError("Mikwofòn pa disponib sou aparèy sa.");
+        return;
+      }
 
-    await rec.start({
-      onComplete: ({ text }) => {
-        setState("idle");
-        if (text && text.trim()) {
-          onTranscribed(text.trim());
-        }
-      },
-      onError: (err) => {
-        console.error("Voice error:", err);
-        setState("idle");
-        if (err?.name === "NotAllowedError") {
-          alert("Aksè mikwofòn refize. Aktive li nan paramèt navigateur a.");
-        }
-      },
-      maxDuration: 60000,
-    });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      streamRef.current = stream;
 
-    setState("recording");
+      const mimeOptions = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/ogg;codecs=opus",
+      ];
+      let mimeType = "";
+      for (const m of mimeOptions) {
+        if (MediaRecorder.isTypeSupported(m)) { mimeType = m; break; }
+      }
+      mimeRef.current = mimeType;
+
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+      recorderRef.current = recorder;
+      chunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((t) => t.stop());
+          streamRef.current = null;
+        }
+        if (chunksRef.current.length === 0) {
+          setState("idle");
+          notifyError("Anyen pa anrejistre. Eseye ankò.");
+          return;
+        }
+
+        setState("processing");
+        const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
+
+        // Check minimum size (avoid empty recordings)
+        if (blob.size < 1000) {
+          setState("idle");
+          notifyError("Anrejistreman twò kout. Pale pi lontan.");
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          try {
+            const response = await fetch("/api/transcribe", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                audioData: reader.result,
+                language: "fr",
+                mimeType: mimeType || "audio/webm",
+              }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+              setState("idle");
+              notifyError(data?.error || "Pa kapab transcri vwa a. Eseye ankò.");
+              return;
+            }
+
+            const text = data?.data?.text?.trim();
+            if (text) {
+              onTranscribed(text);
+            } else {
+              notifyError("Pa t kapab tande sa w di a. Pale pi fò oswa tape mesaj la.");
+            }
+          } catch (err) {
+            notifyError("Erè koneksyon. Eseye ankò.");
+          } finally {
+            setState("idle");
+          }
+        };
+        reader.readAsDataURL(blob);
+      };
+
+      recorder.onerror = () => {
+        cleanup();
+        setState("idle");
+        notifyError("Erè mikwofòn.");
+      };
+
+      recorder.start();
+      setState("recording");
+
+      timeoutRef.current = setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+      }, 60000);
+    } catch (err) {
+      cleanup();
+      setState("idle");
+      if (err.name === "NotAllowedError") {
+        notifyError("Aksè mikwofòn refize. Aktive li nan paramèt navigateur a.");
+      } else {
+        notifyError("Pa kapab itilize mikwofòn la.");
+      }
+    }
   };
 
   return (
