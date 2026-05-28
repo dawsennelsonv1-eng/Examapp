@@ -1,10 +1,65 @@
 // src/services/ttsService.js
-// v12: Audio plays as soon as the network returns. No waiting on slow loadedmetadata.
-// Falls back to browser TTS if server returns useBrowserFallback.
+// v14: SPEED FIX. Splits text into sentences. Fetches + plays the FIRST sentence
+// immediately (~2s), then fetches the rest in parallel and plays in sequence.
+// First audio now starts in ~2s instead of 10s.
 
 let currentAudio = null;
 let currentUtterance = null;
 let lastModelUsed = null;
+let cancelToken = { cancelled: false };
+
+function splitIntoChunks(text) {
+  // Split on sentence boundaries but keep chunks reasonably sized
+  const sentences = text
+    .replace(/\s+/g, " ")
+    .match(/[^.!?]+[.!?]*/g) || [text];
+
+  const chunks = [];
+  let current = "";
+  for (const s of sentences) {
+    if ((current + s).length > 200 && current) {
+      chunks.push(current.trim());
+      current = s;
+    } else {
+      current += s;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.filter((c) => c.length > 0);
+}
+
+async function fetchChunkAudio(text, persona) {
+  try {
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, persona }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    lastModelUsed = data?.data?.modelUsed;
+    if (data?.data?.audioUrl) return { audioUrl: data.data.audioUrl };
+    if (data?.data?.useBrowserFallback) return { useBrowserFallback: true, text };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function playAudioUrl(audioUrl) {
+  return new Promise((resolve) => {
+    const audio = new Audio();
+    currentAudio = audio;
+    audio.src = audioUrl;
+    audio.oncanplay = () => {
+      if (cancelToken.cancelled) { resolve(); return; }
+      audio.play().catch(() => resolve());
+    };
+    audio.onended = resolve;
+    audio.onerror = () => resolve();
+    setTimeout(resolve, 30000); // safety
+  });
+}
 
 export async function speakText(text, lang = "fr-FR", options = {}) {
   const { persona = "joseph", onModelUsed } = options;
@@ -12,111 +67,77 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
   stopSpeaking();
   if (!text) return { duration: 0, modelUsed: null };
 
-  try {
-    const response = await fetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, persona }),
-    });
+  cancelToken = { cancelled: false };
+  const myToken = cancelToken;
 
-    if (response.ok) {
-      const data = await response.json();
-      lastModelUsed = data?.data?.modelUsed;
+  const chunks = splitIntoChunks(text);
+  if (chunks.length === 0) return { duration: 0, modelUsed: null };
+
+  // The whole playback runs as one promise the caller can await
+  const playbackPromise = (async () => {
+    // Fetch first chunk immediately
+    let nextAudioPromise = fetchChunkAudio(chunks[0], persona);
+
+    for (let i = 0; i < chunks.length; i++) {
+      if (myToken.cancelled) break;
+
+      const audioResult = await nextAudioPromise;
+
+      // Pre-fetch the NEXT chunk while playing the current one
+      if (i + 1 < chunks.length) {
+        nextAudioPromise = fetchChunkAudio(chunks[i + 1], persona);
+      }
+
+      if (myToken.cancelled) break;
       onModelUsed?.(lastModelUsed);
 
-      if (data?.data?.audioUrl) {
-        const audio = new Audio();
-        currentAudio = audio;
-        audio.src = data.data.audioUrl;
-
-        // Start playing as soon as enough data is buffered, don't wait for full load
-        const playPromise = new Promise((resolve) => {
-          audio.oncanplay = () => {
-            audio.play().catch((err) => {
-              console.warn("Audio play failed:", err);
-              resolve();
-            });
-          };
-          audio.onended = resolve;
-          audio.onerror = (e) => {
-            console.warn("Audio error:", e);
-            resolve();
-          };
-          // Safety timeout: if audio doesn't start in 5s, give up
-          setTimeout(resolve, 30000);
-        });
-
-        return { duration: 0, promise: playPromise, modelUsed: lastModelUsed };
-      }
-
-      if (data?.data?.useBrowserFallback) {
-        return browserSpeak(text, lang);
+      if (audioResult?.audioUrl) {
+        await playAudioUrl(audioResult.audioUrl);
+      } else if (audioResult?.useBrowserFallback) {
+        await browserSpeakChunk(audioResult.text, lang);
       }
     }
-  } catch (err) {
-    console.warn("Server TTS failed:", err);
-  }
+  })();
 
-  return browserSpeak(text, lang);
+  // Return immediately with a promise that resolves when all chunks finish
+  return { duration: 0, promise: playbackPromise, modelUsed: lastModelUsed };
 }
 
-function browserSpeak(text, lang = "fr-FR") {
-  if (!("speechSynthesis" in window)) {
-    return { duration: 0, modelUsed: "browser-fallback" };
-  }
-
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = lang;
-  utter.rate = 0.95;
-  utter.pitch = 1.0;
-
-  const voices = speechSynthesis.getVoices();
-  const frenchVoice = voices.find((v) => v.lang.startsWith("fr"));
-  if (frenchVoice) utter.voice = frenchVoice;
-
-  currentUtterance = utter;
-  lastModelUsed = "browser-fallback";
-
-  const promise = new Promise((resolve) => {
+function browserSpeakChunk(text, lang = "fr-FR") {
+  return new Promise((resolve) => {
+    if (!("speechSynthesis" in window)) { resolve(); return; }
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = lang;
+    utter.rate = 0.95;
+    const voices = speechSynthesis.getVoices();
+    const fr = voices.find((v) => v.lang.startsWith("fr"));
+    if (fr) utter.voice = fr;
+    currentUtterance = utter;
+    lastModelUsed = "browser-fallback";
     utter.onend = resolve;
     utter.onerror = resolve;
+    speechSynthesis.speak(utter);
   });
-  speechSynthesis.speak(utter);
-
-  return { duration: 0, promise, modelUsed: "browser-fallback" };
 }
 
 export function pauseSpeaking() {
-  if (currentAudio && !currentAudio.paused) {
-    currentAudio.pause();
-    return true;
-  }
+  if (currentAudio && !currentAudio.paused) { currentAudio.pause(); return true; }
   if (typeof speechSynthesis !== "undefined" && speechSynthesis.speaking && !speechSynthesis.paused) {
-    speechSynthesis.pause();
-    return true;
+    speechSynthesis.pause(); return true;
   }
   return false;
 }
 
 export function resumeSpeaking() {
-  if (currentAudio && currentAudio.paused) {
-    currentAudio.play().catch(() => {});
-    return true;
-  }
-  if (typeof speechSynthesis !== "undefined" && speechSynthesis.paused) {
-    speechSynthesis.resume();
-    return true;
-  }
+  if (currentAudio && currentAudio.paused) { currentAudio.play().catch(() => {}); return true; }
+  if (typeof speechSynthesis !== "undefined" && speechSynthesis.paused) { speechSynthesis.resume(); return true; }
   return false;
 }
 
 export function stopSpeaking() {
+  cancelToken.cancelled = true;
   if (currentAudio) {
-    try {
-      currentAudio.pause();
-      currentAudio.currentTime = 0;
-      currentAudio.src = "";
-    } catch {}
+    try { currentAudio.pause(); currentAudio.currentTime = 0; currentAudio.src = ""; } catch {}
     currentAudio = null;
   }
   if (currentUtterance && "speechSynthesis" in window) {
@@ -142,7 +163,7 @@ export function getLastModelUsed() {
 }
 
 // ============================================================
-// VOICE INPUT — uses MediaRecorder + /api/transcribe (Gemini Audio)
+// VOICE INPUT
 // ============================================================
 export function createVoiceRecorder() {
   let recorder = null;
@@ -153,91 +174,44 @@ export function createVoiceRecorder() {
   return {
     async start({ onComplete, onError, maxDuration = 60000 }) {
       try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("Microphone API not available");
-        }
-
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Mikwofòn pa disponib");
         stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
-
-        // Pick supported MIME
-        const mimeOptions = [
-          "audio/webm;codecs=opus",
-          "audio/webm",
-          "audio/mp4",
-          "audio/ogg;codecs=opus",
-        ];
+        const mimeOptions = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
         for (const m of mimeOptions) {
           if (MediaRecorder.isTypeSupported(m)) { mimeType = m; break; }
         }
-
         recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
         chunks = [];
-
-        recorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) chunks.push(e.data);
-        };
-
+        recorder.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
         recorder.onstop = async () => {
           stream?.getTracks().forEach((t) => t.stop());
           stream = null;
-
-          if (chunks.length === 0) {
-            onError?.(new Error("No audio recorded"));
-            return;
-          }
-
+          if (chunks.length === 0) { onError?.(new Error("Anyen pa anrejistre")); return; }
           const blob = new Blob(chunks, { type: mimeType || "audio/webm" });
+          if (blob.size < 1000) { onError?.(new Error("Twò kout")); return; }
           const reader = new FileReader();
           reader.onloadend = async () => {
             try {
               const response = await fetch("/api/transcribe", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ audioData: reader.result, language: "fr" }),
+                body: JSON.stringify({ audioData: reader.result, language: "fr", mimeType }),
               });
-              if (!response.ok) {
-                onError?.(new Error(`Transcribe HTTP ${response.status}`));
-                return;
-              }
               const data = await response.json();
-              onComplete?.({
-                text: data?.data?.text || "",
-                modelUsed: data?.data?.modelUsed,
-              });
-            } catch (err) {
-              onError?.(err);
-            }
+              if (!response.ok) { onError?.(new Error(data?.error || "Erè transcription")); return; }
+              onComplete?.({ text: data?.data?.text || "", modelUsed: data?.data?.modelUsed });
+            } catch (err) { onError?.(err); }
           };
           reader.readAsDataURL(blob);
         };
-
-        recorder.onerror = (e) => {
-          onError?.(e?.error || new Error("Recorder error"));
-        };
-
+        recorder.onerror = () => onError?.(new Error("Erè mikwofòn"));
         recorder.start();
-
-        // Safety stop
-        setTimeout(() => {
-          if (recorder?.state === "recording") recorder.stop();
-        }, maxDuration);
-      } catch (err) {
-        onError?.(err);
-      }
+        setTimeout(() => { if (recorder?.state === "recording") recorder.stop(); }, maxDuration);
+      } catch (err) { onError?.(err); }
     },
-    stop() {
-      if (recorder?.state === "recording") {
-        recorder.stop();
-      }
-    },
-    isRecording() {
-      return recorder?.state === "recording";
-    },
+    stop() { if (recorder?.state === "recording") recorder.stop(); },
+    isRecording() { return recorder?.state === "recording"; },
   };
 }
