@@ -1,27 +1,32 @@
 // src/components/classroom/ClassroomSession.jsx
-// Wave 2: Full interactive classroom with segmented playback, multi-board, voice input,
-// suggested questions chips, tutor switching with context preservation.
+// v11: Adds CallTutorButton in header (Premium feature for real-time voice call).
+// Otherwise identical to v7-wave2 ClassroomSession.
 
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Send, Maximize2, Minimize2, Loader2, Users, ThumbsUp, ThumbsDown } from "lucide-react";
+import {
+  ArrowLeft, Send, Maximize2, Minimize2, Loader2,
+  Users, ThumbsUp, ThumbsDown,
+} from "lucide-react";
 import { useClassroomSessions } from "../../hooks/useClassroom";
 import { useApp } from "../../contexts/AppContext";
-import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from "../../services/ttsService";
-import { PERSONALITIES, BOARD_TYPES } from "../../utils/constants";
+import {
+  speakText, stopSpeaking, pauseSpeaking, resumeSpeaking,
+} from "../../services/ttsService";
+import { PERSONALITIES } from "../../utils/constants";
 import MultiBoard from "./MultiBoard";
 import MessageBubble from "./MessageBubble";
 import SuggestedQuestions from "./SuggestedQuestions";
 import VoiceInputButton from "./VoiceInputButton";
 import TutorSwitchModal from "./TutorSwitchModal";
 import TutorAvatar from "../shared/TutorAvatar";
-import ModelIndicator from "../shared/ModelIndicator";
+import CallTutorButton from "./CallTutorButton";
 
 function defaultBoards() {
   return [
-    { id: "board_enonce", type: "enonce", name: "Énoncé", donnees: [], items: [] },
+    { id: "board_enonce",   type: "enonce",   name: "Énoncé",   donnees: [], items: [] },
     { id: "board_solution", type: "solution", name: "Solution", items: [] },
-    { id: "board_visuel", type: "visuel", name: "Visuel", svg: null },
+    { id: "board_visuel",   type: "visuel",   name: "Visuel",   svg: null },
   ];
 }
 
@@ -34,33 +39,27 @@ export default function ClassroomSession({ session, onExit }) {
   const [boardExpanded, setBoardExpanded] = useState(true);
   const [localMessages, setLocalMessages] = useState(session.messages || []);
 
-  // Boards state — persisted in session.boards if exists, else default
   const [boards, setBoards] = useState(session.boards || defaultBoards());
   const [activeBoardId, setActiveBoardId] = useState(session.activeBoardId || boards[0]?.id);
   const [tutorWritingOn, setTutorWritingOn] = useState(null);
 
-  // Persona — can change mid-session
   const [currentPersonaId, setCurrentPersonaId] = useState(
     session.currentPersonaId || preferences?.personality || "joseph"
   );
   const [showTutorSwitch, setShowTutorSwitch] = useState(false);
 
-  // Voice + speaking state
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
   const [isPaused, setIsPaused] = useState(false);
 
-  // Conversation state
   const [failCount, setFailCount] = useState(session.failCount || 0);
   const [suggestedQuestions, setSuggestedQuestions] = useState([]);
   const [lastModelUsed, setLastModelUsed] = useState(null);
-  const [lastTTSModel, setLastTTSModel] = useState(null);
   const [pendingConfirmation, setPendingConfirmation] = useState(false);
 
   const messagesEndRef = useRef(null);
   const hasInitiated = useRef(false);
   const isPremium = planTier === "premium";
 
-  // Initial greeting on first mount
   useEffect(() => {
     if (hasInitiated.current) return;
     hasInitiated.current = true;
@@ -81,25 +80,22 @@ export default function ClassroomSession({ session, onExit }) {
     return () => stopSpeaking();
   }, []);
 
-  // Auto-save boards whenever they change
   useEffect(() => {
     updateSession(session.id, { boards, activeBoardId, currentPersonaId, failCount });
   }, [boards, activeBoardId, currentPersonaId, failCount]); // eslint-disable-line
 
   const sendGreeting = () => {
     const persona = PERSONALITIES.find((p) => p.id === currentPersonaId);
-    const name = preferences?.name ? `${preferences.name}` : "";
+    const name = preferences?.name || "";
     const greeting = {
       id: `msg_${Date.now()}`,
       role: "tutor",
       personaId: currentPersonaId,
-      segments: [
-        {
-          type: "acknowledge",
-          text: `Bonjou ${name} ! M se ${persona?.name}. Ki sa w vle nou travay ansanm jodi a ?`,
-          speakable: `Bonjou ${name}. M se ${persona?.name}. Ki sa w vle nou travay ansanm jodi a ?`,
-        },
-      ],
+      segments: [{
+        type: "acknowledge",
+        text: `Bonjou ${name} ! M se ${persona?.name}. Ki sa w vle nou travay ansanm jodi a ?`,
+        speakable: `Bonjou ${name}. M se ${persona?.name}. Ki sa w vle nou travay ansanm jodi a ?`,
+      }],
       content: `Bonjou ${name} ! M se ${persona?.name}. Ki sa w vle nou travay ansanm jodi a ?`,
       timestamp: Date.now(),
     };
@@ -112,17 +108,11 @@ export default function ClassroomSession({ session, onExit }) {
     const exercise = session.exercise;
     const name = preferences?.name || "";
 
-    // Pre-populate énoncé board with the exercise
-    const enonceBoard = {
-      id: "board_enonce",
-      type: "enonce",
-      name: "Énoncé",
-      donnees: [], // start empty, will be filled as tutor reveals
-      items: [],
-    };
-    const solutionBoard = { id: "board_solution", type: "solution", name: "Solution", items: [] };
-    const visuelBoard = { id: "board_visuel", type: "visuel", name: "Visuel", svg: null };
-    const newBoards = [enonceBoard, solutionBoard, visuelBoard];
+    const newBoards = [
+      { id: "board_enonce",   type: "enonce",   name: "Énoncé",   donnees: [], items: [] },
+      { id: "board_solution", type: "solution", name: "Solution", items: [] },
+      { id: "board_visuel",   type: "visuel",   name: "Visuel",   svg: null },
+    ];
     setBoards(newBoards);
     setActiveBoardId("board_enonce");
     setTutorWritingOn("board_enonce");
@@ -150,7 +140,6 @@ export default function ClassroomSession({ session, onExit }) {
     appendMessage(session.id, intro);
     speakMessage(intro);
 
-    // Reveal données on enonce board one by one
     await new Promise((r) => setTimeout(r, 1500));
     for (const d of exercise.donnees || []) {
       setBoards((prev) =>
@@ -161,19 +150,16 @@ export default function ClassroomSession({ session, onExit }) {
       await new Promise((r) => setTimeout(r, 700));
     }
 
-    // Ask comprehension
     await new Promise((r) => setTimeout(r, 800));
     const checkMsg = {
       id: `msg_${Date.now()}_check`,
       role: "tutor",
       personaId: currentPersonaId,
-      segments: [
-        {
-          type: "question",
-          text: "Eske w konprann tout Données yo ?",
-          speakable: "Eske w konprann tout Données yo ?",
-        },
-      ],
+      segments: [{
+        type: "question",
+        text: "Eske w konprann tout Données yo ?",
+        speakable: "Eske w konprann tout Données yo ?",
+      }],
       content: "Eske w konprann tout Données yo ?",
       timestamp: Date.now(),
       needsConfirmation: true,
@@ -196,7 +182,6 @@ export default function ClassroomSession({ session, onExit }) {
       const result = await speakText(text, "fr-FR", {
         isPremium,
         persona: msg.personaId || currentPersonaId,
-        onModelUsed: (m) => setLastTTSModel(m),
       });
       if (result?.promise) await result.promise;
     } catch (err) {
@@ -223,9 +208,8 @@ export default function ClassroomSession({ session, onExit }) {
     setIsPaused(false);
   };
 
-  const applyBoardActions = async (boardActions, msgId) => {
+  const applyBoardActions = async (boardActions) => {
     if (!Array.isArray(boardActions) || !boardActions.length) return;
-
     for (const action of boardActions) {
       const boardId = `board_${action.board}`;
       setTutorWritingOn(boardId);
@@ -314,34 +298,28 @@ export default function ClassroomSession({ session, onExit }) {
 
       setLastModelUsed(data?.data?.modelUsed);
 
-      // Apply board actions from all segments sequentially
       for (const seg of segments) {
         if (Array.isArray(seg.boardActions) && seg.boardActions.length) {
           await applyBoardActions(seg.boardActions);
         }
       }
 
-      // Set suggested questions
       if (Array.isArray(data?.data?.suggestedQuestions) && data.data.suggestedQuestions.length) {
         setSuggestedQuestions(data.data.suggestedQuestions);
       }
 
-      // Set confirmation flag
       if (data?.data?.needsConfirmation) {
         setPendingConfirmation(true);
       }
 
-      // Tutor switch suggestion
       if (data?.data?.tutorSwitchSuggestion || failCount >= 3) {
         setShowTutorSwitch(true);
       }
 
-      // Diagram request
       if (data?.data?.shouldDrawDiagram && data?.data?.diagramDescription) {
         requestDiagram(data.data.diagramDescription);
       }
 
-      // Speak
       speakMessage(tutorMsg);
     } catch (err) {
       console.error("Chat error:", err);
@@ -349,8 +327,12 @@ export default function ClassroomSession({ session, onExit }) {
         id: `msg_${Date.now() + 1}`,
         role: "tutor",
         personaId: currentPersonaId,
-        segments: [{ type: "acknowledge", text: "Pa gen koneksyon. Eseye ankò.", speakable: "Pa gen koneksyon. Eseye ankò." }],
-        content: "Pa gen koneksyon. Eseye ankò.",
+        segments: [{
+          type: "acknowledge",
+          text: "Pa gen koneksyon entènèt la. Eseye ankò.",
+          speakable: "Pa gen koneksyon entènèt la. Eseye ankò.",
+        }],
+        content: "Pa gen koneksyon entènèt la. Eseye ankò.",
         timestamp: Date.now(),
       };
       setLocalMessages((prev) => [...prev, errorMsg]);
@@ -369,10 +351,10 @@ export default function ClassroomSession({ session, onExit }) {
       const newFail = failCount + 1;
       setFailCount(newFail);
       let prompt;
-      if (newFail === 1) prompt = "M pa konprann. Eksplike m yon lòt jan tanpri.";
+      if (newFail === 1)      prompt = "M pa konprann. Eksplike m yon lòt jan tanpri.";
       else if (newFail === 2) prompt = "M toujou pa konprann. Bay yon egzanp konkrè.";
       else if (newFail === 3) prompt = "M ap gen difikilte. Eksplike m an kreyòl ak yon schema.";
-      else prompt = "Pou m kapab ede w konprann pi byen, ki sa egzakteman ou pa konprann ?";
+      else                    prompt = "Pou m kapab ede w konprann pi byen, ki sa egzakteman ou pa konprann ?";
       handleSend(prompt);
     }
   };
@@ -417,13 +399,11 @@ export default function ClassroomSession({ session, onExit }) {
       id: `msg_${Date.now()}`,
       role: "tutor",
       personaId: newPersonaId,
-      segments: [
-        {
-          type: "acknowledge",
-          text: `Bonjou, m se ${newPersona?.name}. M wè ${oldPersona?.name} t ap eksplike w yon bagay men li pa klè ase. Kite m eseye nan jan pa m...`,
-          speakable: `Bonjou, m se ${newPersona?.name}. Kite m eseye eksplike w sa nan jan pa m.`,
-        },
-      ],
+      segments: [{
+        type: "acknowledge",
+        text: `Bonjou, m se ${newPersona?.name}. M wè ${oldPersona?.name} t ap eksplike w yon bagay men li pa klè ase. Kite m eseye nan jan pa m...`,
+        speakable: `Bonjou, m se ${newPersona?.name}. Kite m eseye eksplike w sa nan jan pa m.`,
+      }],
       content: `Bonjou, m se ${newPersona?.name}.`,
       timestamp: Date.now(),
     };
@@ -434,10 +414,6 @@ export default function ClassroomSession({ session, onExit }) {
 
   const onBoardChange = (newBoardId) => {
     setActiveBoardId(newBoardId);
-    // If user switches away from where tutor is writing, send a context message
-    if (tutorWritingOn && newBoardId !== tutorWritingOn && !sending) {
-      // Optionally trigger tutor question — for now just track
-    }
   };
 
   const handleKeyDown = (e) => {
@@ -472,6 +448,17 @@ export default function ClassroomSession({ session, onExit }) {
             {lastModelUsed && <span className="ml-2">· {lastModelUsed.split("/").pop()}</span>}
           </div>
         </div>
+
+        {/* NEW: Call tutor button (Premium feature, also visible for free as upsell) */}
+        <CallTutorButton
+          personaId={currentPersonaId}
+          exerciseContext={session.exercise}
+          language={preferences?.language || "mix"}
+          studentName={preferences?.name || ""}
+          isPremium={isPremium}
+          compact
+        />
+
         <button
           onClick={() => setShowTutorSwitch(true)}
           className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400"
