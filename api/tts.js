@@ -1,9 +1,23 @@
 // api/tts.js
-// Voice synthesis. Two backends:
-//   - ElevenLabs (premium, multilingual, best French/Kreyòl) - if ELEVENLABS_API_KEY is set
-//   - OpenAI TTS via OpenRouter (default, good quality, cheaper)
-//
-// Returns audio as base64 data URL.
+// v11: Gemini 3.1 Flash TTS primary (best ELO, 80+ languages incl Haitian Creole).
+// ElevenLabs backup. Audio tags per persona for emotional control.
+
+const PERSONA_VOICES = {
+  joseph:     { gemini: "Achernar", style: "[calm][warm][slow] Tu parles avec sagesse et patience.", eleven: "VR6AewLTigWG4xSOukaG" },
+  tikens:     { gemini: "Algenib",  style: "[energetic][youthful][upbeat] Tu parles avec énergie et enthousiasme.", eleven: "pNInz6obpgDQGcFmaJgB" },
+  victoria:   { gemini: "Aoede",    style: "[elegant][confident][articulate] Tu parles avec sophistication.", eleven: "XB0fDUnXU5powFXDhCwa" },
+  marckenson: { gemini: "Algieba",  style: "[intense][firm][direct] Tu parles avec autorité respectueuse.", eleven: "TxGEqnHWrfWFTfGW9XjX" },
+  camille:    { gemini: "Vega",     style: "[gentle][supportive][warm] Tu parles avec douceur et encouragement.", eleven: "EXAVITQu4vr4xnSDxMaL" },
+};
+
+function detectLanguage(text) {
+  // Heuristic: count Kreyòl-distinctive markers
+  const kreyolMarkers = /\b(mwen|m'|nan|yo|kòm|fè|fò|w'|nou|li|sa|pa|gen|ka|ki|ye|sou|epi|tankou|paske|jodi|deja|toujou|pou)\b/gi;
+  const matches = (text.match(kreyolMarkers) || []).length;
+  const wordCount = text.split(/\s+/).length;
+  // If >15% of words are Kreyòl-distinctive, treat as Kreyòl
+  return matches / Math.max(wordCount, 1) > 0.15 ? "ht" : "fr";
+}
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -14,65 +28,104 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { text, voice, isPremium } = req.body || {};
+    const { text, persona = "joseph", isPremium = false } = req.body || {};
     if (!text) return res.status(400).json({ error: "Missing text" });
 
-    const cleanText = text.substring(0, 4000);
+    const cleanText = String(text).substring(0, 4000).trim();
+    const voice = PERSONA_VOICES[persona] || PERSONA_VOICES.joseph;
+    const lang = detectLanguage(cleanText);
+
+    const GEMINI_KEY = process.env.GEMINI_API_KEY;
     const ELEVEN_KEY = process.env.ELEVENLABS_API_KEY;
 
-    // Use ElevenLabs for premium users if key is configured
-    if (isPremium && ELEVEN_KEY) {
-      const audio = await elevenLabsTTS(cleanText, voice || "Bella", ELEVEN_KEY);
+    // Primary: Gemini 3.1 Flash TTS
+    if (GEMINI_KEY) {
+      const audio = await geminiTTS(cleanText, voice.gemini, voice.style, lang, GEMINI_KEY);
+      if (audio) {
+        return res.status(200).json({
+          data: {
+            audioUrl: `data:audio/mp3;base64,${audio}`,
+            backend: "gemini",
+            modelUsed: "gemini-3.1-flash-tts",
+            language: lang,
+          },
+        });
+      }
+    }
+
+    // Backup: ElevenLabs
+    if (ELEVEN_KEY) {
+      const audio = await elevenLabsTTS(cleanText, voice.eleven, ELEVEN_KEY);
       if (audio) {
         return res.status(200).json({
           data: {
             audioUrl: `data:audio/mp3;base64,${audio}`,
             backend: "elevenlabs",
-            useBrowserFallback: false,
+            modelUsed: "elevenlabs-v3",
+            language: lang,
           },
         });
       }
     }
 
-    // Default: OpenAI TTS via OpenRouter (covers French + Kreyòl decently)
-    const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY;
-    if (OPENROUTER_KEY) {
-      const audio = await openAITTSViaRouter(cleanText, voice || "nova", OPENROUTER_KEY);
-      if (audio) {
-        return res.status(200).json({
-          data: {
-            audioUrl: `data:audio/mp3;base64,${audio}`,
-            backend: "openai",
-            useBrowserFallback: false,
-          },
-        });
-      }
-    }
-
-    // Final fallback: tell client to use browser Web Speech API
+    // Last resort: browser TTS
     return res.status(200).json({
-      data: { useBrowserFallback: true, text: cleanText },
+      data: { useBrowserFallback: true, text: cleanText, language: lang, modelUsed: "browser-fallback" },
     });
   } catch (err) {
     console.error("/api/tts error:", err);
     return res.status(200).json({
-      data: { useBrowserFallback: true, text: req.body?.text || "" },
+      data: { useBrowserFallback: true, text: req.body?.text || "", modelUsed: "browser-fallback" },
     });
+  }
+}
+
+async function geminiTTS(text, voiceName, styleInstruction, lang, apiKey) {
+  try {
+    const promptedText = `${styleInstruction}\n\n${text}`;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: promptedText }] }],
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName },
+              },
+            },
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.warn(`Gemini TTS error ${response.status}:`, errText.substring(0, 200));
+      return null;
+    }
+
+    const data = await response.json();
+    const audioData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!audioData) {
+      console.warn("Gemini TTS returned no audio");
+      return null;
+    }
+    return audioData; // base64 string
+  } catch (err) {
+    console.warn("Gemini TTS failed:", err.message);
+    return null;
   }
 }
 
 async function elevenLabsTTS(text, voiceId, apiKey) {
   try {
-    // Use multilingual model for French/Kreyòl support
-    const VOICE_IDS = {
-      Bella: "EXAVITQu4vr4xnSDxMaL", // Multilingual female
-      Adam: "pNInz6obpgDQGcFmaJgB", // Multilingual male
-      Charlotte: "XB0fDUnXU5powFXDhCwa",
-    };
-    const voiceId_resolved = VOICE_IDS[voiceId] || VOICE_IDS.Bella;
-
     const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId_resolved}`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
       {
         method: "POST",
         headers: {
@@ -92,50 +145,14 @@ async function elevenLabsTTS(text, voiceId, apiKey) {
         }),
       }
     );
-
     if (!response.ok) {
       console.warn("ElevenLabs error:", response.status);
       return null;
     }
-
     const buffer = await response.arrayBuffer();
     return Buffer.from(buffer).toString("base64");
   } catch (err) {
     console.warn("ElevenLabs failed:", err.message);
-    return null;
-  }
-}
-
-async function openAITTSViaRouter(text, voice, apiKey) {
-  try {
-    const response = await fetch(
-      "https://openrouter.ai/api/v1/audio/speech",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-          "HTTP-Referer": "https://laureatai.com",
-          "X-Title": "Laureat AI",
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-4o-mini-tts",
-          input: text,
-          voice: voice || "nova",
-          response_format: "mp3",
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      console.warn("OpenAI TTS via OpenRouter failed:", response.status);
-      return null;
-    }
-
-    const buffer = await response.arrayBuffer();
-    return Buffer.from(buffer).toString("base64");
-  } catch (err) {
-    console.warn("OpenAI TTS failed:", err.message);
     return null;
   }
 }
