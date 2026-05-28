@@ -1,12 +1,13 @@
 // src/services/ttsService.js
-// Wave 1: TTS with proper pause/resume + persona-aware voice + model metadata.
+// v12: Audio plays as soon as the network returns. No waiting on slow loadedmetadata.
+// Falls back to browser TTS if server returns useBrowserFallback.
 
 let currentAudio = null;
 let currentUtterance = null;
 let lastModelUsed = null;
 
 export async function speakText(text, lang = "fr-FR", options = {}) {
-  const { isPremium = false, persona = "joseph", onModelUsed } = options;
+  const { persona = "joseph", onModelUsed } = options;
 
   stopSpeaking();
   if (!text) return { duration: 0, modelUsed: null };
@@ -15,7 +16,7 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
     const response = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, isPremium, persona }),
+      body: JSON.stringify({ text, persona }),
     });
 
     if (response.ok) {
@@ -24,19 +25,28 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
       onModelUsed?.(lastModelUsed);
 
       if (data?.data?.audioUrl) {
-        currentAudio = new Audio(data.data.audioUrl);
-        await new Promise((resolve) => {
-          currentAudio.onloadedmetadata = resolve;
-          currentAudio.onerror = resolve;
-          setTimeout(resolve, 2000);
+        const audio = new Audio();
+        currentAudio = audio;
+        audio.src = data.data.audioUrl;
+
+        // Start playing as soon as enough data is buffered, don't wait for full load
+        const playPromise = new Promise((resolve) => {
+          audio.oncanplay = () => {
+            audio.play().catch((err) => {
+              console.warn("Audio play failed:", err);
+              resolve();
+            });
+          };
+          audio.onended = resolve;
+          audio.onerror = (e) => {
+            console.warn("Audio error:", e);
+            resolve();
+          };
+          // Safety timeout: if audio doesn't start in 5s, give up
+          setTimeout(resolve, 30000);
         });
-        const duration = currentAudio.duration || estimateDuration(text);
-        const promise = new Promise((resolve) => {
-          currentAudio.onended = resolve;
-          currentAudio.onerror = resolve;
-        });
-        currentAudio.play().catch(() => {});
-        return { duration, promise, modelUsed: lastModelUsed };
+
+        return { duration: 0, promise: playPromise, modelUsed: lastModelUsed };
       }
 
       if (data?.data?.useBrowserFallback) {
@@ -73,12 +83,7 @@ function browserSpeak(text, lang = "fr-FR") {
   });
   speechSynthesis.speak(utter);
 
-  return { duration: estimateDuration(text), promise, modelUsed: "browser-fallback" };
-}
-
-function estimateDuration(text) {
-  const wordCount = text.split(/\s+/).length;
-  return (wordCount / 150) * 60;
+  return { duration: 0, promise, modelUsed: "browser-fallback" };
 }
 
 export function pauseSpeaking() {
@@ -107,8 +112,11 @@ export function resumeSpeaking() {
 
 export function stopSpeaking() {
   if (currentAudio) {
-    currentAudio.pause();
-    currentAudio.currentTime = 0;
+    try {
+      currentAudio.pause();
+      currentAudio.currentTime = 0;
+      currentAudio.src = "";
+    } catch {}
     currentAudio = null;
   }
   if (currentUtterance && "speechSynthesis" in window) {
@@ -133,95 +141,58 @@ export function getLastModelUsed() {
   return lastModelUsed;
 }
 
-// Voice input — record from mic, transcribe via /api/transcribe
-export async function recordAndTranscribe({ onStart, onStop, maxDuration = 30000 } = {}) {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error("Microphone not supported");
-  }
-
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const recorder = new MediaRecorder(stream);
-  const chunks = [];
-  let stopped = false;
-
-  recorder.ondataavailable = (e) => {
-    if (e.data.size > 0) chunks.push(e.data);
-  };
-
-  return new Promise((resolve, reject) => {
-    recorder.onstop = async () => {
-      stream.getTracks().forEach((t) => t.stop());
-      const blob = new Blob(chunks, { type: "audio/webm" });
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        try {
-          const response = await fetch("/api/transcribe", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audioData: reader.result, language: "fr" }),
-          });
-          if (!response.ok) {
-            reject(new Error("Transcription failed"));
-            return;
-          }
-          const data = await response.json();
-          resolve({
-            text: data?.data?.text || "",
-            language: data?.data?.language || "fr",
-            modelUsed: data?.data?.modelUsed,
-          });
-        } catch (err) {
-          reject(err);
-        }
-      };
-      reader.readAsDataURL(blob);
-    };
-
-    recorder.start();
-    onStart?.();
-
-    const timeout = setTimeout(() => {
-      if (!stopped) {
-        stopped = true;
-        recorder.stop();
-        onStop?.();
-      }
-    }, maxDuration);
-
-    // Expose a stop function via a side-effect on the promise
-    resolve.stopFn = () => {
-      if (!stopped) {
-        stopped = true;
-        clearTimeout(timeout);
-        recorder.stop();
-        onStop?.();
-      }
-    };
-  });
-}
-
-// Simpler API: returns a recorder controller you can stop manually
+// ============================================================
+// VOICE INPUT — uses MediaRecorder + /api/transcribe (Gemini Audio)
+// ============================================================
 export function createVoiceRecorder() {
   let recorder = null;
   let stream = null;
   let chunks = [];
-  let onCompleteCallback = null;
+  let mimeType = "";
 
   return {
-    async start({ onComplete, onError, maxDuration = 30000 }) {
-      onCompleteCallback = onComplete;
+    async start({ onComplete, onError, maxDuration = 60000 }) {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        recorder = new MediaRecorder(stream);
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("Microphone API not available");
+        }
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
+        // Pick supported MIME
+        const mimeOptions = [
+          "audio/webm;codecs=opus",
+          "audio/webm",
+          "audio/mp4",
+          "audio/ogg;codecs=opus",
+        ];
+        for (const m of mimeOptions) {
+          if (MediaRecorder.isTypeSupported(m)) { mimeType = m; break; }
+        }
+
+        recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
         chunks = [];
 
         recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) chunks.push(e.data);
+          if (e.data && e.data.size > 0) chunks.push(e.data);
         };
 
         recorder.onstop = async () => {
           stream?.getTracks().forEach((t) => t.stop());
-          const blob = new Blob(chunks, { type: "audio/webm" });
+          stream = null;
+
+          if (chunks.length === 0) {
+            onError?.(new Error("No audio recorded"));
+            return;
+          }
+
+          const blob = new Blob(chunks, { type: mimeType || "audio/webm" });
           const reader = new FileReader();
           reader.onloadend = async () => {
             try {
@@ -230,8 +201,12 @@ export function createVoiceRecorder() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ audioData: reader.result, language: "fr" }),
               });
+              if (!response.ok) {
+                onError?.(new Error(`Transcribe HTTP ${response.status}`));
+                return;
+              }
               const data = await response.json();
-              onCompleteCallback?.({
+              onComplete?.({
                 text: data?.data?.text || "",
                 modelUsed: data?.data?.modelUsed,
               });
@@ -242,7 +217,13 @@ export function createVoiceRecorder() {
           reader.readAsDataURL(blob);
         };
 
+        recorder.onerror = (e) => {
+          onError?.(e?.error || new Error("Recorder error"));
+        };
+
         recorder.start();
+
+        // Safety stop
         setTimeout(() => {
           if (recorder?.state === "recording") recorder.stop();
         }, maxDuration);
