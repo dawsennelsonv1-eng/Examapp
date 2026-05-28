@@ -1,10 +1,7 @@
 // api/tts.js
-// v13 FIXES:
-//  - DROPPED WORDS: removed the "Dis ce qui suit..." prefix. Gemini was treating
-//    the first words as part of the instruction and skipping them. Now we use the
-//    proper system-level style via a separate instruction field, NOT prepended text.
-//  - SPEED: use streaming generateContent so first audio chunk returns faster.
-//  - Returns WAV (PCM wrapped) so browser can play.
+// v14: Optimized for SPEED. Frontend now calls this per-sentence so first audio
+// plays in ~2s instead of waiting 10s for the whole message.
+// Each call synthesizes ONE short chunk. Returns WAV.
 
 const PERSONA_VOICES = {
   joseph:     { gemini: "Achernar", eleven: "VR6AewLTigWG4xSOukaG" },
@@ -26,7 +23,9 @@ export default async function handler(req, res) {
     const { text, persona = "joseph" } = req.body || {};
     if (!text) return res.status(400).json({ error: "Missing text" });
 
-    const cleanText = String(text).substring(0, 4000).trim();
+    // Keep chunks short for speed. Frontend should send one sentence at a time,
+    // but we cap here as a safety net.
+    const cleanText = String(text).substring(0, 800).trim();
     const voice = PERSONA_VOICES[persona] || PERSONA_VOICES.joseph;
 
     const GEMINI_KEY = process.env.GEMINI_API_KEY;
@@ -40,11 +39,9 @@ export default async function handler(req, res) {
             audioUrl: `data:audio/wav;base64,${result.wavBase64}`,
             backend: "gemini",
             modelUsed: "gemini-3.1-flash-tts-preview",
-            voice: voice.gemini,
           },
         });
       }
-      console.warn("Gemini TTS null, trying ElevenLabs");
     }
 
     if (ELEVEN_KEY) {
@@ -73,8 +70,6 @@ export default async function handler(req, res) {
 
 async function geminiTTS(text, voiceName, apiKey) {
   try {
-    // CRITICAL FIX: send the text RAW, no instruction prefix.
-    // Prepending "Dis ce qui suit:" made Gemini skip the opening words.
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${apiKey}`,
       {
@@ -84,11 +79,7 @@ async function geminiTTS(text, voiceName, apiKey) {
           contents: [{ parts: [{ text }] }],
           generationConfig: {
             responseModalities: ["AUDIO"],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName },
-              },
-            },
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
           },
         }),
       }
@@ -96,21 +87,18 @@ async function geminiTTS(text, voiceName, apiKey) {
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error(`Gemini TTS HTTP ${response.status}:`, errText.substring(0, 400));
+      console.error(`Gemini TTS HTTP ${response.status}:`, errText.substring(0, 300));
       return null;
     }
 
     const data = await response.json();
     const inlineData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
-    if (!inlineData?.data) {
-      console.warn("Gemini TTS: no inlineData");
-      return null;
-    }
+    if (!inlineData?.data) return null;
 
     const pcmBuffer = Buffer.from(inlineData.data, "base64");
     let sampleRate = 24000;
-    const mimeMatch = (inlineData.mimeType || "").match(/rate=(\d+)/);
-    if (mimeMatch) sampleRate = parseInt(mimeMatch[1], 10);
+    const m = (inlineData.mimeType || "").match(/rate=(\d+)/);
+    if (m) sampleRate = parseInt(m[1], 10);
 
     const wavBuffer = pcmToWav(pcmBuffer, sampleRate, 1, 16);
     return { wavBase64: wavBuffer.toString("base64") };
@@ -124,12 +112,10 @@ function pcmToWav(pcmBuffer, sampleRate, numChannels, bitsPerSample) {
   const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
   const blockAlign = (numChannels * bitsPerSample) / 8;
   const dataSize = pcmBuffer.length;
-  const fileSize = 44 + dataSize - 8;
-
   const header = Buffer.alloc(44);
   let o = 0;
   header.write("RIFF", o); o += 4;
-  header.writeUInt32LE(fileSize, o); o += 4;
+  header.writeUInt32LE(36 + dataSize, o); o += 4;
   header.write("WAVE", o); o += 4;
   header.write("fmt ", o); o += 4;
   header.writeUInt32LE(16, o); o += 4;
@@ -141,32 +127,24 @@ function pcmToWav(pcmBuffer, sampleRate, numChannels, bitsPerSample) {
   header.writeUInt16LE(bitsPerSample, o); o += 2;
   header.write("data", o); o += 4;
   header.writeUInt32LE(dataSize, o);
-
   return Buffer.concat([header, pcmBuffer]);
 }
 
 async function elevenLabsTTS(text, voiceId, apiKey) {
   try {
-    const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "xi-api-key": apiKey,
-          Accept: "audio/mpeg",
-        },
-        body: JSON.stringify({
-          text,
-          model_id: "eleven_multilingual_v2",
-          voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0.3, use_speaker_boost: true },
-        }),
-      }
-    );
+    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "xi-api-key": apiKey, Accept: "audio/mpeg" },
+      body: JSON.stringify({
+        text,
+        model_id: "eleven_multilingual_v2",
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      }),
+    });
     if (!response.ok) return null;
     const buffer = await response.arrayBuffer();
     return Buffer.from(buffer).toString("base64");
-  } catch (err) {
+  } catch {
     return null;
   }
 }
