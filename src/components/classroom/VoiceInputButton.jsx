@@ -1,162 +1,55 @@
 // src/components/classroom/VoiceInputButton.jsx
-// v11: FIXED — tap-to-toggle mode (not hold). Reliable on mobile.
-// First tap = start recording. Second tap = stop & transcribe.
+// v12: Tap-to-toggle (NOT hold). First tap starts, second tap stops & sends.
+// Uses createVoiceRecorder from ttsService for consistency.
 
 import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Mic, MicOff, Loader2 } from "lucide-react";
+import { Mic, Loader2 } from "lucide-react";
+import { createVoiceRecorder } from "../../services/ttsService";
 
 export default function VoiceInputButton({ onTranscribed, disabled }) {
   const [state, setState] = useState("idle"); // idle | recording | processing
   const recorderRef = useRef(null);
-  const streamRef = useRef(null);
-  const chunksRef = useRef([]);
-  const timeoutRef = useRef(null);
 
-  // Cleanup on unmount
   useEffect(() => {
-    return () => stopAndCleanup();
-    // eslint-disable-next-line
+    return () => {
+      try { recorderRef.current?.stop(); } catch {}
+    };
   }, []);
-
-  const stopAndCleanup = () => {
-    if (recorderRef.current && recorderRef.current.state === "recording") {
-      try {
-        recorderRef.current.stop();
-      } catch {}
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-  };
 
   const handleClick = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-
     if (disabled || state === "processing") return;
 
     if (state === "recording") {
-      // Stop recording
-      if (recorderRef.current && recorderRef.current.state === "recording") {
-        recorderRef.current.stop();
-      }
+      recorderRef.current?.stop();
+      setState("processing");
       return;
     }
 
-    // Start recording
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        alert("Mikwofòn pa disponib sou aparèy sa.");
-        return;
-      }
+    // Start
+    const rec = createVoiceRecorder();
+    recorderRef.current = rec;
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      streamRef.current = stream;
-
-      // Find supported MIME type
-      const mimeOptions = [
-        "audio/webm;codecs=opus",
-        "audio/webm",
-        "audio/mp4",
-        "audio/ogg;codecs=opus",
-      ];
-      let mimeType = "";
-      for (const m of mimeOptions) {
-        if (MediaRecorder.isTypeSupported(m)) {
-          mimeType = m;
-          break;
-        }
-      }
-
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-      recorderRef.current = recorder;
-      chunksRef.current = [];
-
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
-      recorder.onstop = async () => {
-        // Stop the stream
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((t) => t.stop());
-          streamRef.current = null;
-        }
-
-        if (chunksRef.current.length === 0) {
-          setState("idle");
-          return;
-        }
-
-        setState("processing");
-
-        const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          try {
-            const response = await fetch("/api/transcribe", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ audioData: reader.result, language: "fr" }),
-            });
-
-            if (!response.ok) {
-              console.error("Transcribe failed:", response.status);
-              setState("idle");
-              return;
-            }
-
-            const data = await response.json();
-            const text = data?.data?.text?.trim();
-            if (text) {
-              onTranscribed(text);
-            }
-          } catch (err) {
-            console.error("Transcribe error:", err);
-          } finally {
-            setState("idle");
-          }
-        };
-        reader.readAsDataURL(blob);
-      };
-
-      recorder.onerror = (err) => {
-        console.error("Recorder error:", err);
-        stopAndCleanup();
+    await rec.start({
+      onComplete: ({ text }) => {
         setState("idle");
-      };
-
-      recorder.start();
-      setState("recording");
-
-      // Auto-stop after 60s
-      timeoutRef.current = setTimeout(() => {
-        if (recorder.state === "recording") {
-          recorder.stop();
+        if (text && text.trim()) {
+          onTranscribed(text.trim());
         }
-      }, 60000);
-    } catch (err) {
-      console.error("getUserMedia failed:", err);
-      if (err.name === "NotAllowedError") {
-        alert("Aksè mikwofòn refize. Aktive li nan paramèt navigateur a.");
-      } else {
-        alert("Pa kapab itilize mikwofòn la. " + (err.message || ""));
-      }
-      stopAndCleanup();
-      setState("idle");
-    }
+      },
+      onError: (err) => {
+        console.error("Voice error:", err);
+        setState("idle");
+        if (err?.name === "NotAllowedError") {
+          alert("Aksè mikwofòn refize. Aktive li nan paramèt navigateur a.");
+        }
+      },
+      maxDuration: 60000,
+    });
+
+    setState("recording");
   };
 
   return (
@@ -172,15 +65,12 @@ export default function VoiceInputButton({ onTranscribed, disabled }) {
           ? "bg-slate-300 dark:bg-slate-700 text-slate-500"
           : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
       } disabled:opacity-50`}
-      title={state === "recording" ? "Tap pou kanpe" : "Tap pou pale"}
+      title={state === "recording" ? "Tape pou kanpe" : "Tape pou pale"}
     >
       {state === "processing" ? (
         <Loader2 size={18} className="animate-spin" />
       ) : state === "recording" ? (
-        <motion.div
-          animate={{ scale: [1, 1.25, 1] }}
-          transition={{ duration: 0.8, repeat: Infinity }}
-        >
+        <motion.div animate={{ scale: [1, 1.25, 1] }} transition={{ duration: 0.8, repeat: Infinity }}>
           <Mic size={18} fill="currentColor" />
         </motion.div>
       ) : (
