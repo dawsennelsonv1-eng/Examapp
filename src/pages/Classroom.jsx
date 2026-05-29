@@ -1,9 +1,12 @@
 // src/pages/Classroom.jsx
-// FINAL: uses the new ClassroomSession with multi-board + voice + tutor switching.
+// v17: Adds delete-session button on each card (long-press or visible trash icon).
 
-import { useEffect } from "react";
-import { motion } from "framer-motion";
-import { MessageCircle, PencilRuler, Sparkles, Plus, ChevronRight, GraduationCap, HelpCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  MessageCircle, PencilRuler, Sparkles, Plus, ChevronRight,
+  GraduationCap, HelpCircle, Trash2,
+} from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useClassroomSessions } from "../hooks/useClassroom";
 import { useApp } from "../contexts/AppContext";
@@ -13,8 +16,9 @@ export default function Classroom() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeSessionId = searchParams.get("session");
   const isNew = searchParams.get("new") === "1";
-  const { sessions, createSession, getSession, captureSessionSummary } = useClassroomSessions();
+  const { sessions, createSession, getSession, captureSessionSummary, deleteSession } = useClassroomSessions();
   const { preferences } = useApp();
+  const [deletingId, setDeletingId] = useState(null);
 
   const activeSession = activeSessionId ? getSession(activeSessionId) : null;
 
@@ -25,11 +29,9 @@ export default function Classroom() {
       if (!raw) return;
       const exercise = JSON.parse(raw);
       sessionStorage.removeItem("laureat.pendingExercise");
-
       const title = exercise.enonce
         ? exercise.enonce.substring(0, 60) + (exercise.enonce.length > 60 ? "..." : "")
         : "Exercice scanné";
-
       const session = createSession({
         subject: exercise.subject || "Physique",
         title,
@@ -58,10 +60,13 @@ export default function Classroom() {
   const openSession = (id) => setSearchParams({ session: id });
 
   const exitSession = () => {
-    if (activeSession && captureSessionSummary) {
-      captureSessionSummary(activeSession);
-    }
+    if (activeSession && captureSessionSummary) captureSessionSummary(activeSession);
     setSearchParams({});
+  };
+
+  const handleDelete = (id) => {
+    deleteSession(id);
+    setDeletingId(null);
   };
 
   if (activeSession) {
@@ -112,11 +117,57 @@ export default function Classroom() {
         ) : (
           <div className="space-y-2">
             {sessions.map((s, i) => (
-              <SessionCard key={s.id} session={s} delay={i * 0.04} onClick={() => openSession(s.id)} />
+              <SessionCard
+                key={s.id}
+                session={s}
+                delay={i * 0.04}
+                onClick={() => openSession(s.id)}
+                onDelete={() => setDeletingId(s.id)}
+              />
             ))}
           </div>
         )}
       </section>
+
+      {/* Delete confirmation */}
+      <AnimatePresence>
+        {deletingId && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setDeletingId(null)}
+            className="fixed inset-0 z-50 bg-black/60 flex items-end justify-center p-4"
+          >
+            <motion.div
+              initial={{ y: 100 }}
+              animate={{ y: 0 }}
+              exit={{ y: 100 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-sm w-full"
+            >
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">Supprimer cette session ?</h3>
+              <p className="text-sm text-slate-600 dark:text-slate-400 mb-5">
+                La conversation et le tableau seront supprimés. Cette action est définitive.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setDeletingId(null)}
+                  className="flex-1 py-3 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={() => handleDelete(deletingId)}
+                  className="flex-1 py-3 rounded-xl bg-red-600 text-white font-bold"
+                >
+                  Supprimer
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -138,24 +189,36 @@ function QuickAction({ icon: Icon, label, sublabel, color, onClick, badge }) {
   );
 }
 
-function SessionCard({ session, delay, onClick }) {
+function SessionCard({ session, delay, onClick, onDelete }) {
   const lastMessage = session.messages?.[session.messages.length - 1];
   const preview = lastMessage?.content || "Conversation vide";
   return (
-    <motion.button initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay }} whileTap={{ scale: 0.98 }} onClick={onClick}
-      className="w-full flex items-center gap-3 p-3.5 rounded-xl bg-white dark:bg-slate-800 shadow-sm text-left">
-      <div className="w-10 h-10 rounded-xl bg-violet-100 dark:bg-violet-500/20 flex items-center justify-center text-violet-600 dark:text-violet-400 flex-shrink-0">
-        <MessageCircle size={18} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2 mb-0.5">
-          <div className="font-semibold text-sm text-slate-900 dark:text-white truncate">{session.title}</div>
-          <span className="text-[10px] text-slate-400 flex-shrink-0">{formatRelativeTime(session.lastViewedAt)}</span>
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay }}
+      className="relative flex items-center gap-2 p-3.5 rounded-xl bg-white dark:bg-slate-800 shadow-sm"
+    >
+      <button onClick={onClick} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+        <div className="w-10 h-10 rounded-xl bg-violet-100 dark:bg-violet-500/20 flex items-center justify-center text-violet-600 dark:text-violet-400 flex-shrink-0">
+          <MessageCircle size={18} />
         </div>
-        <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{preview}</div>
-      </div>
-      <ChevronRight size={18} className="text-slate-400 flex-shrink-0" />
-    </motion.button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2 mb-0.5">
+            <div className="font-semibold text-sm text-slate-900 dark:text-white truncate">{session.title}</div>
+            <span className="text-[10px] text-slate-400 flex-shrink-0">{formatRelativeTime(session.lastViewedAt)}</span>
+          </div>
+          <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{preview}</div>
+        </div>
+      </button>
+      <button
+        onClick={onDelete}
+        className="w-8 h-8 rounded-full hover:bg-red-50 dark:hover:bg-red-950/30 flex items-center justify-center text-slate-400 hover:text-red-500 transition-colors flex-shrink-0"
+        title="Supprimer"
+      >
+        <Trash2 size={14} />
+      </button>
+    </motion.div>
   );
 }
 

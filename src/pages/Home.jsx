@@ -1,22 +1,21 @@
 // src/pages/Home.jsx
-// FINAL: Pwofesè remember banner + scan history section + missions + leaderboard.
+// v17: Correct exam dates (9AF 29 juin–2 juillet, NS4 3–7 juillet). No MENFP wording.
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
   Calculator, BookOpen, Edit3, ChevronRight, Trophy, Flame,
-  Scan, Sparkles, Target, X,
+  Scan, Sparkles, Target, X, CalendarDays,
 } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
-import { EXAM_DATE, PERSONALITIES } from "../utils/constants";
+import { EXAM_DATES, PERSONALITIES } from "../utils/constants";
 import { useClassroomSessions } from "../hooks/useClassroom";
 import ScanHistoryCard from "../components/home/ScanHistoryCard";
 import TutorAvatar from "../components/shared/TutorAvatar";
 import { useState } from "react";
 
-function daysUntilExam() {
-  const now = new Date();
-  const diff = EXAM_DATE - now;
+function daysUntil(date) {
+  const diff = date - new Date();
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
 }
 
@@ -24,21 +23,24 @@ export default function Home() {
   const navigate = useNavigate();
   const { track, preferences } = useApp();
   const { getLastSessionSummary } = useClassroomSessions();
-  const days = daysUntilExam();
+  const examInfo = EXAM_DATES[track] || EXAM_DATES.NS4;
+  const days = daysUntil(examInfo.start);
   const name = preferences?.name || "champion";
 
   const [showRememberBanner, setShowRememberBanner] = useState(true);
   const lastSession = getLastSessionSummary ? getLastSessionSummary() : null;
 
-  const showBanner = showRememberBanner && lastSession && (Date.now() - lastSession.timestamp < 7 * 24 * 60 * 60 * 1000);
-  const tutorPersona = PERSONALITIES.find((p) => p.id === (lastSession?.lastPersonaId || preferences?.personality)) || PERSONALITIES[0];
+  const showBanner =
+    showRememberBanner &&
+    lastSession &&
+    Date.now() - lastSession.timestamp < 7 * 24 * 60 * 60 * 1000;
+  const tutorPersona =
+    PERSONALITIES.find((p) => p.id === (lastSession?.lastPersonaId || preferences?.personality)) ||
+    PERSONALITIES[0];
 
   const handleResumeSession = () => {
-    if (lastSession?.sessionId) {
-      navigate(`/classe?session=${lastSession.sessionId}`);
-    } else {
-      navigate("/classe");
-    }
+    if (lastSession?.sessionId) navigate(`/classe?session=${lastSession.sessionId}`);
+    else navigate("/classe");
   };
 
   const missions = [
@@ -62,7 +64,7 @@ export default function Home() {
 
         <div className="relative flex justify-between items-center mb-6">
           <span className="text-xs font-bold bg-white/15 backdrop-blur-sm px-3 py-1.5 rounded-full ring-1 ring-white/20">
-            {track === "9AF" ? "9ème AF" : "NS4"}
+            {examInfo.label}
           </span>
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/20 backdrop-blur-sm ring-1 ring-amber-400/30">
             <Flame size={14} className="text-amber-300" fill="currentColor" />
@@ -76,7 +78,13 @@ export default function Home() {
             <div className="text-6xl font-black tracking-tight">{days}</div>
             <div className="text-sm font-semibold text-white/90 pb-1">jours</div>
           </div>
-          <p className="text-sm text-white/70">avant ton examen MENFP</p>
+          <p className="text-sm text-white/70">avant ton examen</p>
+
+          {/* Both exam windows shown clearly */}
+          <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-sm ring-1 ring-white/20">
+            <CalendarDays size={13} />
+            <span className="text-xs font-semibold">{examInfo.range}</span>
+          </div>
 
           <motion.button whileTap={{ scale: 0.97 }} onClick={() => navigate("/scan")}
             className="mt-5 inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-white text-violet-700 font-bold text-sm shadow-xl">
