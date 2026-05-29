@@ -1,134 +1,122 @@
 // src/hooks/useClassroom.js
-// v8: Tracks last session summary for "Pwofesè remember" feature.
+// v17: Added deleteSession() + clearAllSessions() for the new "delete" UX.
 
-import { useCallback, useEffect, useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { STORAGE_KEYS } from "../utils/constants";
 
-const SESSIONS_KEY = "laureat.classroom.sessions";
-const LAST_SESSION_SUMMARY_KEY = "laureat.lastSessionSummary";
-
-function loadFromStorage() {
+function loadSessions() {
   try {
-    return JSON.parse(localStorage.getItem(SESSIONS_KEY) || "[]");
+    const raw = localStorage.getItem(STORAGE_KEYS.CLASSROOM_SESSIONS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
+function persistSessions(sessions) {
+  try {
+    localStorage.setItem(STORAGE_KEYS.CLASSROOM_SESSIONS, JSON.stringify(sessions));
+  } catch (err) {
+    console.warn("Failed to persist sessions:", err);
+  }
+}
+
 export function useClassroomSessions() {
-  const [sessions, setSessions] = useState(() => loadFromStorage());
+  const [sessions, setSessions] = useState(() => loadSessions());
 
   useEffect(() => {
-    const onStorage = (e) => {
-      if (e.key === SESSIONS_KEY) setSessions(loadFromStorage());
+    persistSessions(sessions);
+  }, [sessions]);
+
+  const createSession = useCallback((data) => {
+    const id = `session_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const newSession = {
+      id,
+      title: data.title || "Conversation",
+      subject: data.subject || "Général",
+      exercise: data.exercise || null,
+      messages: [],
+      boards: data.boards || null,
+      activeBoardId: data.activeBoardId || null,
+      currentPersonaId: data.personaId || "joseph",
+      failCount: 0,
+      createdAt: Date.now(),
+      lastViewedAt: Date.now(),
     };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    setSessions((prev) => [newSession, ...prev]);
+    return newSession;
   }, []);
 
-  const persist = useCallback((list) => {
-    try {
-      const trimmed = list.slice(-30);
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(trimmed));
-      setSessions(trimmed);
-    } catch {}
-  }, []);
-
-  const createSession = useCallback(
-    ({ subject, title, exercise = null, firstMessage = null, personaId = null }) => {
-      const session = {
-        id: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        subject: subject || "Général",
-        title: title || "Nouvelle conversation",
-        exercise,
-        messages: firstMessage ? [firstMessage] : [],
-        boards: [
-          { id: "board_enonce", type: "enonce", name: "Énoncé", donnees: [], items: [] },
-          { id: "board_solution", type: "solution", name: "Solution", items: [] },
-          { id: "board_visuel", type: "visuel", name: "Visuel", svg: null },
-        ],
-        activeBoardId: "board_enonce",
-        currentPersonaId: personaId,
-        failCount: 0,
-        createdAt: Date.now(),
-        lastViewedAt: Date.now(),
-      };
-      const current = loadFromStorage();
-      persist([...current, session]);
-      return session;
-    },
-    [persist]
+  const getSession = useCallback(
+    (id) => sessions.find((s) => s.id === id) || null,
+    [sessions]
   );
 
-  const updateSession = useCallback(
-    (id, updates) => {
-      const current = loadFromStorage();
-      const next = current.map((s) =>
+  const updateSession = useCallback((id, updates) => {
+    setSessions((prev) =>
+      prev.map((s) =>
         s.id === id ? { ...s, ...updates, lastViewedAt: Date.now() } : s
-      );
-      persist(next);
-      return next.find((s) => s.id === id);
-    },
-    [persist]
-  );
+      )
+    );
+  }, []);
 
-  const appendMessage = useCallback(
-    (id, message) => {
-      const current = loadFromStorage();
-      const next = current.map((s) =>
-        s.id === id ? { ...s, messages: [...s.messages, message], lastViewedAt: Date.now() } : s
-      );
-      persist(next);
-      return next.find((s) => s.id === id);
-    },
-    [persist]
-  );
+  const appendMessage = useCallback((id, message) => {
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === id
+          ? { ...s, messages: [...(s.messages || []), message], lastViewedAt: Date.now() }
+          : s
+      )
+    );
+  }, []);
 
-  const deleteSession = useCallback(
-    (id) => {
-      const current = loadFromStorage();
-      persist(current.filter((s) => s.id !== id));
-    },
-    [persist]
-  );
+  // NEW v17: delete a single session
+  const deleteSession = useCallback((id) => {
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+  }, []);
 
-  const getSession = useCallback((id) => loadFromStorage().find((s) => s.id === id), []);
+  // NEW v17: clear all sessions
+  const clearAllSessions = useCallback(() => {
+    setSessions([]);
+  }, []);
 
-  // PWOFESÈ REMEMBER: capture summary on session close
   const captureSessionSummary = useCallback((session) => {
     if (!session) return;
-    const summary = {
-      sessionId: session.id,
-      subject: session.subject,
-      title: session.title,
-      lastTopic: session.exercise?.enonce?.substring(0, 100) || session.title,
-      lastPersonaId: session.currentPersonaId,
-      didComplete: session.currentStep === "done",
-      failedAttempts: session.failCount || 0,
-      timestamp: Date.now(),
-    };
     try {
-      localStorage.setItem(LAST_SESSION_SUMMARY_KEY, JSON.stringify(summary));
-    } catch {}
+      const summary = {
+        sessionId: session.id,
+        lastTopic: session.title,
+        subject: session.subject,
+        lastPersonaId: session.currentPersonaId,
+        didComplete: (session.messages?.length || 0) > 6 && (session.failCount || 0) === 0,
+        failedAttempts: session.failCount || 0,
+        timestamp: Date.now(),
+      };
+      localStorage.setItem(STORAGE_KEYS.LAST_SESSION_SUMMARY, JSON.stringify(summary));
+    } catch (err) {
+      console.warn("Failed to capture summary:", err);
+    }
   }, []);
 
   const getLastSessionSummary = useCallback(() => {
     try {
-      const raw = localStorage.getItem(LAST_SESSION_SUMMARY_KEY);
+      const raw = localStorage.getItem(STORAGE_KEYS.LAST_SESSION_SUMMARY);
       return raw ? JSON.parse(raw) : null;
     } catch {
       return null;
     }
   }, []);
 
-  const sortedSessions = [...sessions].sort((a, b) => b.lastViewedAt - a.lastViewedAt);
-
   return {
-    sessions: sortedSessions,
+    sessions,
     createSession,
+    getSession,
     updateSession,
     appendMessage,
     deleteSession,
-    getSession,
+    clearAllSessions,
     captureSessionSummary,
     getLastSessionSummary,
   };
