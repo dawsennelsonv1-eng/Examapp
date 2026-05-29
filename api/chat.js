@@ -1,26 +1,15 @@
 // api/chat.js
-// FINAL: tightened prompts, 5 personas with anti-over-explain rules, JSON cleanup.
+// v17:
+//  - When preferences.language === "fr", AI replies in French ONLY (no kreyòl mix)
+//  - Removed MENFP wording from system prompts
+//  - 5 personas with tightened anti-overexplain rules
 
 const PERSONALITIES = {
-  joseph: `Tu es M. JOSEPH, prof haïtien chevronné (~62 ans). PATIENT, fatherly, classic methodology. Voix calme.
-LANGUAGE: Kreyòl Fwansize. ALWAYS "m" (pas "mwen"), "w" (pas "ou"), "l" (pas "li"). French ONLY pour termes techniques.
-TONE: "Tande m byen, pran tan w." / "Respire a fon. M fè w konfyans."`,
-
-  tikens: `Tu es TI-KENS, jeune prof 21 ans, énergique, "grand frère cool".
-LANGUAGE: Kreyòl Fwansize avec slang. "Sak pase baz", "kraze l". Contractions m/w/l.
-TONE: "Sak pase baz! Ann frape sa!" / "Tcheke sa baz, fasil."`,
-
-  victoria: `Tu es Mlle. VICTORIA, mentor brillante 28 ans, élégante, INSPIRANTE (PAS romantique).
-LANGUAGE: Mix français élégant + kreyòl chaleureux. Contractions m/w/l. Valide l'intelligence.
-TONE: "Tu vois? Ou gen bon zin." / "Brillant. Fason w panse a montre w gen tèt."`,
-
-  marckenson: `Tu es M. MARCKENSON, coach intense 32 ans. Goggins-inspired mais PG, NEVER cursing, NEVER harsh.
-LANGUAGE: Kreyòl direct, ton kòmandman, court et punchy. Contractions m/w/l.
-TONE: "Sispann fè eskiz. Ann travay." / "Fatige? 15 minit ankò avè m."`,
-
-  camille: `Tu es Mlle. CAMILLE, grande sœur 25 ans, bienveillante, safe space.
-LANGUAGE: Kreyòl Fwansize doux. Contractions m/w/l.
-TONE: "Ann pran sa etap pa etap, d'accord ?" / "Très bien ! Ou wè ou te ka fè l."`,
+  joseph: `Tu es M. JOSEPH, professeur expérimenté (~62 ans). PATIENT, fatherly, méthodique. Voix calme.`,
+  tikens: `Tu es TI-KENS, jeune prof 21 ans, énergique, "grand frère cool".`,
+  victoria: `Tu es Mlle. VICTORIA, mentore brillante 28 ans, élégante, INSPIRANTE (PAS romantique).`,
+  marckenson: `Tu es M. MARCKENSON, coach intense 32 ans. Direct, motivant, PG (jamais grossier).`,
+  camille: `Tu es Mlle. CAMILLE, grande sœur 25 ans, bienveillante, safe space.`,
 };
 
 export default async function handler(req, res) {
@@ -41,19 +30,23 @@ export default async function handler(req, res) {
     const KEY = process.env.OPENROUTER_API_KEY;
     if (!KEY) return res.status(500).json({ error: "Server misconfigured" });
 
-    const prefs = preferences || { language: "mix", personality: "joseph", name: "" };
+    const prefs = preferences || { language: "fr", personality: "joseph", name: "" };
 
+    // ENFORCED language rules
     let languageStrategy;
     if (prefs.language === "fr") {
-      languageStrategy = failCount >= 3
-        ? "Tu parles français principalement, mais glisse quelques phrases-clés en kreyòl si l'élève a du mal."
-        : "Réponds principalement en français.";
+      // STRICT French only — no kreyòl mixing
+      languageStrategy = `🔴 LANGUE STRICTE: réponds EN FRANÇAIS UNIQUEMENT.
+Pas de kreyòl. Pas de mots créoles ("mwen", "w", "l", "ann", "ki sa", etc.).
+Si l'élève écrit en kreyòl, comprends-le, mais réponds toujours en français standard.`;
     } else if (prefs.language === "kr") {
-      languageStrategy = "Reponn nan kreyòl. Mo teknik fransè kote ki nesesè.";
+      languageStrategy = `Reponn nan kreyòl sèlman. Itilize kontraksyon "m", "w", "l".
+Mo teknik fransè kote ki nesesè (formules math, termes scientifiques).`;
     } else {
+      // mix
       languageStrategy = failCount >= 2
         ? "Bascule en KREYÒL principal pour cette explication."
-        : "Mélange français et kreyòl naturellement. Kreyòl pour l'humain, français pour le technique.";
+        : "Mélange français et kreyòl naturellement. Kreyòl pour l'humain, français pour le technique. Utilise 'm', 'w', 'l'.";
     }
 
     const personality = PERSONALITIES[prefs.personality] || PERSONALITIES.joseph;
@@ -81,7 +74,8 @@ ${rememberContext}
 - Toutes formules math vont dans boardActions, JAMAIS dans "text"
 - Décimales avec virgule (9,8 pas 9.8)
 - Pose UNE question à la fois
-- N'explique PAS ce que tu vas faire — fais-le directement`;
+- N'explique PAS ce que tu vas faire — fais-le directement
+- Tu prépares un élève haïtien à son examen national. N'utilise PAS l'acronyme "MENFP" — dis simplement "ton examen" ou "l'examen national".`;
 
     if (teachingMode === "step-by-step" && context?.exercise) {
       systemPrompt += `
@@ -93,7 +87,7 @@ Exercice: ${JSON.stringify(context.exercise).substring(0, 1500)}
 Si échec:
 - 1: réexplique différemment
 - 2: analogie haïtienne concrète
-- 3: kreyòl + diagramme (shouldDrawDiagram: true)
+- 3: ${prefs.language === "fr" ? "explique avec un schéma" : "kreyòl + diagramme"} (shouldDrawDiagram: true)
 - 4+: tutorSwitchSuggestion: true`;
     }
 
@@ -106,18 +100,7 @@ FORMAT JSON STRICT:
       "type": "thinking" | "acknowledge" | "explain" | "question" | "praise",
       "text": "2 phrases max, pas de math/code",
       "speakable": "version pour voix",
-      "boardActions": [
-        {
-          "board": "enonce" | "solution" | "visuel",
-          "action": "add" | "highlight" | "clear",
-          "item": {
-            "type": "donnee" | "formula" | "substitution" | "result" | "conversion" | "deduction" | "note",
-            "symbol": "L", "value": "15", "unit": "cm", "content": "...",
-            "highlight": "yellow" | "pink" | "green" | "red" | "blue" | null,
-            "boxed": true | false
-          }
-        }
-      ]
+      "boardActions": [...]
     }
   ],
   "suggestedQuestions": ["question courte 1", "question courte 2"],
@@ -169,11 +152,7 @@ FORMAT JSON STRICT:
           }),
         });
 
-        if (!response.ok) {
-          lastError = `${model}: ${response.status}`;
-          continue;
-        }
-
+        if (!response.ok) { lastError = `${model}: ${response.status}`; continue; }
         const data = await response.json();
         const raw = data?.choices?.[0]?.message?.content;
         if (!raw) continue;
@@ -215,8 +194,8 @@ FORMAT JSON STRICT:
     if (segments.length === 0) {
       segments.push({
         type: "explain",
-        text: parsed.reply || "M ap reflechi sou sa.",
-        speakable: parsed.reply || "M ap reflechi sou sa.",
+        text: parsed.reply || "Je réfléchis à ta question.",
+        speakable: parsed.reply || "Je réfléchis à ta question.",
         boardActions: [],
       });
     }
