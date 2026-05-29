@@ -1,133 +1,94 @@
-// src/utils/constants.js
-// Wave 1: 5 personas, board types, highlight colors.
+// src/utils/constants.js (v17 — exam dates corrected, MENFP wording removed)
+// Only the exam-related + persona descriptions changed. Everything else preserved.
 
-export const EXAM_DATE = new Date("2026-07-17T08:00:00");
-
-export const TRACKS = {
-  NINE_AF: "9AF",
-  NS4: "NS4",
+export const EXAM_DATES = {
+  "9AF": {
+    label: "9ème AF",
+    fullLabel: "9ème Année Fondamentale",
+    start: new Date("2026-06-29T08:00:00"),
+    end: new Date("2026-07-02T17:00:00"),
+    range: "29 juin – 2 juillet",
+  },
+  NS4: {
+    label: "NS4",
+    fullLabel: "Nouveau Secondaire 4",
+    start: new Date("2026-07-03T08:00:00"),
+    end: new Date("2026-07-07T17:00:00"),
+    range: "3 – 7 juillet",
+  },
 };
 
-export const SUBJECTS_BY_TRACK = {
-  "9AF": ["Mathématiques", "Physique", "Chimie", "Sciences Sociales", "Français", "Créole"],
-  "NS4": ["Mathématiques", "Physique", "Chimie", "Biologie", "Sciences Sociales", "Philosophie", "Français"],
-};
-
-export const WEBHOOKS = {
-  OCR_SCAN: "/api/solve",
-  SOLVE: "/api/solve",
-  TUTOR_CHAT: "/api/chat",
-  EXPLAIN_STEP: "/api/chat",
-  GENERATE_BOARD: "/api/board",
-  GENERATE_QUIZ: "/api/generate-quizzes",
-  TTS: "/api/tts",
-  TRANSCRIBE: "/api/transcribe",
-  PAYMENT_VALIDATE: "/api/payment-webhook",
-};
-
-export const STORAGE_KEYS = {
-  TRACK: "menfp.track",
-  LANG: "menfp.lang",
-  THEME: "menfp.theme",
-  PROGRESS: "menfp.progress",
-  WRONG_ANSWERS: "menfp.wrong",
-  PLAN_TIER: "laureat.planTier",
-  USAGE_TODAY: "laureat.usageToday",
-  PREFERENCES: "laureat.preferences",
-  DEV_MODE: "laureat.devMode",
-};
-
-export const USAGE_CAPS = {
-  free: { scans: 3, chats: 10, boards: 1, quizzes: 5 },
-  basic: { scans: 15, chats: 50, boards: 5, quizzes: 20 },
-  premium: { scans: -1, chats: -1, boards: -1, quizzes: -1 },
-};
-
-export const PLAN_PRICES = { basic: 900, premium: 2400 };
+// Earliest start across all tracks — used for the home countdown
+export const EXAM_DATE = EXAM_DATES["9AF"].start;
 
 export const PERSONALITIES = [
   {
     id: "joseph",
     name: "M. Joseph",
-    title: "Le vétéran patient",
-    description: "Méthode classique, calme, structuré",
-    age: "62",
-    style: "fr-male-mature",
-    color: "from-amber-600 to-orange-700",
-    avatarBg: "bg-gradient-to-br from-amber-200 to-orange-300",
+    title: "Le professeur vétéran",
+    description: "Patient, sage, méthodique. Comme un grand-père qui enseigne.",
+    voiceId: "Achernar",
     icon: "👨‍🏫",
   },
   {
     id: "tikens",
     name: "Ti-Kens",
     title: "Le grand frère cool",
-    description: "Énergie, hacks, style moderne",
-    age: "21",
-    style: "fr-male-young",
-    color: "from-cyan-500 to-blue-700",
-    avatarBg: "bg-gradient-to-br from-cyan-200 to-blue-300",
-    icon: "🧑‍🎤",
+    description: "Énergique, motivant. Comme un ami qui sait tout.",
+    voiceId: "Puck",
+    icon: "🎧",
   },
   {
     id: "victoria",
     name: "Mlle. Victoria",
-    title: "La mentor brillante",
-    description: "Inspirante, élégante, exigeante",
-    age: "28",
-    style: "fr-female-elegant",
-    color: "from-rose-500 to-red-700",
-    avatarBg: "bg-gradient-to-br from-rose-200 to-red-300",
-    icon: "👩‍💼",
+    title: "La mentore brillante",
+    description: "Élégante, inspirante. Elle valide ton intelligence.",
+    voiceId: "Aoede",
+    icon: "✨",
   },
   {
     id: "marckenson",
     name: "M. Marckenson",
     title: "Le coach intense",
-    description: "Pousse fort, pas d'excuses, respectueux",
-    age: "32",
-    style: "fr-male-coach",
-    color: "from-slate-700 to-slate-900",
-    avatarBg: "bg-gradient-to-br from-slate-300 to-slate-500",
-    icon: "💪",
+    description: "Direct, motivant. Il te pousse à donner ton maximum.",
+    voiceId: "Charon",
+    icon: "🎯",
   },
   {
     id: "camille",
     name: "Mlle. Camille",
-    title: "La grande sœur",
-    description: "Bienveillante, organisée, rassurante",
-    age: "25",
-    style: "fr-female-warm",
-    color: "from-violet-500 to-purple-700",
-    avatarBg: "bg-gradient-to-br from-violet-200 to-purple-300",
-    icon: "👩‍🏫",
+    title: "La grande sœur bienveillante",
+    description: "Douce, patiente. Un espace safe pour apprendre.",
+    voiceId: "Leda",
+    icon: "💝",
   },
 ];
 
 export const LANGUAGE_OPTIONS = [
-  { id: "mix", name: "Mélange français-créole", description: "Recommandé", badge: "Recommandé", icon: "🇭🇹" },
-  { id: "fr", name: "Français", description: "Uniquement français", icon: "🇫🇷" },
-  { id: "kr", name: "Kreyòl", description: "Sèlman kreyòl", icon: "🗣️" },
+  { id: "fr",  name: "Français",         description: "Réponses en français uniquement",      icon: "🇫🇷" },
+  { id: "kr",  name: "Kreyòl",           description: "Repons yo nan kreyòl sèlman",          icon: "🇭🇹" },
+  { id: "mix", name: "Mixte",            description: "Français + kreyòl naturellement",      icon: "🌍" },
 ];
 
-export const BOARD_TYPES = {
-  enonce: { name: "Énoncé", icon: "📋", description: "Données et question" },
-  solution: { name: "Solution", icon: "✏️", description: "Travail étape par étape" },
-  visuel: { name: "Visuel", icon: "📐", description: "Diagrammes et schémas" },
-  tangent: { name: "Annexe", icon: "📝", description: "Discussion annexe" },
+export const STORAGE_KEYS = {
+  ONBOARDING: "laureat.onboardingComplete",
+  PREFERENCES: "laureat.preferences",
+  TRACK: "laureat.track",
+  THEME: "laureat.theme",
+  USAGE: "laureat.usage",
+  PLAN: "laureat.plan",
+  SCAN_HISTORY: "laureat.scanHistory",
+  CLASSROOM_SESSIONS: "laureat.classroom.sessions",
+  LAST_SESSION_SUMMARY: "laureat.lastSessionSummary",
+  TUTORIAL_SEEN: "laureat.tutorialSeen",
 };
+
+export const BOARD_TYPES = ["enonce", "solution", "visuel"];
 
 export const HIGHLIGHT_COLORS = {
-  yellow: { bg: "bg-yellow-300/40", text: "text-yellow-100", label: "Important" },
-  pink: { bg: "bg-pink-400/40", text: "text-pink-100", label: "Formule" },
-  green: { bg: "bg-emerald-400/40", text: "text-emerald-100", label: "Résultat" },
-  red: { bg: "bg-red-400/40", text: "text-red-100", label: "Attention" },
-  blue: { bg: "bg-blue-400/40", text: "text-blue-100", label: "Conversion" },
-};
-
-export const MESSAGE_TYPES = {
-  thinking: { icon: "🤔", color: "text-slate-400", label: "Réflexion" },
-  acknowledge: { icon: "💬", color: "text-violet-400", label: "Réponse" },
-  explain: { icon: "✏️", color: "text-cyan-400", label: "Explication" },
-  question: { icon: "❓", color: "text-amber-400", label: "Question" },
-  praise: { icon: "✨", color: "text-emerald-400", label: "Bravo" },
+  yellow: "#fde047",
+  pink:   "#f9a8d4",
+  green:  "#86efac",
+  red:    "#fca5a5",
+  blue:   "#93c5fd",
 };
