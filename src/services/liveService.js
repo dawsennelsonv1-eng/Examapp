@@ -1,9 +1,6 @@
 // src/services/liveService.js
-// v14 CALL FIX: First WebSocket message MUST be { config: {...} } per official docs,
-// NOT { setup: {...} }. This was why the call failed at connection.
-// Also: detailed console logging so we can see exactly where it breaks.
-
-const LIVE_WS_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained";
+// v16: Uses the wsVersion returned by /api/live-token so REST + WS endpoints match.
+// Surfaces detailed errors to UI so when call fails, user sees WHY.
 
 export class GeminiLiveSession {
   constructor({ onTranscript, onStatus, onError, onTutorTurn }) {
@@ -14,12 +11,10 @@ export class GeminiLiveSession {
     this.processor = null;
     this.isRecording = false;
     this.isConnected = false;
-
     this.onTranscript = onTranscript || (() => {});
     this.onStatus = onStatus || (() => {});
     this.onError = onError || (() => {});
     this.onTutorTurn = onTutorTurn || (() => {});
-
     this.audioQueue = [];
     this.isPlaying = false;
     this.playbackContext = null;
@@ -27,27 +22,19 @@ export class GeminiLiveSession {
     this.model = null;
   }
 
-  async connect(ephemeralToken, model) {
+  async connect(ephemeralToken, model, wsVersion = "v1alpha") {
     this.onStatus("connecting");
     this.model = model;
     try {
-      const url = `${LIVE_WS_BASE}?access_token=${encodeURIComponent(ephemeralToken)}`;
-      console.log("[Live] Connecting to:", LIVE_WS_BASE);
+      const base = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.${wsVersion}.GenerativeService.BidiGenerateContentConstrained`;
+      const url = `${base}?access_token=${encodeURIComponent(ephemeralToken)}`;
+      console.log("[Live] Connecting:", base);
       this.ws = new WebSocket(url);
 
       this.ws.onopen = () => {
-        console.log("[Live] WebSocket open. Sending config...");
-        // CRITICAL FIX: first message is { config: {...} } with FULL config inside.
-        // (Was { setup: { model } } before — wrong, caused silent failure.)
-        const configMessage = {
-          config: {
-            model: `models/${model}`,
-            responseModalities: ["AUDIO"],
-            outputAudioTranscription: {},
-            inputAudioTranscription: {},
-          },
-        };
-        this.ws.send(JSON.stringify(configMessage));
+        console.log("[Live] WS open, sending setup...");
+        // First message: setup with model. (config is locked by constrained token.)
+        this.ws.send(JSON.stringify({ setup: { model: `models/${model}` } }));
         this.isConnected = true;
         this.onStatus("connected");
       };
@@ -55,21 +42,20 @@ export class GeminiLiveSession {
       this.ws.onmessage = (event) => this.handleMessage(event);
 
       this.ws.onerror = (err) => {
-        console.error("[Live] WebSocket error:", err);
+        console.error("[Live] WS error:", err);
         this.onError(new Error("Erè koneksyon WebSocket"));
-        this.onStatus("error");
       };
 
       this.ws.onclose = (e) => {
-        console.log("[Live] WebSocket closed. Code:", e.code, "Reason:", e.reason);
+        console.log("[Live] WS closed code:", e.code, "reason:", e.reason);
         this.isConnected = false;
         if (e.code !== 1000 && e.code !== 1005) {
-          this.onError(new Error(`Koneksyon fèmen (${e.code})${e.reason ? ": " + e.reason : ""}`));
+          this.onError(new Error(`Koneksyon fèmen (${e.code}): ${e.reason || "no reason"}`));
         }
         this.onStatus("disconnected");
       };
     } catch (err) {
-      console.error("[Live] connect() threw:", err);
+      console.error("[Live] connect threw:", err);
       this.onError(err);
       this.onStatus("error");
     }
@@ -78,24 +64,16 @@ export class GeminiLiveSession {
   async handleMessage(event) {
     try {
       let data;
-      if (typeof event.data === "string") {
-        data = JSON.parse(event.data);
-      } else if (event.data instanceof Blob) {
-        const text = await event.data.text();
-        data = JSON.parse(text);
-      } else {
-        const text = new TextDecoder().decode(event.data);
-        data = JSON.parse(text);
-      }
+      if (typeof event.data === "string") data = JSON.parse(event.data);
+      else if (event.data instanceof Blob) data = JSON.parse(await event.data.text());
+      else data = JSON.parse(new TextDecoder().decode(event.data));
 
-      console.log("[Live] Message:", Object.keys(data).join(", "));
+      console.log("[Live] msg keys:", Object.keys(data).join(","));
 
       if (data.setupComplete !== undefined) {
-        console.log("[Live] Setup complete — ready!");
         this.onStatus("ready");
         return;
       }
-
       if (data.serverContent) {
         const sc = data.serverContent;
         if (sc.modelTurn?.parts) {
@@ -109,18 +87,14 @@ export class GeminiLiveSession {
         if (sc.inputTranscription?.text) this.onTranscript({ role: "user", text: sc.inputTranscription.text });
         if (sc.outputTranscription?.text) this.onTranscript({ role: "tutor", text: sc.outputTranscription.text });
         if (sc.turnComplete) this.onStatus("turn_complete");
-        if (sc.interrupted) {
-          // User interrupted — clear playback queue
-          this.audioQueue = [];
-        }
+        if (sc.interrupted) this.audioQueue = [];
       }
-
       if (data.error) {
-        console.error("[Live] Server error:", data.error);
+        console.error("[Live] server error:", data.error);
         this.onError(new Error(data.error.message || "Erè serveur"));
       }
     } catch (err) {
-      console.warn("[Live] Parse error:", err, event.data);
+      console.warn("[Live] parse error:", err);
     }
   }
 
@@ -133,7 +107,6 @@ export class GeminiLiveSession {
       this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       const source = this.audioContext.createMediaStreamSource(this.mediaStream);
       const processor = this.audioContext.createScriptProcessor(4096, 1, 1);
-
       processor.onaudioprocess = (e) => {
         if (!this.isConnected || !this.isRecording) return;
         const pcm16 = floatTo16BitPCM(e.inputBuffer.getChannelData(0));
@@ -142,7 +115,6 @@ export class GeminiLiveSession {
           realtimeInput: { mediaChunks: [{ mimeType: "audio/pcm;rate=16000", data: b64 }] },
         }));
       };
-
       source.connect(processor);
       processor.connect(this.audioContext.destination);
       this.processor = processor;
@@ -218,7 +190,7 @@ export class GeminiLiveSession {
       src.onended = () => this.playNext();
       src.start();
     } catch (err) {
-      console.warn("[Live] Playback error:", err);
+      console.warn("[Live] playback err:", err);
       this.playNext();
     }
   }
@@ -263,7 +235,6 @@ export async function createLiveSession({
   persona = "joseph", language = "mix", exerciseContext = null, studentName = "",
   onTranscript, onStatus, onError, onTutorTurn,
 }) {
-  console.log("[Live] Requesting ephemeral token...");
   const tokenResponse = await fetch("/api/live-token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -272,13 +243,13 @@ export async function createLiveSession({
 
   if (!tokenResponse.ok) {
     const err = await tokenResponse.json();
-    console.error("[Live] Token request failed:", err);
-    throw new Error(err.details || err.error || "Failed to get live token");
+    const detail = err.lastError ? `${err.lastError.status}: ${err.lastError.error}` : (err.details || err.error || "Unknown");
+    throw new Error(`Pa kapab kòmanse apèl la — ${detail.substring(0, 100)}`);
   }
   const { data } = await tokenResponse.json();
-  console.log("[Live] Got token, model:", data.model);
+  console.log("[Live] got token, model:", data.model, "ws:", data.wsVersion);
 
   const session = new GeminiLiveSession({ onTranscript, onStatus, onError, onTutorTurn });
-  await session.connect(data.token, data.model);
+  await session.connect(data.token, data.model, data.wsVersion);
   return session;
 }

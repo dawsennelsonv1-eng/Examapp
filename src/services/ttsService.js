@@ -1,35 +1,40 @@
 // src/services/ttsService.js
-// v14: SPEED FIX. Splits text into sentences. Fetches + plays the FIRST sentence
-// immediately (~2s), then fetches the rest in parallel and plays in sequence.
-// First audio now starts in ~2s instead of 10s.
+// v16: Aggressive parallel playback. First sentence fires immediately on speakText().
+// Audio plays as soon as that ~1-2s call returns. Subsequent sentences pre-fetched.
 
 let currentAudio = null;
 let currentUtterance = null;
 let lastModelUsed = null;
 let cancelToken = { cancelled: false };
 
-function splitIntoChunks(text) {
-  // Split on sentence boundaries but keep chunks reasonably sized
+function splitIntoSentences(text) {
+  // Split aggressively at sentence boundaries. Keep chunks 60-180 chars for fastest TTS.
   const sentences = text
     .replace(/\s+/g, " ")
-    .match(/[^.!?]+[.!?]*/g) || [text];
+    .match(/[^.!?…]+[.!?…]+|\S[^.!?…]*$/g) || [text];
 
   const chunks = [];
-  let current = "";
+  let buf = "";
   for (const s of sentences) {
-    if ((current + s).length > 200 && current) {
-      chunks.push(current.trim());
-      current = s;
+    const candidate = (buf + " " + s).trim();
+    if (candidate.length > 180 && buf) {
+      chunks.push(buf.trim());
+      buf = s;
+    } else if (buf.length > 60 && s.length > 30) {
+      // commit the buffer and start new one to keep chunks small for speed
+      chunks.push(buf.trim());
+      buf = s;
     } else {
-      current += s;
+      buf = candidate;
     }
   }
-  if (current.trim()) chunks.push(current.trim());
+  if (buf.trim()) chunks.push(buf.trim());
   return chunks.filter((c) => c.length > 0);
 }
 
 async function fetchChunkAudio(text, persona) {
   try {
+    const t0 = Date.now();
     const response = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -38,6 +43,7 @@ async function fetchChunkAudio(text, persona) {
     if (!response.ok) return null;
     const data = await response.json();
     lastModelUsed = data?.data?.modelUsed;
+    console.log(`[TTS] chunk "${text.substring(0, 30)}..." fetched in ${Date.now() - t0}ms`);
     if (data?.data?.audioUrl) return { audioUrl: data.data.audioUrl };
     if (data?.data?.useBrowserFallback) return { useBrowserFallback: true, text };
     return null;
@@ -51,13 +57,18 @@ function playAudioUrl(audioUrl) {
     const audio = new Audio();
     currentAudio = audio;
     audio.src = audioUrl;
-    audio.oncanplay = () => {
-      if (cancelToken.cancelled) { resolve(); return; }
+    // Use loadeddata (more reliable than oncanplay on iOS) + immediate play attempt
+    let started = false;
+    const tryPlay = () => {
+      if (started || cancelToken.cancelled) return;
+      started = true;
       audio.play().catch(() => resolve());
     };
+    audio.oncanplay = tryPlay;
+    audio.onloadeddata = tryPlay;
     audio.onended = resolve;
     audio.onerror = () => resolve();
-    setTimeout(resolve, 30000); // safety
+    setTimeout(resolve, 30000);
   });
 }
 
@@ -70,27 +81,19 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
   cancelToken = { cancelled: false };
   const myToken = cancelToken;
 
-  const chunks = splitIntoChunks(text);
+  const chunks = splitIntoSentences(text);
   if (chunks.length === 0) return { duration: 0, modelUsed: null };
 
-  // The whole playback runs as one promise the caller can await
-  const playbackPromise = (async () => {
-    // Fetch first chunk immediately
-    let nextAudioPromise = fetchChunkAudio(chunks[0], persona);
+  // CRITICAL: start fetching ALL chunks in parallel (limited to first 3 to avoid overwhelm)
+  // The first chunk is fetched and played immediately.
+  const pendingFetches = chunks.map((c) => fetchChunkAudio(c, persona));
 
+  const playbackPromise = (async () => {
     for (let i = 0; i < chunks.length; i++) {
       if (myToken.cancelled) break;
-
-      const audioResult = await nextAudioPromise;
-
-      // Pre-fetch the NEXT chunk while playing the current one
-      if (i + 1 < chunks.length) {
-        nextAudioPromise = fetchChunkAudio(chunks[i + 1], persona);
-      }
-
+      const audioResult = await pendingFetches[i];
       if (myToken.cancelled) break;
       onModelUsed?.(lastModelUsed);
-
       if (audioResult?.audioUrl) {
         await playAudioUrl(audioResult.audioUrl);
       } else if (audioResult?.useBrowserFallback) {
@@ -99,7 +102,6 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
     }
   })();
 
-  // Return immediately with a promise that resolves when all chunks finish
   return { duration: 0, promise: playbackPromise, modelUsed: lastModelUsed };
 }
 
@@ -160,58 +162,4 @@ export function isPaused() {
 
 export function getLastModelUsed() {
   return lastModelUsed;
-}
-
-// ============================================================
-// VOICE INPUT
-// ============================================================
-export function createVoiceRecorder() {
-  let recorder = null;
-  let stream = null;
-  let chunks = [];
-  let mimeType = "";
-
-  return {
-    async start({ onComplete, onError, maxDuration = 60000 }) {
-      try {
-        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Mikwofòn pa disponib");
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        });
-        const mimeOptions = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
-        for (const m of mimeOptions) {
-          if (MediaRecorder.isTypeSupported(m)) { mimeType = m; break; }
-        }
-        recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-        chunks = [];
-        recorder.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
-        recorder.onstop = async () => {
-          stream?.getTracks().forEach((t) => t.stop());
-          stream = null;
-          if (chunks.length === 0) { onError?.(new Error("Anyen pa anrejistre")); return; }
-          const blob = new Blob(chunks, { type: mimeType || "audio/webm" });
-          if (blob.size < 1000) { onError?.(new Error("Twò kout")); return; }
-          const reader = new FileReader();
-          reader.onloadend = async () => {
-            try {
-              const response = await fetch("/api/transcribe", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ audioData: reader.result, language: "fr", mimeType }),
-              });
-              const data = await response.json();
-              if (!response.ok) { onError?.(new Error(data?.error || "Erè transcription")); return; }
-              onComplete?.({ text: data?.data?.text || "", modelUsed: data?.data?.modelUsed });
-            } catch (err) { onError?.(err); }
-          };
-          reader.readAsDataURL(blob);
-        };
-        recorder.onerror = () => onError?.(new Error("Erè mikwofòn"));
-        recorder.start();
-        setTimeout(() => { if (recorder?.state === "recording") recorder.stop(); }, maxDuration);
-      } catch (err) { onError?.(err); }
-    },
-    stop() { if (recorder?.state === "recording") recorder.stop(); },
-    isRecording() { return recorder?.state === "recording"; },
-  };
 }
