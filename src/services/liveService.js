@@ -1,6 +1,12 @@
-// src/services/liveService.js
-// v16: Uses the wsVersion returned by /api/live-token so REST + WS endpoints match.
-// Surfaces detailed errors to UI so when call fails, user sees WHY.
+// src/services/liveService.js v18
+// Per official docs:
+// - Ephemeral token → connect to v1alpha BidiGenerateContentConstrained
+// - Pass token as access_token query param
+// - First message: BidiGenerateContentSetup
+// - Since config is locked in the constrained token, setup just needs model
+
+const LIVE_WS_BASE =
+  "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained";
 
 export class GeminiLiveSession {
   constructor({ onTranscript, onStatus, onError, onTutorTurn }) {
@@ -22,19 +28,24 @@ export class GeminiLiveSession {
     this.model = null;
   }
 
-  async connect(ephemeralToken, model, wsVersion = "v1alpha") {
+  async connect(ephemeralToken, model) {
     this.onStatus("connecting");
     this.model = model;
     try {
-      const base = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.${wsVersion}.GenerativeService.BidiGenerateContentConstrained`;
-      const url = `${base}?access_token=${encodeURIComponent(ephemeralToken)}`;
-      console.log("[Live] Connecting:", base);
+      const url = `${LIVE_WS_BASE}?access_token=${encodeURIComponent(ephemeralToken)}`;
+      console.log("[Live] Connecting:", LIVE_WS_BASE, "model:", model);
       this.ws = new WebSocket(url);
 
       this.ws.onopen = () => {
-        console.log("[Live] WS open, sending setup...");
-        // First message: setup with model. (config is locked by constrained token.)
-        this.ws.send(JSON.stringify({ setup: { model: `models/${model}` } }));
+        console.log("[Live] WebSocket open. Sending setup...");
+        // First message per docs: BidiGenerateContentSetup
+        // With constrained token, only model is required (config locked)
+        const setupMessage = {
+          setup: {
+            model: `models/${model}`,
+          },
+        };
+        this.ws.send(JSON.stringify(setupMessage));
         this.isConnected = true;
         this.onStatus("connected");
       };
@@ -42,15 +53,15 @@ export class GeminiLiveSession {
       this.ws.onmessage = (event) => this.handleMessage(event);
 
       this.ws.onerror = (err) => {
-        console.error("[Live] WS error:", err);
+        console.error("[Live] WS error event:", err);
         this.onError(new Error("Erè koneksyon WebSocket"));
       };
 
       this.ws.onclose = (e) => {
-        console.log("[Live] WS closed code:", e.code, "reason:", e.reason);
+        console.log("[Live] WS closed. Code:", e.code, "Reason:", e.reason || "(none)");
         this.isConnected = false;
         if (e.code !== 1000 && e.code !== 1005) {
-          this.onError(new Error(`Koneksyon fèmen (${e.code}): ${e.reason || "no reason"}`));
+          this.onError(new Error(`Koneksyon fèmen (${e.code})${e.reason ? ": " + e.reason : ""}`));
         }
         this.onStatus("disconnected");
       };
@@ -71,9 +82,11 @@ export class GeminiLiveSession {
       console.log("[Live] msg keys:", Object.keys(data).join(","));
 
       if (data.setupComplete !== undefined) {
+        console.log("[Live] ✅ Setup complete — session ready");
         this.onStatus("ready");
         return;
       }
+
       if (data.serverContent) {
         const sc = data.serverContent;
         if (sc.modelTurn?.parts) {
@@ -232,9 +245,10 @@ function base64ToArrayBuffer(base64) {
 }
 
 export async function createLiveSession({
-  persona = "joseph", language = "mix", exerciseContext = null, studentName = "",
+  persona = "joseph", language = "fr", exerciseContext = null, studentName = "",
   onTranscript, onStatus, onError, onTutorTurn,
 }) {
+  console.log("[Live] Requesting ephemeral token from /api/live-token...");
   const tokenResponse = await fetch("/api/live-token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -243,13 +257,14 @@ export async function createLiveSession({
 
   if (!tokenResponse.ok) {
     const err = await tokenResponse.json();
-    const detail = err.lastError ? `${err.lastError.status}: ${err.lastError.error}` : (err.details || err.error || "Unknown");
-    throw new Error(`Pa kapab kòmanse apèl la — ${detail.substring(0, 100)}`);
+    const detail = err.attempts?.[0]?.error || err.details || err.error || "Unknown";
+    console.error("[Live] Token failed:", err);
+    throw new Error(`Pa kapab kòmanse apèl la — ${detail.substring(0, 120)}`);
   }
   const { data } = await tokenResponse.json();
-  console.log("[Live] got token, model:", data.model, "ws:", data.wsVersion);
+  console.log("[Live] ✅ Got token, model:", data.model);
 
   const session = new GeminiLiveSession({ onTranscript, onStatus, onError, onTutorTurn });
-  await session.connect(data.token, data.model, data.wsVersion);
+  await session.connect(data.token, data.model);
   return session;
 }
