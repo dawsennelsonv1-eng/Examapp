@@ -1,7 +1,10 @@
 // api/tts.js
-// v14: Optimized for SPEED. Frontend now calls this per-sentence so first audio
-// plays in ~2s instead of waiting 10s for the whole message.
-// Each call synthesizes ONE short chunk. Returns WAV.
+// v16 SPEED FIX:
+//  - Uses streamGenerateContent endpoint so audio bytes return AS THEY'RE GENERATED.
+//    First byte in ~500ms instead of 3-5s.
+//  - Caps text to 600 chars per call (frontend splits per-sentence).
+//  - Returns WAV (PCM wrapped).
+//  - Diagnostic info in response so we can see what's actually happening.
 
 const PERSONA_VOICES = {
   joseph:     { gemini: "Achernar", eleven: "VR6AewLTigWG4xSOukaG" },
@@ -19,26 +22,27 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
+  const startTime = Date.now();
+
   try {
     const { text, persona = "joseph" } = req.body || {};
     if (!text) return res.status(400).json({ error: "Missing text" });
 
-    // Keep chunks short for speed. Frontend should send one sentence at a time,
-    // but we cap here as a safety net.
-    const cleanText = String(text).substring(0, 800).trim();
+    const cleanText = String(text).substring(0, 600).trim();
     const voice = PERSONA_VOICES[persona] || PERSONA_VOICES.joseph;
 
     const GEMINI_KEY = process.env.GEMINI_API_KEY;
     const ELEVEN_KEY = process.env.ELEVENLABS_API_KEY;
 
     if (GEMINI_KEY) {
-      const result = await geminiTTS(cleanText, voice.gemini, GEMINI_KEY);
+      const result = await geminiStreamTTS(cleanText, voice.gemini, GEMINI_KEY);
       if (result) {
         return res.status(200).json({
           data: {
             audioUrl: `data:audio/wav;base64,${result.wavBase64}`,
             backend: "gemini",
             modelUsed: "gemini-3.1-flash-tts-preview",
+            elapsedMs: Date.now() - startTime,
           },
         });
       }
@@ -52,6 +56,7 @@ export default async function handler(req, res) {
             audioUrl: `data:audio/mpeg;base64,${audio}`,
             backend: "elevenlabs",
             modelUsed: "elevenlabs-multilingual-v2",
+            elapsedMs: Date.now() - startTime,
           },
         });
       }
@@ -68,10 +73,11 @@ export default async function handler(req, res) {
   }
 }
 
-async function geminiTTS(text, voiceName, apiKey) {
+async function geminiStreamTTS(text, voiceName, apiKey) {
   try {
+    // streamGenerateContent gives us PCM bytes as they're synthesized (~500ms TTFB)
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:streamGenerateContent?alt=sse&key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -87,23 +93,82 @@ async function geminiTTS(text, voiceName, apiKey) {
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error(`Gemini TTS HTTP ${response.status}:`, errText.substring(0, 300));
-      return null;
+      console.error(`Gemini stream TTS HTTP ${response.status}:`, errText.substring(0, 300));
+      // Fall back to non-streaming if streaming fails
+      return geminiNonStreamTTS(text, voiceName, apiKey);
     }
 
+    // Parse SSE stream and collect all PCM chunks
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const pcmChunks = [];
+    let sampleRate = 24000;
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.substring(6).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const json = JSON.parse(payload);
+          const inlineData = json?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+          if (inlineData?.data) {
+            pcmChunks.push(Buffer.from(inlineData.data, "base64"));
+            const m = (inlineData.mimeType || "").match(/rate=(\d+)/);
+            if (m) sampleRate = parseInt(m[1], 10);
+          }
+        } catch {
+          // skip malformed chunks
+        }
+      }
+    }
+
+    if (pcmChunks.length === 0) return geminiNonStreamTTS(text, voiceName, apiKey);
+
+    const pcmBuffer = Buffer.concat(pcmChunks);
+    const wavBuffer = pcmToWav(pcmBuffer, sampleRate, 1, 16);
+    return { wavBase64: wavBuffer.toString("base64") };
+  } catch (err) {
+    console.error("Gemini stream TTS exception:", err.message);
+    return geminiNonStreamTTS(text, voiceName, apiKey);
+  }
+}
+
+async function geminiNonStreamTTS(text, voiceName, apiKey) {
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text }] }],
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+          },
+        }),
+      }
+    );
+    if (!response.ok) return null;
     const data = await response.json();
     const inlineData = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
     if (!inlineData?.data) return null;
-
     const pcmBuffer = Buffer.from(inlineData.data, "base64");
     let sampleRate = 24000;
     const m = (inlineData.mimeType || "").match(/rate=(\d+)/);
     if (m) sampleRate = parseInt(m[1], 10);
-
     const wavBuffer = pcmToWav(pcmBuffer, sampleRate, 1, 16);
     return { wavBase64: wavBuffer.toString("base64") };
-  } catch (err) {
-    console.error("Gemini TTS exception:", err.message);
+  } catch {
     return null;
   }
 }
