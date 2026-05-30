@@ -1,6 +1,7 @@
-// src/components/classroom/ClassroomSession.jsx
-// v11: Adds CallTutorButton in header (Premium feature for real-time voice call).
-// Otherwise identical to v7-wave2 ClassroomSession.
+// src/components/classroom/ClassroomSession.jsx v19
+// LANDSCAPE LAYOUT: when phone is rotated, board goes LEFT (60%) and chat goes RIGHT (40%).
+// Like Twitch/YouTube Lives. Portrait stays as before (board top, chat bottom).
+// Also wires the new onRequestDiagram so Visuel board can generate SVGs on demand.
 
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
@@ -10,6 +11,7 @@ import {
 } from "lucide-react";
 import { useClassroomSessions } from "../../hooks/useClassroom";
 import { useApp } from "../../contexts/AppContext";
+import { useOrientation } from "../../hooks/useOrientation";
 import {
   speakText, stopSpeaking, pauseSpeaking, resumeSpeaking,
 } from "../../services/ttsService";
@@ -33,6 +35,7 @@ function defaultBoards() {
 export default function ClassroomSession({ session, onExit }) {
   const { appendMessage, updateSession } = useClassroomSessions();
   const { preferences, planTier } = useApp();
+  const { isLandscape } = useOrientation();
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -56,6 +59,8 @@ export default function ClassroomSession({ session, onExit }) {
   const [lastModelUsed, setLastModelUsed] = useState(null);
   const [pendingConfirmation, setPendingConfirmation] = useState(false);
 
+  const [autoSendTimer, setAutoSendTimer] = useState(null);
+
   const messagesEndRef = useRef(null);
   const hasInitiated = useRef(false);
   const isPremium = planTier === "premium";
@@ -64,11 +69,8 @@ export default function ClassroomSession({ session, onExit }) {
     if (hasInitiated.current) return;
     hasInitiated.current = true;
     if (localMessages.length === 0) {
-      if (session.exercise) {
-        startExerciseTeaching();
-      } else {
-        sendGreeting();
-      }
+      if (session.exercise) startExerciseTeaching();
+      else sendGreeting();
     }
   }, []); // eslint-disable-line
 
@@ -76,9 +78,7 @@ export default function ClassroomSession({ session, onExit }) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [localMessages.length]);
 
-  useEffect(() => {
-    return () => stopSpeaking();
-  }, []);
+  useEffect(() => () => stopSpeaking(), []);
 
   useEffect(() => {
     updateSession(session.id, { boards, activeBoardId, currentPersonaId, failCount });
@@ -87,16 +87,13 @@ export default function ClassroomSession({ session, onExit }) {
   const sendGreeting = () => {
     const persona = PERSONALITIES.find((p) => p.id === currentPersonaId);
     const name = preferences?.name || "";
+    const greetingText = `Bonjour ${name} ! Je suis ${persona?.name}. Sur quoi veux-tu travailler aujourd'hui ?`;
     const greeting = {
       id: `msg_${Date.now()}`,
       role: "tutor",
       personaId: currentPersonaId,
-      segments: [{
-        type: "acknowledge",
-        text: `Bonjou ${name} ! M se ${persona?.name}. Ki sa w vle nou travay ansanm jodi a ?`,
-        speakable: `Bonjou ${name}. M se ${persona?.name}. Ki sa w vle nou travay ansanm jodi a ?`,
-      }],
-      content: `Bonjou ${name} ! M se ${persona?.name}. Ki sa w vle nou travay ansanm jodi a ?`,
+      segments: [{ type: "acknowledge", text: greetingText, speakable: greetingText }],
+      content: greetingText,
       timestamp: Date.now(),
     };
     setLocalMessages([greeting]);
@@ -108,32 +105,18 @@ export default function ClassroomSession({ session, onExit }) {
     const exercise = session.exercise;
     const name = preferences?.name || "";
 
-    const newBoards = [
-      { id: "board_enonce",   type: "enonce",   name: "Énoncé",   donnees: [], items: [] },
-      { id: "board_solution", type: "solution", name: "Solution", items: [] },
-      { id: "board_visuel",   type: "visuel",   name: "Visuel",   svg: null },
-    ];
+    const newBoards = defaultBoards();
     setBoards(newBoards);
     setActiveBoardId("board_enonce");
     setTutorWritingOn("board_enonce");
 
+    const introText = `Bien ${name}, regardons cet exercice ensemble. Je vais d'abord placer les Données sur le tableau.`;
     const intro = {
       id: `msg_${Date.now()}`,
       role: "tutor",
       personaId: currentPersonaId,
-      segments: [
-        {
-          type: "acknowledge",
-          text: `Bon ${name}, gade. Nou pral travay sou egzèsis sa a ansanm.`,
-          speakable: `Bon ${name}, gade. Nou pral travay sou egzèsis sa a ansanm.`,
-        },
-        {
-          type: "explain",
-          text: `Premye etap: m ap mete Données yo sou tablo a.`,
-          speakable: `Premye etap. M ap mete Données yo sou tablo a.`,
-        },
-      ],
-      content: `Bon ${name}, gade. M ap mete Données yo sou tablo a.`,
+      segments: [{ type: "acknowledge", text: introText, speakable: introText }],
+      content: introText,
       timestamp: Date.now(),
     };
     setLocalMessages([intro]);
@@ -151,16 +134,13 @@ export default function ClassroomSession({ session, onExit }) {
     }
 
     await new Promise((r) => setTimeout(r, 800));
+    const checkText = "Tu comprends toutes les données ?";
     const checkMsg = {
       id: `msg_${Date.now()}_check`,
       role: "tutor",
       personaId: currentPersonaId,
-      segments: [{
-        type: "question",
-        text: "Eske w konprann tout Données yo ?",
-        speakable: "Eske w konprann tout Données yo ?",
-      }],
-      content: "Eske w konprann tout Données yo ?",
+      segments: [{ type: "question", text: checkText, speakable: checkText }],
+      content: checkText,
       timestamp: Date.now(),
       needsConfirmation: true,
     };
@@ -180,7 +160,6 @@ export default function ClassroomSession({ session, onExit }) {
         ? msg.segments.map((s) => s.speakable || s.text).join(" ")
         : msg.content;
       const result = await speakText(text, "fr-FR", {
-        isPremium,
         persona: msg.personaId || currentPersonaId,
       });
       if (result?.promise) await result.promise;
@@ -192,14 +171,9 @@ export default function ClassroomSession({ session, onExit }) {
     }
   };
 
-  const handlePauseResume = (msgId) => {
-    if (isPaused) {
-      resumeSpeaking();
-      setIsPaused(false);
-    } else {
-      pauseSpeaking();
-      setIsPaused(true);
-    }
+  const handlePauseResume = () => {
+    if (isPaused) { resumeSpeaking(); setIsPaused(false); }
+    else { pauseSpeaking(); setIsPaused(true); }
   };
 
   const handleStopSpeak = () => {
@@ -236,6 +210,8 @@ export default function ClassroomSession({ session, onExit }) {
   };
 
   const handleSend = async (overrideText = null) => {
+    if (autoSendTimer) { clearTimeout(autoSendTimer); setAutoSendTimer(null); }
+
     const text = (overrideText || input).trim();
     if (!text || sending) return;
 
@@ -295,7 +271,6 @@ export default function ClassroomSession({ session, onExit }) {
       };
       setLocalMessages((prev) => [...prev, tutorMsg]);
       appendMessage(session.id, tutorMsg);
-
       setLastModelUsed(data?.data?.modelUsed);
 
       for (const seg of segments) {
@@ -307,15 +282,8 @@ export default function ClassroomSession({ session, onExit }) {
       if (Array.isArray(data?.data?.suggestedQuestions) && data.data.suggestedQuestions.length) {
         setSuggestedQuestions(data.data.suggestedQuestions);
       }
-
-      if (data?.data?.needsConfirmation) {
-        setPendingConfirmation(true);
-      }
-
-      if (data?.data?.tutorSwitchSuggestion || failCount >= 3) {
-        setShowTutorSwitch(true);
-      }
-
+      if (data?.data?.needsConfirmation) setPendingConfirmation(true);
+      if (data?.data?.tutorSwitchSuggestion || failCount >= 3) setShowTutorSwitch(true);
       if (data?.data?.shouldDrawDiagram && data?.data?.diagramDescription) {
         requestDiagram(data.data.diagramDescription);
       }
@@ -323,16 +291,13 @@ export default function ClassroomSession({ session, onExit }) {
       speakMessage(tutorMsg);
     } catch (err) {
       console.error("Chat error:", err);
+      const errText = "Pas de connexion. Réessaie.";
       const errorMsg = {
         id: `msg_${Date.now() + 1}`,
         role: "tutor",
         personaId: currentPersonaId,
-        segments: [{
-          type: "acknowledge",
-          text: "Pa gen koneksyon entènèt la. Eseye ankò.",
-          speakable: "Pa gen koneksyon entènèt la. Eseye ankò.",
-        }],
-        content: "Pa gen koneksyon entènèt la. Eseye ankò.",
+        segments: [{ type: "acknowledge", text: errText, speakable: errText }],
+        content: errText,
         timestamp: Date.now(),
       };
       setLocalMessages((prev) => [...prev, errorMsg]);
@@ -346,30 +311,34 @@ export default function ClassroomSession({ session, onExit }) {
     setPendingConfirmation(false);
     if (understood) {
       setFailCount(0);
-      handleSend("Wi m konprann. Ann kontinye.");
+      handleSend("Oui, je comprends. Continuons.");
     } else {
       const newFail = failCount + 1;
       setFailCount(newFail);
-      let prompt;
-      if (newFail === 1)      prompt = "M pa konprann. Eksplike m yon lòt jan tanpri.";
-      else if (newFail === 2) prompt = "M toujou pa konprann. Bay yon egzanp konkrè.";
-      else if (newFail === 3) prompt = "M ap gen difikilte. Eksplike m an kreyòl ak yon schema.";
-      else                    prompt = "Pou m kapab ede w konprann pi byen, ki sa egzakteman ou pa konprann ?";
-      handleSend(prompt);
+      const prompts = [
+        "Je ne comprends pas. Explique-moi autrement s'il te plaît.",
+        "Je ne comprends toujours pas. Donne-moi un exemple concret.",
+        "J'ai du mal. Explique-moi avec un schéma.",
+        "Aide-moi à comprendre, qu'est-ce que je rate exactement ?",
+      ];
+      handleSend(prompts[Math.min(newFail - 1, prompts.length - 1)]);
     }
   };
 
+  // Wired to MultiBoard's "Demander un schéma" button + auto-trigger by AI
   const requestDiagram = async (description) => {
     setTutorWritingOn("board_visuel");
+    setActiveBoardId("board_visuel");
     try {
       const response = await fetch("/api/board", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          topic: session.title,
+          topic: description.substring(0, 80),
           description,
           subject: session.subject,
           style: "diagram",
+          exerciseContext: session.exercise,
         }),
       });
       if (response.ok) {
@@ -378,7 +347,6 @@ export default function ClassroomSession({ session, onExit }) {
           setBoards((prev) =>
             prev.map((b) => (b.id === "board_visuel" ? { ...b, svg: data.data.svg } : b))
           );
-          setActiveBoardId("board_visuel");
         }
       }
     } catch (err) {
@@ -389,22 +357,17 @@ export default function ClassroomSession({ session, onExit }) {
   };
 
   const handleTutorSwitch = (newPersonaId) => {
-    const oldPersona = PERSONALITIES.find((p) => p.id === currentPersonaId);
     const newPersona = PERSONALITIES.find((p) => p.id === newPersonaId);
     setCurrentPersonaId(newPersonaId);
     setFailCount(0);
     setShowTutorSwitch(false);
-
+    const switchText = `Bonjour, je suis ${newPersona?.name}. Laisse-moi t'expliquer à ma façon.`;
     const switchMsg = {
       id: `msg_${Date.now()}`,
       role: "tutor",
       personaId: newPersonaId,
-      segments: [{
-        type: "acknowledge",
-        text: `Bonjou, m se ${newPersona?.name}. M wè ${oldPersona?.name} t ap eksplike w yon bagay men li pa klè ase. Kite m eseye nan jan pa m...`,
-        speakable: `Bonjou, m se ${newPersona?.name}. Kite m eseye eksplike w sa nan jan pa m.`,
-      }],
-      content: `Bonjou, m se ${newPersona?.name}.`,
+      segments: [{ type: "acknowledge", text: switchText, speakable: switchText }],
+      content: switchText,
       timestamp: Date.now(),
     };
     setLocalMessages((prev) => [...prev, switchMsg]);
@@ -412,8 +375,17 @@ export default function ClassroomSession({ session, onExit }) {
     speakMessage(switchMsg);
   };
 
-  const onBoardChange = (newBoardId) => {
-    setActiveBoardId(newBoardId);
+  // Voice input → fill text box + 7s auto-send
+  const handleVoiceTranscribed = (text) => {
+    setInput(text);
+    if (autoSendTimer) clearTimeout(autoSendTimer);
+    const timer = setTimeout(() => handleSend(text), 7000);
+    setAutoSendTimer(timer);
+  };
+
+  const handleInputChange = (e) => {
+    setInput(e.target.value);
+    if (autoSendTimer) { clearTimeout(autoSendTimer); setAutoSendTimer(null); }
   };
 
   const handleKeyDown = (e) => {
@@ -425,17 +397,125 @@ export default function ClassroomSession({ session, onExit }) {
 
   const currentPersona = PERSONALITIES.find((p) => p.id === currentPersonaId);
 
+  // ============== LANDSCAPE LAYOUT (Twitch-style) ==============
+  if (isLandscape) {
+    return (
+      <div className="fixed inset-0 z-40 bg-slate-100 dark:bg-slate-950 flex flex-col">
+        {/* Compact header */}
+        <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-1.5 flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => { stopSpeaking(); onExit(); }}
+            className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300">
+            <ArrowLeft size={16} />
+          </button>
+          <TutorAvatar personaId={currentPersonaId} size="xs" />
+          <div className="flex-1 min-w-0">
+            <div className="font-bold text-xs text-slate-900 dark:text-white truncate">
+              {currentPersona?.name} · {session.title}
+            </div>
+          </div>
+          <CallTutorButton personaId={currentPersonaId} exerciseContext={session.exercise}
+            language={preferences?.language || "fr"} studentName={preferences?.name || ""} isPremium={isPremium} compact />
+          <button onClick={() => setShowTutorSwitch(true)}
+            className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
+            <Users size={14} />
+          </button>
+        </header>
+
+        {/* Split: board left, chat right */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Board — 60% */}
+          <div className="flex-1 p-2" style={{ flexBasis: "60%" }}>
+            <MultiBoard
+              boards={boards}
+              activeBoardId={activeBoardId}
+              onChangeBoard={setActiveBoardId}
+              tutorWritingOn={tutorWritingOn}
+              exercise={session.exercise}
+              onRequestDiagram={requestDiagram}
+            />
+          </div>
+
+          {/* Chat — 40% */}
+          <div className="flex flex-col border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900" style={{ flexBasis: "40%" }}>
+            <div className="flex-1 overflow-y-auto px-2 pt-2 pb-1 space-y-2">
+              {localMessages.map((msg) => (
+                <MessageBubble
+                  key={msg.id}
+                  message={msg}
+                  isUser={msg.role === "user"}
+                  isSpeaking={speakingMessageId === msg.id && !isPaused}
+                  isPaused={speakingMessageId === msg.id && isPaused}
+                  onPlay={() => speakMessage(msg)}
+                  onPause={handlePauseResume}
+                  onStop={handleStopSpeak}
+                  personaId={msg.personaId || currentPersonaId}
+                  compact
+                />
+              ))}
+              {sending && (
+                <div className="flex gap-2 items-center text-slate-500 text-[10px] pl-2">
+                  <TutorAvatar personaId={currentPersonaId} size="xs" speaking />
+                  <span>écrit...</span>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {pendingConfirmation && !sending && (
+              <div className="px-2 pb-2 flex gap-1.5 flex-shrink-0">
+                <button onClick={() => handleConfirm(true)}
+                  className="flex-1 py-1.5 rounded-xl bg-emerald-500 text-white font-bold text-[11px] shadow-md flex items-center justify-center gap-1">
+                  <ThumbsUp size={12} />Oui
+                </button>
+                <button onClick={() => handleConfirm(false)}
+                  className="flex-1 py-1.5 rounded-xl bg-amber-500 text-white font-bold text-[11px] shadow-md flex items-center justify-center gap-1">
+                  <ThumbsDown size={12} />Non
+                </button>
+              </div>
+            )}
+
+            {!sending && suggestedQuestions.length > 0 && !pendingConfirmation && (
+              <SuggestedQuestions
+                questions={suggestedQuestions}
+                onPick={(q) => { setSuggestedQuestions([]); handleSend(q); }}
+                onDismiss={() => setSuggestedQuestions([])}
+                compact
+              />
+            )}
+
+            <div className="border-t border-slate-200 dark:border-slate-800 p-2 flex items-center gap-1.5 flex-shrink-0">
+              <div className="flex-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-1.5">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Question..."
+                  disabled={sending}
+                  className="w-full bg-transparent text-xs text-slate-900 dark:text-slate-100 focus:outline-none"
+                />
+              </div>
+              <VoiceInputButton onTranscribed={handleVoiceTranscribed} onError={(m) => alert(m)} disabled={sending} />
+              <button onClick={() => handleSend()} disabled={!input.trim() || sending}
+                className="w-9 h-9 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 text-white flex items-center justify-center shadow-md disabled:opacity-50">
+                {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <TutorSwitchModal isOpen={showTutorSwitch} currentPersonaId={currentPersonaId}
+          onClose={() => setShowTutorSwitch(false)} onSwitch={handleTutorSwitch} />
+      </div>
+    );
+  }
+
+  // ============== PORTRAIT LAYOUT (default) ==============
   return (
     <div className="fixed inset-0 z-40 bg-slate-100 dark:bg-slate-950 flex flex-col">
-      {/* Header */}
       <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-2.5 flex items-center gap-2 flex-shrink-0">
-        <button
-          onClick={() => {
-            stopSpeaking();
-            onExit();
-          }}
-          className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300"
-        >
+        <button onClick={() => { stopSpeaking(); onExit(); }}
+          className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300">
           <ArrowLeft size={18} />
         </button>
         <TutorAvatar personaId={currentPersonaId} size="sm" />
@@ -449,47 +529,30 @@ export default function ClassroomSession({ session, onExit }) {
           </div>
         </div>
 
-        {/* NEW: Call tutor button (Premium feature, also visible for free as upsell) */}
-        <CallTutorButton
-          personaId={currentPersonaId}
-          exerciseContext={session.exercise}
-          language={preferences?.language || "mix"}
-          studentName={preferences?.name || ""}
-          isPremium={isPremium}
-          compact
-        />
+        <CallTutorButton personaId={currentPersonaId} exerciseContext={session.exercise}
+          language={preferences?.language || "fr"} studentName={preferences?.name || ""} isPremium={isPremium} compact />
 
-        <button
-          onClick={() => setShowTutorSwitch(true)}
-          className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400"
-          title="Changer de prof"
-        >
+        <button onClick={() => setShowTutorSwitch(true)}
+          className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400" title="Changer de prof">
           <Users size={16} />
         </button>
-        <button
-          onClick={() => setBoardExpanded(!boardExpanded)}
-          className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400"
-        >
+        <button onClick={() => setBoardExpanded(!boardExpanded)}
+          className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
           {boardExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>
       </header>
 
-      {/* Multi-board */}
-      <motion.div
-        animate={{ height: boardExpanded ? "50%" : "25%" }}
-        transition={{ duration: 0.3 }}
-        className="flex-shrink-0 px-2 pt-2"
-      >
+      <motion.div animate={{ height: boardExpanded ? "50%" : "25%" }} transition={{ duration: 0.3 }} className="flex-shrink-0 px-2 pt-2">
         <MultiBoard
           boards={boards}
           activeBoardId={activeBoardId}
-          onChangeBoard={onBoardChange}
+          onChangeBoard={setActiveBoardId}
           tutorWritingOn={tutorWritingOn}
           exercise={session.exercise}
+          onRequestDiagram={requestDiagram}
         />
       </motion.div>
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 pt-3 pb-1 space-y-3">
         {localMessages.map((msg) => (
           <MessageBubble
@@ -499,7 +562,7 @@ export default function ClassroomSession({ session, onExit }) {
             isSpeaking={speakingMessageId === msg.id && !isPaused}
             isPaused={speakingMessageId === msg.id && isPaused}
             onPlay={() => speakMessage(msg)}
-            onPause={() => handlePauseResume(msg.id)}
+            onPause={handlePauseResume}
             onStop={handleStopSpeak}
             personaId={msg.personaId || currentPersonaId}
           />
@@ -513,79 +576,50 @@ export default function ClassroomSession({ session, onExit }) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Confirmation buttons */}
       {pendingConfirmation && !sending && (
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="px-3 pb-2 flex gap-2 flex-shrink-0"
-        >
-          <motion.button
-            whileTap={{ scale: 0.95 }}
-            onClick={() => handleConfirm(true)}
-            className="flex-1 py-2.5 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white font-bold text-sm shadow-md flex items-center justify-center gap-2"
-          >
-            <ThumbsUp size={16} />
-            Wi, m konprann
+        <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="px-3 pb-2 flex gap-2 flex-shrink-0">
+          <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleConfirm(true)}
+            className="flex-1 py-2.5 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white font-bold text-sm shadow-md flex items-center justify-center gap-2">
+            <ThumbsUp size={16} />Oui, je comprends
           </motion.button>
-          <motion.button
-            whileTap={{ scale: 0.95 }}
-            onClick={() => handleConfirm(false)}
-            className="flex-1 py-2.5 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 text-white font-bold text-sm shadow-md flex items-center justify-center gap-2"
-          >
-            <ThumbsDown size={16} />
-            Non, eksplike ankò
+          <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleConfirm(false)}
+            className="flex-1 py-2.5 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 text-white font-bold text-sm shadow-md flex items-center justify-center gap-2">
+            <ThumbsDown size={16} />Non, explique encore
           </motion.button>
         </motion.div>
       )}
 
-      {/* Suggested questions */}
       {!sending && suggestedQuestions.length > 0 && !pendingConfirmation && (
         <SuggestedQuestions
           questions={suggestedQuestions}
-          onPick={(q) => {
-            setSuggestedQuestions([]);
-            handleSend(q);
-          }}
+          onPick={(q) => { setSuggestedQuestions([]); handleSend(q); }}
           onDismiss={() => setSuggestedQuestions([])}
         />
       )}
 
-      {/* Composer */}
       <div className="bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-3 flex-shrink-0">
         <div className="flex items-end gap-2 max-w-3xl mx-auto">
           <div className="flex-1 rounded-2xl bg-slate-100 dark:bg-slate-800 px-4 py-2.5 flex items-center gap-2">
             <input
               type="text"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               placeholder="Pose ta question..."
               disabled={sending}
               className="flex-1 bg-transparent text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none"
             />
           </div>
-          <VoiceInputButton
-            onTranscribed={(text) => handleSend(text)}
-            disabled={sending}
-          />
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            onClick={() => handleSend()}
-            disabled={!input.trim() || sending}
-            className="w-11 h-11 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 text-white flex items-center justify-center shadow-md disabled:opacity-50 disabled:grayscale"
-          >
+          <VoiceInputButton onTranscribed={handleVoiceTranscribed} onError={(m) => alert(m)} disabled={sending} />
+          <motion.button whileTap={{ scale: 0.9 }} onClick={() => handleSend()} disabled={!input.trim() || sending}
+            className="w-11 h-11 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 text-white flex items-center justify-center shadow-md disabled:opacity-50 disabled:grayscale">
             {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
           </motion.button>
         </div>
       </div>
 
-      <TutorSwitchModal
-        isOpen={showTutorSwitch}
-        currentPersonaId={currentPersonaId}
-        onClose={() => setShowTutorSwitch(false)}
-        onSwitch={handleTutorSwitch}
-      />
+      <TutorSwitchModal isOpen={showTutorSwitch} currentPersonaId={currentPersonaId}
+        onClose={() => setShowTutorSwitch(false)} onSwitch={handleTutorSwitch} />
     </div>
   );
 }

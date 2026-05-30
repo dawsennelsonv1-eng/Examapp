@@ -1,337 +1,260 @@
 // src/components/classroom/MultiBoard.jsx
-// Swipeable multi-board system. Up to 6 boards.
-// Default: Énoncé / Solution / Visuel. Dynamic boards added by tutor.
+// v19:
+//  - Visuel board RENDERS the SVG returned by /api/board (was broken before)
+//  - "Request diagram" button on Visuel board for student to ask for one
+//  - Detects landscape orientation → larger board (parent handles split layout)
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { BOARD_TYPES, HIGHLIGHT_COLORS } from "../../utils/constants";
+import { ChevronLeft, ChevronRight, PencilRuler, Sparkles, Loader2 } from "lucide-react";
 
 export default function MultiBoard({
-  boards,
+  boards = [],
   activeBoardId,
   onChangeBoard,
   tutorWritingOn,
   exercise,
+  onRequestDiagram,
 }) {
-  const [touchStart, setTouchStart] = useState(null);
-  const [touchEnd, setTouchEnd] = useState(null);
-  const minSwipeDistance = 50;
+  const activeIndex = boards.findIndex((b) => b.id === activeBoardId);
+  const activeBoard = boards[activeIndex] || boards[0];
 
-  const activeBoard = boards.find((b) => b.id === activeBoardId) || boards[0];
-  const activeIdx = boards.findIndex((b) => b.id === activeBoardId);
-
-  const goToBoard = (idx) => {
-    if (idx < 0 || idx >= boards.length) return;
-    onChangeBoard(boards[idx].id);
+  const goPrev = () => {
+    if (activeIndex > 0) onChangeBoard(boards[activeIndex - 1].id);
   };
-
-  const onTouchStart = (e) => {
-    setTouchEnd(null);
-    setTouchStart(e.targetTouches[0].clientX);
-  };
-
-  const onTouchMove = (e) => {
-    setTouchEnd(e.targetTouches[0].clientX);
-  };
-
-  const onTouchEnd = () => {
-    if (!touchStart || !touchEnd) return;
-    const distance = touchStart - touchEnd;
-    const isLeftSwipe = distance > minSwipeDistance;
-    const isRightSwipe = distance < -minSwipeDistance;
-
-    if (isLeftSwipe && activeIdx < boards.length - 1) {
-      goToBoard(activeIdx + 1);
-    }
-    if (isRightSwipe && activeIdx > 0) {
-      goToBoard(activeIdx - 1);
-    }
+  const goNext = () => {
+    if (activeIndex < boards.length - 1) onChangeBoard(boards[activeIndex + 1].id);
   };
 
   return (
-    <div className="relative w-full h-full flex flex-col">
-      {/* Board tabs / dots indicator */}
-      <div className="flex items-center justify-between px-3 py-2 bg-slate-900/80 backdrop-blur-sm border-b border-white/10 rounded-t-xl">
-        <button
-          onClick={() => goToBoard(activeIdx - 1)}
-          disabled={activeIdx === 0}
-          className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-white/80 disabled:opacity-30"
-        >
+    <div className="h-full flex flex-col rounded-2xl bg-white dark:bg-slate-900 shadow-md ring-1 ring-slate-200 dark:ring-slate-700 overflow-hidden">
+      {/* Tabs */}
+      <div className="flex items-center border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-2">
+        <button onClick={goPrev} disabled={activeIndex <= 0}
+          className="w-8 h-8 flex items-center justify-center text-slate-500 disabled:opacity-30">
           <ChevronLeft size={16} />
         </button>
-
-        <div className="flex items-center gap-2 flex-1 justify-center">
-          <span className="text-base">
-            {BOARD_TYPES[activeBoard?.type]?.icon || "📋"}
-          </span>
-          <span className="text-xs font-bold text-white uppercase tracking-wider">
-            {activeBoard?.name || "Tablo"}
-          </span>
-          {tutorWritingOn === activeBoardId && (
-            <motion.span
-              animate={{ opacity: [0.4, 1, 0.4] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
-              className="ml-1 text-[10px] text-amber-300 font-semibold"
+        <div className="flex-1 flex justify-center gap-1 overflow-x-auto scrollbar-hide">
+          {boards.map((b) => (
+            <button
+              key={b.id}
+              onClick={() => onChangeBoard(b.id)}
+              className={`text-[10px] font-bold uppercase tracking-wider px-3 py-2 transition-colors whitespace-nowrap ${
+                b.id === activeBoardId
+                  ? "text-violet-700 dark:text-violet-300 border-b-2 border-violet-600"
+                  : "text-slate-500"
+              }`}
             >
-              ● écrit
-            </motion.span>
-          )}
+              {b.name}
+              {tutorWritingOn === b.id && <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse" />}
+            </button>
+          ))}
         </div>
-
-        <button
-          onClick={() => goToBoard(activeIdx + 1)}
-          disabled={activeIdx >= boards.length - 1}
-          className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-white/80 disabled:opacity-30"
-        >
+        <button onClick={goNext} disabled={activeIndex >= boards.length - 1}
+          className="w-8 h-8 flex items-center justify-center text-slate-500 disabled:opacity-30">
           <ChevronRight size={16} />
         </button>
       </div>
 
-      {/* Dots indicator */}
-      <div className="flex gap-1 justify-center py-1 bg-slate-900/60">
-        {boards.map((b, i) => (
-          <button
-            key={b.id}
-            onClick={() => goToBoard(i)}
-            className={`h-1.5 rounded-full transition-all ${
-              i === activeIdx ? "w-6 bg-amber-400" : "w-1.5 bg-white/30"
-            }`}
-          />
-        ))}
-      </div>
-
-      {/* Board content */}
-      <div
-        className="flex-1 relative overflow-hidden"
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-      >
+      {/* Active board content */}
+      <div className="flex-1 overflow-y-auto p-3">
         <AnimatePresence mode="wait">
-          <motion.div
-            key={activeBoardId}
-            initial={{ opacity: 0, x: 30 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -30 }}
-            transition={{ duration: 0.25 }}
-            className="absolute inset-0"
-          >
-            <BoardContent board={activeBoard} exercise={exercise} />
-          </motion.div>
+          {activeBoard?.type === "enonce" && (
+            <BoardEnonce key="enonce" board={activeBoard} exercise={exercise} />
+          )}
+          {activeBoard?.type === "solution" && (
+            <BoardSolution key="solution" board={activeBoard} />
+          )}
+          {activeBoard?.type === "visuel" && (
+            <BoardVisuel key="visuel" board={activeBoard} onRequestDiagram={onRequestDiagram} />
+          )}
         </AnimatePresence>
       </div>
     </div>
   );
 }
 
-function BoardContent({ board, exercise }) {
-  if (!board) return null;
-
-  if (board.type === "enonce") {
-    return <EnonceBoard board={board} exercise={exercise} />;
-  }
-  if (board.type === "solution") {
-    return <SolutionBoard board={board} />;
-  }
-  if (board.type === "visuel") {
-    return <VisuelBoard board={board} />;
-  }
-  return <GenericBoard board={board} />;
-}
-
-function EnonceBoard({ board, exercise }) {
+function BoardEnonce({ board, exercise }) {
   const donnees = board.donnees || [];
+  const items = board.items || [];
+
   return (
-    <div className="h-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 overflow-y-auto">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="font-handwriting space-y-3">
       {exercise?.enonce && (
-        <div className="mb-4 pb-3 border-b border-white/10">
-          <div className="text-[10px] uppercase tracking-widest text-amber-300/80 font-bold mb-1">
-            Énoncé
+        <div className="text-base text-slate-900 dark:text-white leading-relaxed">{exercise.enonce}</div>
+      )}
+
+      {donnees.length > 0 && (
+        <div className="rounded-xl bg-violet-50 dark:bg-violet-950/30 p-3 mt-3">
+          <div className="text-[10px] uppercase tracking-widest font-black text-violet-700 dark:text-violet-300 mb-2">Données</div>
+          <div className="space-y-1.5 font-mono text-sm">
+            {donnees.map((d, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.06 * i }}
+              >
+                {d.isQuestion ? (
+                  <span className="text-violet-700 dark:text-violet-300 font-semibold">
+                    {d.symbol} = <span className="text-amber-600 dark:text-amber-400">?</span>
+                  </span>
+                ) : (
+                  <>
+                    <span className="font-semibold text-slate-900 dark:text-white">{d.symbol}</span>
+                    <span className="text-slate-500"> = </span>
+                    <span className="font-bold text-slate-900 dark:text-white">{d.value}</span>
+                    {d.unit && <span className="text-slate-600 dark:text-slate-400 ml-1">{d.unit}</span>}
+                  </>
+                )}
+              </motion.div>
+            ))}
           </div>
-          <p className="text-sm text-white/90 leading-relaxed">{exercise.enonce}</p>
         </div>
       )}
-      <div className="text-[10px] uppercase tracking-widest text-amber-300/80 font-bold mb-2">
-        Données
-      </div>
-      <div className="space-y-2">
-        <AnimatePresence>
-          {donnees.map((d, i) => (
-            <motion.div
-              key={`${d.symbol}-${i}`}
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.05 }}
-            >
-              <DonneeItem donnee={d} />
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
-    </div>
+
+      {items.map((item, i) => (
+        <div key={i} className="text-sm text-slate-700 dark:text-slate-300">{item.content}</div>
+      ))}
+    </motion.div>
   );
 }
 
-function SolutionBoard({ board }) {
+function BoardSolution({ board }) {
   const items = board.items || [];
-  return (
-    <div className="h-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 overflow-y-auto">
-      <div className="text-[10px] uppercase tracking-widest text-amber-300/80 font-bold mb-2">
-        Solution
-      </div>
-      <div className="space-y-2 font-mono">
-        <AnimatePresence>
-          {items.map((item, i) => (
-            <motion.div
-              key={`${item.type}-${i}`}
-              initial={{ opacity: 0, x: -10, scale: 0.96 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              transition={{ delay: i * 0.05 }}
-            >
-              <SolutionItem item={item} />
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
-    </div>
-  );
-}
 
-function VisuelBoard({ board }) {
-  const svg = board.svg;
-  return (
-    <div className="h-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 flex items-center justify-center overflow-auto">
-      {svg ? (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="max-w-full text-white"
-          dangerouslySetInnerHTML={{ __html: svg }}
-        />
-      ) : (
-        <div className="text-center">
-          <div className="text-4xl mb-2 opacity-40">📐</div>
-          <p className="text-sm text-white/40 font-sans">Le prof dessinera ici</p>
+  if (items.length === 0) {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="h-full flex items-center justify-center text-center">
+        <div className="text-slate-400 dark:text-slate-500">
+          <PencilRuler size={32} className="mx-auto mb-2 opacity-50" />
+          <p className="text-xs">Le prof écrira ici au fur et à mesure</p>
         </div>
-      )}
-    </div>
-  );
-}
-
-function GenericBoard({ board }) {
-  const items = board.items || [];
-  return (
-    <div className="h-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 overflow-y-auto">
-      <div className="text-[10px] uppercase tracking-widest text-amber-300/80 font-bold mb-2">
-        {board.name || "Annexe"}
-      </div>
-      <div className="space-y-2 font-sans text-sm">
-        {items.map((item, i) => (
-          <motion.div
-            key={i}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: i * 0.05 }}
-            className="text-white"
-          >
-            {typeof item === "string" ? item : item.content}
-          </motion.div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DonneeItem({ donnee }) {
-  const hl = donnee.highlight ? HIGHLIGHT_COLORS[donnee.highlight] : null;
-  const baseText = "font-sans text-base leading-tight";
-
-  if (donnee.isQuestion) {
-    return (
-      <div className={`${baseText} text-white`}>
-        <span className="text-amber-200 font-bold">{donnee.symbol}</span>
-        <span className="text-white/60"> = </span>
-        <span className="text-amber-400 font-bold">?</span>
-      </div>
-    );
-  }
-
-  const content = (
-    <div className={`${baseText} text-white inline-block`}>
-      <span className="text-amber-200 font-bold">{donnee.symbol}</span>
-      <span className="text-white/60"> = </span>
-      <span className="font-bold">{donnee.value}</span>
-      {donnee.unit && <span className="text-white/80 ml-1">{donnee.unit}</span>}
-    </div>
-  );
-
-  if (hl) {
-    return (
-      <div className={`${hl.bg} ${hl.text} px-2 py-0.5 rounded inline-block`}>
-        {content}
-      </div>
-    );
-  }
-
-  return content;
-}
-
-function SolutionItem({ item }) {
-  const hl = item.highlight ? HIGHLIGHT_COLORS[item.highlight] : null;
-  const baseText = "font-sans text-sm leading-relaxed";
-
-  if (item.type === "result" && item.boxed) {
-    return (
-      <motion.div
-        initial={{ scale: 0.8 }}
-        animate={{ scale: 1 }}
-        transition={{ type: "spring", stiffness: 200, damping: 15 }}
-        className="my-2 inline-block px-3 py-1.5 border-2 border-emerald-400 rounded-md bg-emerald-400/10"
-      >
-        <span className="text-emerald-300 font-bold">{item.content}</span>
       </motion.div>
     );
   }
 
-  if (item.type === "conversion") {
-    return (
-      <div className={`${baseText} text-cyan-300 italic flex items-start gap-1`}>
-        <span>⤳</span>
-        <span>{item.content}</span>
-      </div>
-    );
-  }
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="font-handwriting space-y-2 font-mono">
+      {items.map((item, i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0, y: 5 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.04 * i }}
+          className={
+            item.type === "result" && item.boxed
+              ? "inline-block px-3 py-1.5 my-2 border-2 border-emerald-500 dark:border-emerald-400 rounded-md bg-emerald-50 dark:bg-emerald-950/30 font-bold text-emerald-700 dark:text-emerald-300"
+              : item.type === "conversion"
+              ? "text-blue-700 dark:text-blue-400 italic text-sm"
+              : item.type === "formula"
+              ? "text-violet-700 dark:text-violet-300 font-bold text-sm"
+              : "text-slate-700 dark:text-slate-300 text-sm"
+          }
+          style={item.highlight ? { backgroundColor: item.highlight } : undefined}
+        >
+          {item.content}
+        </motion.div>
+      ))}
+    </motion.div>
+  );
+}
 
-  if (item.type === "formula") {
-    const content = <div className={`${baseText} text-white font-bold`}>{item.content}</div>;
-    if (hl) {
-      return <div className={`${hl.bg} ${hl.text} px-2 py-0.5 rounded inline-block`}>{content}</div>;
+function BoardVisuel({ board, onRequestDiagram }) {
+  const [requesting, setRequesting] = useState(false);
+  const [topic, setTopic] = useState("");
+  const [showInput, setShowInput] = useState(false);
+
+  const handleRequest = async () => {
+    if (!topic.trim() || requesting) return;
+    setRequesting(true);
+    try {
+      await onRequestDiagram?.(topic.trim());
+      setTopic("");
+      setShowInput(false);
+    } finally {
+      setRequesting(false);
     }
-    return content;
-  }
+  };
 
-  if (item.type === "substitution") {
-    return <div className={`${baseText} text-white/90`}>{item.content}</div>;
-  }
-
-  if (item.type === "deduction") {
+  // Has SVG → render it
+  if (board.svg) {
     return (
-      <div className={`${baseText} text-white`}>
-        <span className="text-amber-300 italic">→ </span>
-        {item.content}
-      </div>
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full flex flex-col">
+        <div
+          className="flex-1 flex items-center justify-center bg-white rounded-lg overflow-hidden"
+          dangerouslySetInnerHTML={{ __html: board.svg }}
+        />
+        <button
+          onClick={() => { setShowInput(true); }}
+          className="mt-2 text-[11px] text-violet-600 dark:text-violet-400 font-semibold"
+        >
+          Demander un autre schéma
+        </button>
+
+        {showInput && (
+          <div className="mt-2 flex gap-2">
+            <input
+              type="text"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleRequest()}
+              placeholder="Ex: schéma d'un circuit"
+              className="flex-1 text-xs px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none"
+            />
+            <button onClick={handleRequest} disabled={requesting || !topic.trim()}
+              className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-semibold disabled:opacity-50">
+              {requesting ? <Loader2 size={12} className="animate-spin" /> : "Générer"}
+            </button>
+          </div>
+        )}
+      </motion.div>
     );
   }
 
-  if (item.type === "note") {
-    return <div className={`${baseText} text-white/60 italic`}>{item.content}</div>;
-  }
+  // Empty visuel — invite to request
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="h-full flex flex-col items-center justify-center text-center p-4">
+      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-700 flex items-center justify-center mb-3 shadow-lg shadow-violet-500/30">
+        <Sparkles size={28} className="text-white" />
+      </div>
+      <h3 className="font-bold text-sm text-slate-900 dark:text-white mb-1">Visualisation</h3>
+      <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-4 max-w-xs">
+        Demande au prof de te dessiner un schéma pour mieux comprendre.
+      </p>
 
-  // donnee on solution board
-  if (item.type === "donnee") {
-    return <DonneeItem donnee={item} />;
-  }
-
-  return <div className={`${baseText} text-white`}>{item.content}</div>;
+      {!showInput ? (
+        <button
+          onClick={() => setShowInput(true)}
+          className="px-4 py-2 rounded-xl bg-violet-600 text-white text-xs font-bold shadow-md"
+        >
+          Demander un schéma
+        </button>
+      ) : (
+        <div className="w-full max-w-xs space-y-2">
+          <input
+            type="text"
+            autoFocus
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleRequest()}
+            placeholder="Ex: schéma d'un mouvement"
+            className="w-full text-xs px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+          />
+          <div className="flex gap-2">
+            <button onClick={() => setShowInput(false)}
+              className="flex-1 px-3 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold">
+              Annuler
+            </button>
+            <button onClick={handleRequest} disabled={requesting || !topic.trim()}
+              className="flex-1 px-3 py-2 rounded-lg bg-violet-600 text-white text-xs font-bold disabled:opacity-50 inline-flex items-center justify-center gap-1">
+              {requesting ? <Loader2 size={12} className="animate-spin" /> : "Générer"}
+            </button>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
 }
