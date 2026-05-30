@@ -1,97 +1,114 @@
-// api/board.js
-// SVG diagrams. Claude Opus 4.7 primary, cascade fallbacks.
+// api/board.js v19
+// Generates an SVG diagram from a textual description, for the Visuel board.
+// Uses Claude Opus 4.7 (best at SVG generation) → falls back to GPT.
+
+const MODELS = [
+  "anthropic/claude-opus-4.7",
+  "openai/gpt-5.5",
+  "google/gemini-3.1-pro",
+];
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { topic, description, subject, style } = req.body || {};
+    const { topic, description, subject = "Physique", style = "diagram", exerciseContext = null } = req.body || {};
+    if (!description) return res.status(400).json({ error: "Missing description" });
+
     const KEY = process.env.OPENROUTER_API_KEY;
     if (!KEY) return res.status(500).json({ error: "Server misconfigured" });
 
-    const styleMode = style || "diagram";
+    const prompt = buildPrompt(topic, description, subject, style, exerciseContext);
 
-    const systemPrompt = `Tu es un professeur haïtien qui dessine des schémas pédagogiques au tableau noir.
+    let svg = null;
+    let modelUsed = null;
 
-STYLE OBLIGATOIRE:
-- viewBox="0 0 400 300"
-- Fond transparent
-- Trait blanc (#ffffff) ou jaune craie (#fef08a) pour les lignes principales
-- Rouge (#ef4444) pour vecteurs/forces
-- Vert (#86efac) pour résultats annotés
-- Bleu (#7dd3fc) pour angles
-- Textes en français, font-size 14, font-family: "Caveat", cursive
-- Étiqueter clairement
-- Flèches via <marker> pour vecteurs
-- Pas de fond opaque
-
-Réponds UNIQUEMENT avec le code SVG complet.`;
-
-    const userPrompt = `Sujet: ${subject || "Physique"}
-Topic: ${topic || "Schéma général"}
-Description: ${description || ""}
-Style: ${styleMode}
-
-Génère un schéma pédagogique clair en français, lisible sur fond noir.`;
-
-    const models = [
-      "anthropic/claude-opus-4.7",
-      "openai/gpt-5.5",
-      "google/gemini-3-pro-preview",
-      "google/gemini-3.5-flash",
-    ];
-
-    for (const model of models) {
-      try {
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${KEY}`,
-            "HTTP-Referer": "https://laureatai.com",
-            "X-Title": "Laureat AI",
-          },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userPrompt },
-            ],
-            max_tokens: 3500,
-          }),
-        });
-
-        if (!response.ok) {
-          console.warn(`Board model ${model} returned ${response.status}`);
-          continue;
-        }
-
-        const data = await response.json();
-        let svg = data?.choices?.[0]?.message?.content || "";
-        svg = svg.replace(/```(svg|xml|html)?\s*|\s*```/g, "").trim();
-
-        const svgMatch = svg.match(/<svg[\s\S]*<\/svg>/);
-        if (svgMatch) svg = svgMatch[0];
-
-        if (svg.includes("<svg")) {
-          return res.status(200).json({
-            data: { svg, title: topic, style: styleMode, modelUsed: model },
-          });
-        }
-      } catch (err) {
-        console.warn(`Board ${model} failed:`, err.message);
-        continue;
+    for (const model of MODELS) {
+      const result = await generateSVG(prompt, model, KEY);
+      if (result) {
+        svg = result;
+        modelUsed = model;
+        break;
       }
     }
 
-    return res.status(502).json({ error: "Pa kapab jenere schéma a. Eseye ankò." });
+    if (!svg) {
+      return res.status(502).json({ error: "Diagram generation failed" });
+    }
+
+    return res.status(200).json({
+      data: { svg, modelUsed, style },
+    });
   } catch (err) {
     console.error("/api/board error:", err);
-    return res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error", message: err.message });
+  }
+}
+
+function buildPrompt(topic, description, subject, style, exerciseContext) {
+  return `Tu es un illustrateur pédagogique. Génère un schéma SVG clair pour aider un élève haïtien à comprendre un concept.
+
+SUJET: ${topic || "concept à illustrer"}
+MATIÈRE: ${subject}
+DESCRIPTION: ${description}
+${exerciseContext ? `CONTEXTE: ${JSON.stringify(exerciseContext).substring(0, 800)}` : ""}
+
+RÈGLES STRICTES:
+- Génère UN seul élément <svg> complet (viewBox="0 0 400 300")
+- Fond blanc (#ffffff)
+- Couleurs: violet (#7c3aed) pour les éléments principaux, ambre (#f59e0b) pour mise en évidence, slate (#1e293b) pour le texte, vert (#10b981) pour les résultats
+- Labels en français
+- Décimales avec virgule (9,8 pas 9.8)
+- Police: sans-serif, 14-16px pour les labels
+- Flèches avec marker-end pour les vecteurs/directions
+- Si c'est un schéma de physique: dessine les forces, distances, angles clairement
+- Si c'est une figure géométrique: cotes et angles annotés
+- Si c'est une représentation de "produits en croix": deux fractions avec une croix qui traverse
+- AUCUN texte avant ou après le SVG, JUSTE le SVG
+
+Réponds avec le code SVG UNIQUEMENT, commençant par <svg et finissant par </svg>.`;
+}
+
+async function generateSVG(prompt, model, apiKey) {
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://laureatai.com",
+        "X-Title": "Laureat AI",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 2500,
+        temperature: 0.3,
+      }),
+    });
+
+    if (!response.ok) return null;
+    const data = await response.json();
+    const raw = data?.choices?.[0]?.message?.content;
+    if (!raw) return null;
+
+    // Extract the SVG element
+    const match = raw.match(/<svg[\s\S]*?<\/svg>/i);
+    if (!match) return null;
+
+    // Sanitize: remove any <script> tags
+    const svg = match[0].replace(/<script[\s\S]*?<\/script>/gi, "");
+
+    // Validate it's actually parseable XML
+    if (!svg.includes("</svg>")) return null;
+
+    return svg;
+  } catch (err) {
+    console.warn(`SVG gen failed (${model}):`, err.message);
+    return null;
   }
 }

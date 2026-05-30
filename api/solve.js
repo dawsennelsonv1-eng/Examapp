@@ -1,54 +1,125 @@
-// api/solve.js
-// Updated for May 2026 model availability.
-// OCR: Gemini 3.5 Flash (vision, fast, reliable)
-// Solve cascade: GPT-5.5 → Claude Opus 4.7 → Gemini 3 Pro Preview
+// api/solve.js v19
+//
+// NEW MODES:
+//   mode = "solve"   → solve the exercise (default)
+//   mode = "verify"  → student already solved; AI checks their work
+//
+// MULTI-EXERCISE DETECTION:
+//   AI first scans for exercise count. If multiple found, returns
+//   { multipleExercises: true, exercises: [...] } and frontend asks user which one.
+//
+// RICHER OUTPUT:
+//   - keyFormulas[] — formulas student must know
+//   - summary (longer, pedagogical paragraph)
+//   - produitsEnCroix[] — cross-multiplication relations when applicable
+//   - mistakes/feedback when mode=verify
+
+const OCR_MODELS = [
+  "google/gemini-3.5-flash-lite",
+  "google/gemini-3-flash-preview",
+  "google/gemini-3.1-pro",
+];
+
+const SOLVE_MODELS = [
+  "openai/gpt-5.5",
+  "anthropic/claude-opus-4.7",
+  "google/gemini-3.1-pro",
+];
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { userId, input } = req.body || {};
-    if (!input?.problemText && !input?.imageData) {
-      return res.status(400).json({ error: "Missing problem text or image" });
-    }
-
+    const { userId, input, mode = "solve", selectedExerciseIndex = null } = req.body || {};
+    if (!input) return res.status(400).json({ error: "Missing input" });
     const KEY = process.env.OPENROUTER_API_KEY;
     if (!KEY) return res.status(500).json({ error: "Server misconfigured" });
 
-    // PHASE 1: OCR transcription (if image provided)
-    let problemText = input.problemText || "";
-    if (input.imageData) {
-      const transcription = await transcribeWithVision(input.imageData, KEY);
-      if (transcription.error) {
+    const subject = input.subject || "Physique";
+    const track = input.track || "NS4";
+
+    // ============== STAGE 1: Detect exercise count + extract ==============
+    let extracted = null;
+    let ocrModel = null;
+
+    if (input.problemText) {
+      // Text input — single exercise assumed
+      extracted = { count: 1, exercises: [{ enonce: input.problemText, hasUserSolution: false }] };
+      ocrModel = "user-text-input";
+    } else if (input.imageData) {
+      // Image — scan first to count exercises
+      for (const model of OCR_MODELS) {
+        const result = await detectAndExtract(input.imageData, model, KEY, mode);
+        if (result) {
+          extracted = result;
+          ocrModel = model;
+          break;
+        }
+      }
+      if (!extracted) {
         return res.status(422).json({
-          error: "image_unclear",
-          message: transcription.error,
+          error: "ocr_failed",
+          message: "L'image n'est pas assez claire. Mete plis limyè epi pwoche kamera a.",
         });
       }
-      problemText = transcription.text;
+    } else {
+      return res.status(400).json({ error: "Either problemText or imageData required" });
     }
 
-    // PHASE 2: Solve in Haitian textbook format
-    const solution = await solveInHaitianFormat({
-      problemText,
-      subject: input.subject || "Physique",
-      track: input.track || "NS4",
-      key: KEY,
-    });
+    // ============== STAGE 2: Multi-exercise routing ==============
+    if (extracted.count > 1 && selectedExerciseIndex === null) {
+      // Frontend will display the list and ask user which one
+      return res.status(200).json({
+        data: {
+          multipleExercises: true,
+          count: extracted.count,
+          exercises: extracted.exercises.map((ex, i) => ({
+            index: i,
+            number: ex.number || (i + 1),
+            preview: (ex.enonce || "").substring(0, 200),
+            hasUserSolution: Boolean(ex.hasUserSolution),
+          })),
+          ocrModel,
+        },
+      });
+    }
 
-    if (solution.error) {
-      return res.status(502).json({ error: solution.error });
+    // ============== STAGE 3: Solve or Verify ==============
+    const targetExercise = selectedExerciseIndex !== null
+      ? extracted.exercises[selectedExerciseIndex]
+      : extracted.exercises[0];
+
+    if (!targetExercise) return res.status(422).json({ error: "No exercise extracted" });
+
+    const isVerify = mode === "verify" && targetExercise.hasUserSolution;
+
+    let solution = null;
+    let solveModel = null;
+    for (const model of SOLVE_MODELS) {
+      const result = isVerify
+        ? await verifyWork(targetExercise, model, KEY, subject, track)
+        : await solveExercise(targetExercise, model, KEY, subject, track);
+      if (result) {
+        solution = result;
+        solveModel = model;
+        break;
+      }
+    }
+
+    if (!solution) {
+      return res.status(502).json({ error: "AI couldn't solve. Try again." });
     }
 
     return res.status(200).json({
       data: {
-        originalText: problemText,
-        ...solution.data,
+        ...solution,
+        ocrModel,
+        modelUsed: solveModel,
+        mode: isVerify ? "verify" : "solve",
       },
     });
   } catch (err) {
@@ -57,208 +128,201 @@ export default async function handler(req, res) {
   }
 }
 
-async function transcribeWithVision(imageData, KEY) {
-  let imageUrl = imageData;
-  if (!imageUrl.startsWith("data:")) {
-    imageUrl = `data:image/jpeg;base64,${imageUrl}`;
-  }
+// -------------------- Extract & detect count --------------------
+async function detectAndExtract(imageData, model, apiKey, mode) {
+  const prompt = `Tu analyses l'image d'une page d'exercices scolaires haïtiens.
 
-  // Try multiple vision models in cascade — they all have vision
-  const visionModels = [
-    "google/gemini-3.5-flash",
-    "google/gemini-3-flash-preview",
-    "anthropic/claude-opus-4.7",
-    "openai/gpt-5.5",
-  ];
+ÉTAPE 1: Compte combien d'exercices distincts sont visibles (numérotés 1, 2, 3, ou Exercice I, II, etc).
 
-  for (const model of visionModels) {
-    try {
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${KEY}`,
-          "HTTP-Referer": "https://laureatai.com",
-          "X-Title": "Laureat AI",
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            {
-              role: "system",
-              content: `Tu es un OCR de précision pour des exercices d'examen haïtiens (MENFP).
+ÉTAPE 2: Pour CHAQUE exercice, extrais:
+- "number": le numéro/identifiant
+- "enonce": l'énoncé complet en texte propre
+- "hasUserSolution": true si l'utilisateur a déjà écrit une solution (écriture manuscrite après l'énoncé), false sinon
+- "userSolutionText": (si hasUserSolution=true) transcription de ce que l'utilisateur a écrit
 
-Transcris le texte visible dans l'image avec précision:
-- Garde les symboles mathématiques (×, ÷, ², ³, √, π, ≤, ≥, etc.)
-- Garde les indices et exposants (P_r, m², h³)
-- Garde les unités (kg, m/s², g/cm³)
-- Utilise la virgule pour les décimales
+Réponds UNIQUEMENT en JSON:
+{
+  "count": <nombre>,
+  "exercises": [
+    { "number": "1", "enonce": "...", "hasUserSolution": false, "userSolutionText": null },
+    ...
+  ]
+}`;
 
-Sois TOLÉRANT: si le texte est partiellement lisible, transcris ce que tu vois et marque les parties incertaines avec [?].
-
-Réponds en JSON:
-{"text": "ta transcription", "confidence": "high|medium|low", "partial": true|false}
-
-Réponds "error" SEULEMENT si l'image ne contient AUCUN texte lisible ou si elle est complètement noire/blanche.`,
-            },
-            {
-              role: "user",
-              content: [
-                { type: "image_url", image_url: { url: imageUrl } },
-                {
-                  type: "text",
-                  text: "Transcris cet exercice. Même si une partie est floue, donne-moi ce que tu vois.",
-                },
-              ],
-            },
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://laureatai.com",
+        "X-Title": "Laureat AI",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: imageData } },
           ],
-          response_format: { type: "json_object" },
-          max_tokens: 2000,
-        }),
-      });
-
-      if (!response.ok) {
-        console.warn(`Vision model ${model} returned ${response.status}`);
-        continue;
-      }
-
-      const data = await response.json();
-      const raw = data?.choices?.[0]?.message?.content;
-      if (!raw) continue;
-
-      const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
-      const parsed = JSON.parse(cleaned);
-
-      // Only reject if explicitly errored AND no text returned
-      if (parsed.error && !parsed.text) {
-        return { error: "L'image n'est pas assez claire. Cadre l'exercice de plus près avec plus de lumière." };
-      }
-
-      // Accept even low confidence — let the solver try
-      if (parsed.text && parsed.text.length > 10) {
-        return { text: parsed.text };
-      }
-    } catch (err) {
-      console.warn(`Vision model ${model} failed:`, err.message);
-      continue;
-    }
+        }],
+        response_format: { type: "json_object" },
+        max_tokens: 2000,
+        temperature: 0.1,
+      }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const raw = data?.choices?.[0]?.message?.content;
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw.replace(/```json\s*|\s*```/g, "").trim());
+      if (Array.isArray(parsed.exercises) && parsed.exercises.length > 0) return parsed;
+    } catch {}
+    return null;
+  } catch {
+    return null;
   }
-
-  return {
-    error: "Pa kapab li imaj la. Cadre l'exercice de plus près avec plus de lumière, ou tape l'énoncé manuellement.",
-  };
 }
 
-async function solveInHaitianFormat({ problemText, subject, track, key }) {
-  const systemPrompt = `Tu es un professeur haïtien expert qui résout des exercices pour les examens MENFP (${track}).
+// -------------------- Solve mode --------------------
+async function solveExercise(exercise, model, apiKey, subject, track) {
+  const prompt = `Tu es un professeur haïtien qui prépare un élève (niveau ${track}) à son examen national.
+Matière: ${subject}.
 
-FORMAT HAÏTIEN OBLIGATOIRE:
-1. Restitue l'énoncé reformulé proprement
-2. Liste les DONNÉES en colonne (variable = valeur unité)
-3. Pour chaque question, utilise le bon verbe d'introduction:
-   - "Calculons" = quand on demande de calculer directement
-   - "Cherchons" = quand il faut trouver une grandeur non donnée
-   - "Déterminons" = pour prouver/dériver/identifier
-   - "Vérifions" = pour vérifier une affirmation
-   - "Démontrons" = pour démontrer une propriété
-   - "Déduisons" = quand on déduit d'un résultat précédent
-   - "On sait que" / "Alors on a" = liaisons entre étapes
-4. Pour chaque étape: formule symbolique → substitution → résultat encadré
-5. Décimales avec virgule (9,8 pas 9.8)
-6. Unités SI ou unités du problème
-7. Si conversion d'unités nécessaire, le faire visiblement dans la solution
+EXERCICE:
+${exercise.enonce}
 
-PIÈGES À IDENTIFIER:
-- Erreurs communes des élèves sur ce type d'exercice
-- Confusions possibles avec d'autres formules`;
-
-  const userPrompt = `Résous cet exercice de ${subject} (niveau ${track}):
-
-${problemText}
-
-RÉPONDS EN JSON STRICT:
+Réponds en JSON strict:
 {
-  "enonce": "énoncé reformulé proprement",
+  "enonce": "énoncé reformulé clairement",
   "donnees": [
-    {"symbol": "P_r", "value": "105", "unit": "N"},
-    {"symbol": "P", "value": "?", "unit": "", "isQuestion": true}
+    { "symbol": "L", "value": "15", "unit": "cm" },
+    { "symbol": "v", "value": "?", "isQuestion": true }
+  ],
+  "keyFormulas": [
+    { "name": "Loi d'Ohm", "expression": "U = R × I", "explanation": "tension = résistance × intensité" },
+    { "name": "...", "expression": "...", "explanation": "..." }
   ],
   "sections": [
     {
-      "number": 1,
-      "verb": "Calculons",
-      "title": "la poussée d'Archimède",
+      "number": "1",
+      "verb": "Calcul de",
+      "title": "la vitesse moyenne",
       "steps": [
-        {"type": "formula", "content": "P = P_r - P_a"},
-        {"type": "substitution", "content": "P = 105 - 65"},
-        {"type": "result", "content": "P = 40 N", "boxed": true}
+        { "type": "formula", "content": "v = d / t" },
+        { "type": "conversion", "content": "10 km = 10 000 m" },
+        { "type": "substitution", "content": "v = 10000 / 600" },
+        { "type": "result", "content": "v = 16,67 m/s", "boxed": true }
       ]
     }
   ],
-  "traps": ["piège 1", "piège 2"]
+  "produitsEnCroix": [
+    { "leftTop": "1 min", "leftBottom": "10 min", "rightTop": "60 s", "rightBottom": "x s", "result": "x = 600 s" }
+  ],
+  "summary": "Paragraphe pédagogique (4-6 phrases) résumant la stratégie de résolution, les concepts clés impliqués, et ce que l'élève doit retenir pour des exercices similaires. Inclut les formules essentielles à mémoriser. Décimales avec virgule.",
+  "traps": ["piège fréquent 1", "piège 2"]
 }
 
-Step types: "formula", "substitution", "result" (avec boxed=true), "conversion" (avec note), "deduction", "note".
+RÈGLES:
+- Décimales avec virgule (9,8 pas 9.8)
+- Si l'exercice utilise des proportions (règle de trois), INCLUS produitsEnCroix
+- keyFormulas doit lister TOUTES les formules nécessaires pour résoudre, même celles évidentes
+- summary doit être pédagogique et complet (4-6 phrases minimum)
+- AUCUN markdown, AUCUN LaTeX dans les chaînes`;
 
-Réponds UNIQUEMENT avec le JSON.`;
-
-  // Cascade through available 2026 models
-  const models = [
-    "openai/gpt-5.5",
-    "openai/gpt-5.4",
-    "anthropic/claude-opus-4.7",
-    "google/gemini-3-pro-preview",
-    "google/gemini-3.5-flash",
-    "google/gemini-3-flash-preview",
-  ];
-
-  for (const model of models) {
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://laureatai.com",
+        "X-Title": "Laureat AI",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_tokens: 3000,
+        temperature: 0.2,
+      }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const raw = data?.choices?.[0]?.message?.content;
+    if (!raw) return null;
     try {
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${key}`,
-          "HTTP-Referer": "https://laureatai.com",
-          "X-Title": "Laureat AI",
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          response_format: { type: "json_object" },
-          max_tokens: 4000,
-        }),
-      });
-
-      if (!response.ok) {
-        console.warn(`Solver model ${model} returned ${response.status}`);
-        continue;
-      }
-
-      const data = await response.json();
-      const raw = data?.choices?.[0]?.message?.content;
-      if (!raw) continue;
-
-      const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
-      const parsed = JSON.parse(cleaned);
-
-      return {
-        data: {
-          modelUsed: model,
-          enonce: parsed.enonce || problemText,
-          donnees: Array.isArray(parsed.donnees) ? parsed.donnees : [],
-          sections: Array.isArray(parsed.sections) ? parsed.sections : [],
-          traps: Array.isArray(parsed.traps) ? parsed.traps : [],
-        },
-      };
-    } catch (err) {
-      console.warn(`Solver ${model} error:`, err.message);
-      continue;
+      const parsed = JSON.parse(raw.replace(/```json\s*|\s*```/g, "").trim());
+      return parsed;
+    } catch {
+      return null;
     }
+  } catch {
+    return null;
   }
+}
 
-  return { error: "Tous les modèles AI ont échoué. Vérifie ton crédit OpenRouter." };
+// -------------------- Verify mode --------------------
+async function verifyWork(exercise, model, apiKey, subject, track) {
+  const prompt = `Tu es un professeur haïtien (niveau ${track}, matière ${subject}).
+Un élève t'a montré son exercice ET sa tentative de solution. Évalue son travail.
+
+EXERCICE:
+${exercise.enonce}
+
+SOLUTION DE L'ÉLÈVE:
+${exercise.userSolutionText || "(non lisible)"}
+
+Réponds en JSON:
+{
+  "enonce": "énoncé reformulé",
+  "donnees": [...],
+  "keyFormulas": [...],
+  "verdict": "correct" | "partiellement_correct" | "incorrect",
+  "verdictScore": <0-100>,
+  "userMistakes": [
+    { "where": "étape 2", "description": "erreur de conversion d'unités", "correction": "10 km = 10 000 m, pas 1 000" }
+  ],
+  "userStrengths": ["a bien identifié la formule", "calculs propres"],
+  "correctSolution": {
+    "sections": [...]   // même format que mode solve
+  },
+  "produitsEnCroix": [...],
+  "summary": "Paragraphe pédagogique (4-6 phrases) expliquant ce qui était bon, les erreurs principales, et comment éviter ces erreurs la prochaine fois.",
+  "tips": ["conseil 1 pour des exercices similaires", "conseil 2"]
+}
+
+Sois encourageant mais honnête. Décimales avec virgule.`;
+
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://laureatai.com",
+        "X-Title": "Laureat AI",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        max_tokens: 3000,
+        temperature: 0.2,
+      }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const raw = data?.choices?.[0]?.message?.content;
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw.replace(/```json\s*|\s*```/g, "").trim());
+    } catch {
+      return null;
+    }
+  } catch {
+    return null;
+  }
 }
