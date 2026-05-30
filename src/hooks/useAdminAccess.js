@@ -1,20 +1,36 @@
-// src/hooks/useAdminAccess.js v22
-// Single source of truth for admin gating + "view as" plan preview.
+// src/hooks/useAdminAccess.js v22-fix
+// Admin gate that works WITHOUT Supabase. When Supabase is set up later, the
+// import will resolve and Supabase check kicks in automatically.
 //
-// HOW IT WORKS:
-//  - On mount, queries Supabase: SELECT statut FROM profiles WHERE id = auth.uid()
-//  - Exposes { isAdmin, viewAsPlan, setViewAsPlan }
-//  - The header's plan-switcher dropdown writes to viewAsPlan
-//  - Any page that wants plan-dependent UI reads the effective plan via useEffectivePlan()
+// HOW TO BECOME ADMIN RIGHT NOW (no Supabase needed):
+//   1. Open the app in your browser
+//   2. Open DevTools console (long-press refresh on mobile Chrome → "Open DevTools")
+//   3. Run: localStorage.setItem("laureat.admin", "1")
+//   4. Refresh the page
+//   5. The amber "Admin" badge appears in the top-right
 //
-// FALLBACK FOR DEV: if Supabase isn't configured, allow admin via a local flag
-// `localStorage.setItem("laureat.admin", "1")` so you can test the dashboard.
+// To stop being admin (test as a normal user):
+//   localStorage.removeItem("laureat.admin")
+//
+// When you set up Supabase later, this file already supports it — once you
+// install @supabase/supabase-js and create src/lib/supabase.js, the Supabase
+// check runs alongside the localStorage check.
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "../lib/supabase";
 import { useUsage } from "./useUsage";
 
 const VIEW_AS_KEY = "laureat.viewAsPlan";
+const LOCAL_ADMIN_KEY = "laureat.admin";
+
+// Lazy-load Supabase only if it exists. Won't break the build if missing.
+async function getSupabaseClient() {
+  try {
+    const mod = await import("../lib/supabase");
+    return mod?.supabase || null;
+  } catch {
+    return null;
+  }
+}
 
 export function useAdminAccess() {
   const [isAdmin, setIsAdmin] = useState(false);
@@ -28,14 +44,16 @@ export function useAdminAccess() {
     let cancelled = false;
 
     (async () => {
-      // Dev fallback
+      // 1. Local override always wins (lets you test admin features offline)
       try {
-        if (localStorage.getItem("laureat.admin") === "1") {
+        if (localStorage.getItem(LOCAL_ADMIN_KEY) === "1") {
           if (!cancelled) { setIsAdmin(true); setLoading(false); }
           return;
         }
       } catch {}
 
+      // 2. Try Supabase — but only if installed
+      const supabase = await getSupabaseClient();
       if (!supabase) {
         if (!cancelled) { setIsAdmin(false); setLoading(false); }
         return;
@@ -77,7 +95,7 @@ export function useAdminAccess() {
   return { isAdmin, loading, userId, viewAsPlan, setViewAsPlan };
 }
 
-// Returns the plan the user should see — viewAs override if admin is previewing, else real plan
+// Returns the plan the user should see — admin's viewAs preview if set, else real plan
 export function useEffectivePlan() {
   const { planTier } = useUsage();
   const { isAdmin, viewAsPlan } = useAdminAccess();
