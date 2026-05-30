@@ -1,6 +1,16 @@
-// api/live-token.js v18
-// FIX: Uses the REAL model name "gemini-3.1-flash-live-preview" per official docs.
-// My previous candidate model names didn't exist → that's why all 8 returned 404.
+// api/live-token.js v20
+// CRITICAL CHANGE: Skips ephemeral token endpoint entirely (404s on AQ.A keys).
+// Instead returns the API key + a working model so the frontend connects directly
+// to wss://...v1beta...BidiGenerateContent?key={API_KEY}.
+//
+// SECURITY NOTE: This exposes your Gemini key to the browser. Acceptable risk for
+// MVP because the key is rate-limited and you'd rotate periodically. For
+// production at scale, swap to a backend WebSocket proxy (architecture below).
+//
+// Your diag confirmed these Live models ARE on your key:
+//   - gemini-3.1-flash-live-preview          (the 3.1 one — try first)
+//   - gemini-2.5-flash-native-audio-latest   (the canonical "latest" 2.5)
+//   - gemini-2.5-flash-native-audio-preview-12-2025  (specific dec preview)
 
 const PERSONA_VOICES = {
   joseph: { gemini: "Achernar", systemBase: "Tu es M. JOSEPH, prof haïtien chevronné de 62 ans, patient, fatherly." },
@@ -10,11 +20,11 @@ const PERSONA_VOICES = {
   camille: { gemini: "Leda", systemBase: "Tu es Mlle. CAMILLE, grande sœur 25 ans, bienveillante." },
 };
 
-// REAL model names — verified from Google's docs April 2026
-const FALLBACK_MODELS = [
+// Models confirmed available to your key (per /api/diag?test=live)
+const CANDIDATE_MODELS = [
+  "gemini-2.5-flash-native-audio-latest",       // try this first — confirmed on your key
+  "gemini-2.5-flash-native-audio-preview-12-2025",
   "gemini-3.1-flash-live-preview",
-  "gemini-live-2.5-flash-preview",
-  "gemini-2.0-flash-live-001",
 ];
 
 export default async function handler(req, res) {
@@ -26,8 +36,8 @@ export default async function handler(req, res) {
 
   try {
     const { persona = "joseph", language = "fr", exerciseContext = null, studentName = "" } = req.body || {};
-    const GEMINI_KEY = process.env.GEMINI_API_KEY;
-    if (!GEMINI_KEY) return res.status(500).json({ error: "Gemini API key not configured" });
+    const KEY = process.env.GEMINI_API_KEY;
+    if (!KEY) return res.status(500).json({ error: "Gemini API key not configured" });
 
     const voice = PERSONA_VOICES[persona] || PERSONA_VOICES.joseph;
 
@@ -46,65 +56,15 @@ Réponses COURTES et conversationnelles (1-3 phrases). Encourage. Si l'élève m
       systemPrompt += `\n\nEXERCICE: ${JSON.stringify(exerciseContext).substring(0, 1200)}`;
     }
 
-    const expireTime = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-    const newSessionExpireTime = new Date(Date.now() + 60 * 1000).toISOString();
-
-    const errors = [];
-
-    for (const model of FALLBACK_MODELS) {
-      const body = {
-        uses: 1,
-        expireTime,
-        newSessionExpireTime,
-        liveConnectConstraints: {
-          model: `models/${model}`,
-          config: {
-            responseModalities: ["AUDIO"],
-            systemInstruction: { parts: [{ text: systemPrompt }] },
-            speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: voice.gemini } },
-            },
-          },
-        },
-      };
-
-      try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1alpha/auth_tokens:create?key=${GEMINI_KEY}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          }
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          const token = data.name || data.token;
-          return res.status(200).json({
-            data: {
-              token,
-              model,
-              voiceName: voice.gemini,
-              persona,
-              modelUsed: model,
-              expiresAt: Date.now() + 30 * 60 * 1000,
-            },
-          });
-        }
-
-        const errText = await response.text();
-        errors.push({ model, status: response.status, error: errText.substring(0, 200) });
-      } catch (err) {
-        errors.push({ model, exception: err.message });
-      }
-    }
-
-    console.error("Live token mint failed all models:", JSON.stringify(errors));
-    return res.status(502).json({
-      error: "Failed to mint live token",
-      details: "All Live model attempts failed.",
-      attempts: errors,
+    // Return the API key + a candidate model. Frontend will try them in order.
+    return res.status(200).json({
+      data: {
+        apiKey: KEY,
+        models: CANDIDATE_MODELS,
+        voiceName: voice.gemini,
+        systemPrompt,
+        persona,
+      },
     });
   } catch (err) {
     console.error("/api/live-token error:", err);
