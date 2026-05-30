@@ -1,12 +1,11 @@
-// src/services/liveService.js v18
-// Per official docs:
-// - Ephemeral token → connect to v1alpha BidiGenerateContentConstrained
-// - Pass token as access_token query param
-// - First message: BidiGenerateContentSetup
-// - Since config is locked in the constrained token, setup just needs model
+// src/services/liveService.js v20
+// DIRECT WebSocket connection with API key.
+// Per docs: wss://...v1beta.GenerativeService.BidiGenerateContent?key={API_KEY}
+// First message: full setup with model, config, system_instruction, speechConfig.
+// Tries multiple models from the backend until one connects.
 
-const LIVE_WS_BASE =
-  "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained";
+const WS_BASE =
+  "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
 export class GeminiLiveSession {
   constructor({ onTranscript, onStatus, onError, onTutorTurn }) {
@@ -17,6 +16,7 @@ export class GeminiLiveSession {
     this.processor = null;
     this.isRecording = false;
     this.isConnected = false;
+    this.isReady = false;
     this.onTranscript = onTranscript || (() => {});
     this.onStatus = onStatus || (() => {});
     this.onError = onError || (() => {});
@@ -26,50 +26,91 @@ export class GeminiLiveSession {
     this.playbackContext = null;
     this.videoCaptureInterval = null;
     this.model = null;
+    this.voiceName = null;
+    this.systemPrompt = null;
   }
 
-  async connect(ephemeralToken, model) {
+  async connect(apiKey, model, voiceName, systemPrompt) {
     this.onStatus("connecting");
     this.model = model;
-    try {
-      const url = `${LIVE_WS_BASE}?access_token=${encodeURIComponent(ephemeralToken)}`;
-      console.log("[Live] Connecting:", LIVE_WS_BASE, "model:", model);
-      this.ws = new WebSocket(url);
+    this.voiceName = voiceName;
+    this.systemPrompt = systemPrompt;
 
-      this.ws.onopen = () => {
-        console.log("[Live] WebSocket open. Sending setup...");
-        // First message per docs: BidiGenerateContentSetup
-        // With constrained token, only model is required (config locked)
-        const setupMessage = {
-          setup: {
-            model: `models/${model}`,
-          },
+    return new Promise((resolve, reject) => {
+      try {
+        const url = `${WS_BASE}?key=${encodeURIComponent(apiKey)}`;
+        console.log("[Live] Connecting to:", WS_BASE, "model:", model);
+        this.ws = new WebSocket(url);
+
+        const timeout = setTimeout(() => {
+          if (!this.isReady) {
+            this.ws?.close();
+            reject(new Error("Connection timeout"));
+          }
+        }, 10000);
+
+        this.ws.onopen = () => {
+          console.log("[Live] WS open. Sending setup...");
+          const setupMessage = {
+            setup: {
+              model: `models/${model}`,
+              generationConfig: {
+                responseModalities: ["AUDIO"],
+                speechConfig: {
+                  voiceConfig: { prebuiltVoiceConfig: { voiceName } },
+                },
+              },
+              systemInstruction: {
+                parts: [{ text: systemPrompt }],
+              },
+              outputAudioTranscription: {},
+              inputAudioTranscription: {},
+            },
+          };
+          this.ws.send(JSON.stringify(setupMessage));
+          this.isConnected = true;
+          this.onStatus("connected");
         };
-        this.ws.send(JSON.stringify(setupMessage));
-        this.isConnected = true;
-        this.onStatus("connected");
-      };
 
-      this.ws.onmessage = (event) => this.handleMessage(event);
+        this.ws.onmessage = (event) => {
+          this.handleMessage(event).then(() => {
+            if (this.isReady && !this._resolved) {
+              this._resolved = true;
+              clearTimeout(timeout);
+              resolve();
+            }
+          });
+        };
 
-      this.ws.onerror = (err) => {
-        console.error("[Live] WS error event:", err);
-        this.onError(new Error("Erè koneksyon WebSocket"));
-      };
+        this.ws.onerror = (err) => {
+          console.error("[Live] WS error:", err);
+          this.onError(new Error("Erè koneksyon WebSocket"));
+          if (!this._resolved) {
+            this._resolved = true;
+            clearTimeout(timeout);
+            reject(new Error("WS error"));
+          }
+        };
 
-      this.ws.onclose = (e) => {
-        console.log("[Live] WS closed. Code:", e.code, "Reason:", e.reason || "(none)");
-        this.isConnected = false;
-        if (e.code !== 1000 && e.code !== 1005) {
-          this.onError(new Error(`Koneksyon fèmen (${e.code})${e.reason ? ": " + e.reason : ""}`));
-        }
-        this.onStatus("disconnected");
-      };
-    } catch (err) {
-      console.error("[Live] connect threw:", err);
-      this.onError(err);
-      this.onStatus("error");
-    }
+        this.ws.onclose = (e) => {
+          console.log("[Live] WS closed. Code:", e.code, "Reason:", e.reason || "(none)");
+          this.isConnected = false;
+          this.isReady = false;
+          if (e.code !== 1000 && e.code !== 1005 && this.isReady) {
+            this.onError(new Error(`Koneksyon fèmen (${e.code})`));
+          }
+          this.onStatus("disconnected");
+          if (!this._resolved) {
+            this._resolved = true;
+            clearTimeout(timeout);
+            reject(new Error(`Closed before ready: ${e.code} ${e.reason || ""}`));
+          }
+        };
+      } catch (err) {
+        console.error("[Live] connect threw:", err);
+        reject(err);
+      }
+    });
   }
 
   async handleMessage(event) {
@@ -79,10 +120,11 @@ export class GeminiLiveSession {
       else if (event.data instanceof Blob) data = JSON.parse(await event.data.text());
       else data = JSON.parse(new TextDecoder().decode(event.data));
 
-      console.log("[Live] msg keys:", Object.keys(data).join(","));
+      console.log("[Live] msg:", Object.keys(data).join(","));
 
       if (data.setupComplete !== undefined) {
-        console.log("[Live] ✅ Setup complete — session ready");
+        console.log("[Live] ✅ Setup complete");
+        this.isReady = true;
         this.onStatus("ready");
         return;
       }
@@ -214,6 +256,7 @@ export class GeminiLiveSession {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.close(1000);
     this.ws = null;
     this.isConnected = false;
+    this.isReady = false;
     this.audioQueue = [];
     if (this.playbackContext) { try { this.playbackContext.close(); } catch {} this.playbackContext = null; }
     this.onStatus("disconnected");
@@ -244,11 +287,12 @@ function base64ToArrayBuffer(base64) {
   return bytes.buffer;
 }
 
+// Convenience: fetch config from backend + try connecting with first working model
 export async function createLiveSession({
   persona = "joseph", language = "fr", exerciseContext = null, studentName = "",
   onTranscript, onStatus, onError, onTutorTurn,
 }) {
-  console.log("[Live] Requesting ephemeral token from /api/live-token...");
+  console.log("[Live] Fetching config from /api/live-token...");
   const tokenResponse = await fetch("/api/live-token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -257,14 +301,25 @@ export async function createLiveSession({
 
   if (!tokenResponse.ok) {
     const err = await tokenResponse.json();
-    const detail = err.attempts?.[0]?.error || err.details || err.error || "Unknown";
-    console.error("[Live] Token failed:", err);
-    throw new Error(`Pa kapab kòmanse apèl la — ${detail.substring(0, 120)}`);
+    throw new Error(err.error || "Failed to get config");
   }
   const { data } = await tokenResponse.json();
-  console.log("[Live] ✅ Got token, model:", data.model);
+  console.log("[Live] Got config. Models to try:", data.models);
 
-  const session = new GeminiLiveSession({ onTranscript, onStatus, onError, onTutorTurn });
-  await session.connect(data.token, data.model);
-  return session;
+  // Try each model until one connects
+  let lastErr = null;
+  for (const model of data.models) {
+    const session = new GeminiLiveSession({ onTranscript, onStatus, onError, onTutorTurn });
+    try {
+      await session.connect(data.apiKey, model, data.voiceName, data.systemPrompt);
+      console.log("[Live] ✅ Connected with model:", model);
+      return session;
+    } catch (err) {
+      console.warn(`[Live] Model ${model} failed:`, err.message);
+      lastErr = err;
+      try { session.disconnect(); } catch {}
+    }
+  }
+
+  throw new Error(`All Live models failed. Last error: ${lastErr?.message}`);
 }
