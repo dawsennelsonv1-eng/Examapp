@@ -1,16 +1,28 @@
-// src/pages/ScanSolve.jsx
-// FINAL: top-right Explique-moi button + Share + PDF + scan history save + replay.
+// src/pages/ScanSolve.jsx v19
+// Full new flow:
+//   1. Camera capture with mode (solve or verify)
+//   2. If multiple exercises detected → ExerciseSelector
+//   3. Solve OR Verify path
+//   4. Rich solution: enonce → animated reveal → key formulas → solution → produits en croix → summary → traps
+//   5. Tap image → expand fullscreen
+//   6. Share + PDF + Explique-moi
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  ArrowLeft, RefreshCw, AlertCircle, Loader2,
-  MessageCircleQuestion, FileDown,
+  ArrowLeft, AlertCircle, Loader2, MessageCircleQuestion, FileDown, Maximize2,
 } from "lucide-react";
+
 import CameraCapture from "../components/scan/CameraCapture";
+import ExerciseSelector from "../components/scan/ExerciseSelector";
+import VerificationResult from "../components/scan/VerificationResult";
+import { KeyFormulas, SummaryCard, AnimatedReveal } from "../components/scan/SolutionExtras";
+import ProduitsEnCroix from "../components/shared/ProduitsEnCroix";
+import ImageExpandModal from "../components/shared/ImageExpandModal";
 import ModelIndicator from "../components/shared/ModelIndicator";
 import ShareButton from "../components/shared/ShareButton";
+
 import { useApp } from "../contexts/AppContext";
 import { useScanHistory } from "../hooks/useScanHistory";
 import { exportSolutionToPDF } from "../services/pdfService";
@@ -21,11 +33,18 @@ export default function ScanSolve() {
   const { track } = useApp();
   const { addScan } = useScanHistory();
 
-  const [step, setStep] = useState("camera");
+  // Flow state
+  const [step, setStep] = useState("camera"); // camera | solving | picker | solution | error
+  const [scanMode, setScanMode] = useState("solve"); // solve | verify
   const [capturedImage, setCapturedImage] = useState(null);
+  const [capturedText, setCapturedText] = useState(null);
+  const [multipleExercises, setMultipleExercises] = useState(null);
+  const [selectedExerciseIndex, setSelectedExerciseIndex] = useState(null);
   const [solution, setSolution] = useState(null);
   const [error, setError] = useState(null);
+  const [imageExpanded, setImageExpanded] = useState(false);
 
+  // Replay support
   useEffect(() => {
     if (searchParams.get("replay") === "1") {
       const raw = sessionStorage.getItem("laureat.scanReplay");
@@ -34,20 +53,14 @@ export default function ScanSolve() {
           const scan = JSON.parse(raw);
           sessionStorage.removeItem("laureat.scanReplay");
           setCapturedImage(scan.capturedImage);
-          setSolution({
-            enonce: scan.enonce,
-            donnees: scan.donnees,
-            sections: scan.sections,
-            traps: scan.traps || [],
-          });
+          setSolution(scan);
           setStep("solution");
         } catch {}
       }
     }
   }, []);
 
-  const handleCapture = async (imageDataUrl, textInput) => {
-    setCapturedImage(imageDataUrl);
+  const callSolveAPI = async ({ imageData, problemText, mode, selectedIndex }) => {
     setStep("solving");
     setError(null);
 
@@ -57,9 +70,11 @@ export default function ScanSolve() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: "user-" + Date.now(),
+          mode,
+          selectedExerciseIndex: selectedIndex,
           input: {
-            imageData: imageDataUrl,
-            problemText: textInput || undefined,
+            imageData,
+            problemText: problemText || undefined,
             subject: "Physique",
             track: track || "NS4",
           },
@@ -68,26 +83,40 @@ export default function ScanSolve() {
 
       if (response.status === 422) {
         const body = await response.json();
-        setError(body.message || "L'image n'est pas assez claire. Mete plis limyè epi pwoche kamera a.");
+        setError(body.message || "L'image n'est pas assez claire.");
         setStep("error");
         return;
       }
       if (!response.ok) throw new Error(`Server ${response.status}`);
 
       const result = await response.json();
-      if (!result?.data) throw new Error("Invalid response");
+      const data = result.data;
 
-      setSolution(result.data);
+      // If multi-exercise detected, show picker
+      if (data?.multipleExercises) {
+        setMultipleExercises(data);
+        setStep("picker");
+        return;
+      }
+
+      // Otherwise show the solution
+      setSolution(data);
       setStep("solution");
 
-      addScan({
-        enonce: result.data.enonce,
-        donnees: result.data.donnees,
-        sections: result.data.sections,
-        traps: result.data.traps,
-        capturedImage: imageDataUrl,
-        subject: "Physique",
-      });
+      // Save to history (solve mode only)
+      if (mode === "solve") {
+        addScan({
+          enonce: data.enonce,
+          donnees: data.donnees,
+          sections: data.sections,
+          traps: data.traps,
+          keyFormulas: data.keyFormulas,
+          summary: data.summary,
+          produitsEnCroix: data.produitsEnCroix,
+          capturedImage: imageData,
+          subject: "Physique",
+        });
+      }
     } catch (err) {
       console.error("Solve error:", err);
       setError("Pa gen koneksyon entènèt la. Verifye epi eseye ankò.");
@@ -95,10 +124,42 @@ export default function ScanSolve() {
     }
   };
 
+  const handleCapture = async (imageDataUrl, textInput, mode = "solve") => {
+    setCapturedImage(imageDataUrl);
+    setCapturedText(textInput || null);
+    setScanMode(mode);
+    setMultipleExercises(null);
+    setSelectedExerciseIndex(null);
+
+    await callSolveAPI({
+      imageData: imageDataUrl,
+      problemText: textInput,
+      mode,
+      selectedIndex: null,
+    });
+  };
+
+  const handlePickExercise = async (index) => {
+    setSelectedExerciseIndex(index);
+    await callSolveAPI({
+      imageData: capturedImage,
+      problemText: capturedText,
+      mode: scanMode,
+      selectedIndex: index,
+    });
+  };
+
+  const handleSolveAll = async () => {
+    // For now, "all" = solve the first one. Future: queue them up.
+    await handlePickExercise(0);
+  };
+
   const handleRetry = () => {
     setStep("camera");
     setCapturedImage(null);
+    setCapturedText(null);
     setSolution(null);
+    setMultipleExercises(null);
     setError(null);
   };
 
@@ -106,7 +167,8 @@ export default function ScanSolve() {
     const exerciseData = {
       enonce: solution.enonce,
       donnees: solution.donnees,
-      sections: solution.sections,
+      sections: solution.sections || solution.correctSolution?.sections,
+      keyFormulas: solution.keyFormulas,
       capturedImage,
       timestamp: Date.now(),
     };
@@ -116,9 +178,33 @@ export default function ScanSolve() {
 
   const handlePDF = () => exportSolutionToPDF(solution);
 
+  // ====== Render: camera ======
   if (step === "camera") {
     return <CameraCapture onCapture={handleCapture} onClose={() => navigate("/")} />;
   }
+
+  // ====== Render: picker (multi-exercise) ======
+  if (step === "picker" && multipleExercises) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-32">
+        <header className="sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-3 flex items-center gap-2">
+          <button onClick={handleRetry} className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300">
+            <ArrowLeft size={18} />
+          </button>
+          <div className="font-bold text-sm text-slate-900 dark:text-white">Plusieurs exercices détectés</div>
+        </header>
+        <ExerciseSelector
+          exercises={multipleExercises.exercises}
+          onSelect={handlePickExercise}
+          onSelectAll={handleSolveAll}
+        />
+      </div>
+    );
+  }
+
+  // ====== Render: solution / error / solving ======
+  const sections = solution?.sections || solution?.correctSolution?.sections;
+  const isVerify = solution?.mode === "verify";
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-32">
@@ -127,13 +213,15 @@ export default function ScanSolve() {
           <ArrowLeft size={18} />
         </button>
         <div className="flex-1 min-w-0">
-          <div className="font-bold text-sm text-slate-900 dark:text-white">Solution</div>
+          <div className="font-bold text-sm text-slate-900 dark:text-white">
+            {isVerify ? "Vérification" : "Solution"}
+          </div>
           <div className="text-[11px] text-slate-500 dark:text-slate-400">Niveau {track || "NS4"}</div>
         </div>
 
-        {step === "solution" && (
+        {step === "solution" && solution && (
           <>
-            <ShareButton type="scan_result" payload={{ enonce: solution.enonce, donnees: solution.donnees, sections: solution.sections }} compact />
+            <ShareButton type="scan_result" payload={{ enonce: solution.enonce, donnees: solution.donnees, sections }} compact />
             <motion.button whileTap={{ scale: 0.92 }} onClick={handlePDF} className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300" title="PDF">
               <FileDown size={16} />
             </motion.button>
@@ -147,27 +235,39 @@ export default function ScanSolve() {
               transition={{ opacity: { duration: 0.3 }, scale: { duration: 0.3 }, boxShadow: { duration: 1.8, repeat: Infinity }}}
               whileTap={{ scale: 0.95 }} onClick={handleAskTutor}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white font-bold text-xs shadow-md">
-              <MessageCircleQuestion size={12} /><span>Explique-moi</span>
+              <MessageCircleQuestion size={12} />
+              <span>Explique-moi</span>
             </motion.button>
           </>
         )}
       </header>
 
+      {/* Captured image with TAP TO EXPAND */}
       {capturedImage && (
         <div className="px-4 pt-4">
-          <div className="relative rounded-xl overflow-hidden bg-slate-200 dark:bg-slate-800 shadow-md">
+          <button
+            onClick={() => setImageExpanded(true)}
+            className="relative w-full rounded-xl overflow-hidden bg-slate-200 dark:bg-slate-800 shadow-md group"
+          >
             <img src={capturedImage} alt="Exercice" className="w-full max-h-40 object-cover" />
+            <div className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center text-white opacity-80 group-hover:opacity-100">
+              <Maximize2 size={14} />
+            </div>
             {step === "solving" && (
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-sm">
                 <div className="text-white text-center">
                   <Loader2 size={32} className="animate-spin mx-auto mb-2" />
-                  <div className="text-sm font-bold">Lecture de l'image...</div>
-                  <div className="text-xs opacity-75 mt-1">Le prof analyse</div>
+                  <div className="text-sm font-bold">
+                    {isVerify ? "Le prof vérifie ton travail..." : "Lecture de l'image..."}
+                  </div>
+                  <div className="text-xs opacity-75 mt-1">Patient encore quelques secondes</div>
                 </div>
               </div>
             )}
-            {solution?.ocrModel && <ModelIndicator modelUsed={solution.ocrModel} position="bottom-right" size="xs" />}
-          </div>
+            {solution?.ocrModel && step === "solution" && (
+              <ModelIndicator modelUsed={solution.ocrModel} position="bottom-right" size="xs" />
+            )}
+          </button>
         </div>
       )}
 
@@ -188,68 +288,104 @@ export default function ScanSolve() {
       <AnimatePresence>
         {step === "solution" && solution && (
           <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="px-4 mt-4 space-y-4">
+
             {solution.modelUsed && (
               <div className="flex justify-end">
                 <ModelIndicator modelUsed={solution.modelUsed} position="inline" size="xs" />
               </div>
             )}
 
+            {/* ENONCE — shown FIRST, animated reveal */}
             <section className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm">
               <h2 className="text-[10px] uppercase tracking-widest font-black text-violet-600 dark:text-violet-400 mb-2">Énoncé</h2>
-              <p className="text-sm text-slate-900 dark:text-slate-100 leading-relaxed">{solution.enonce}</p>
+              <p className="text-sm text-slate-900 dark:text-slate-100 leading-relaxed">
+                <AnimatedReveal text={solution.enonce} delayPerWord={0.025} />
+              </p>
             </section>
 
-            <div className="rounded-2xl bg-white dark:bg-slate-900 shadow-sm overflow-hidden ring-1 ring-slate-200 dark:ring-slate-700">
-              <div className="grid grid-cols-12">
-                <div className="col-span-4 p-4 bg-violet-50 dark:bg-violet-950/30 border-r border-slate-200 dark:border-slate-700">
-                  <h3 className="text-[10px] uppercase tracking-widest font-black text-violet-700 dark:text-violet-400 mb-3 border-b-2 border-violet-200 dark:border-violet-700 pb-1.5">Données</h3>
-                  <div className="space-y-1.5 font-mono text-xs text-slate-900 dark:text-slate-100">
-                    {solution.donnees?.map((d, i) => (
-                      d.isQuestion ? (
-                        <div key={i} className="font-semibold text-violet-700 dark:text-violet-300">
-                          {d.symbol} = <span className="text-amber-600 dark:text-amber-400">?</span>
+            {/* VERIFICATION header (verify mode only) */}
+            {isVerify && (
+              <VerificationResult
+                verdict={solution.verdict}
+                verdictScore={solution.verdictScore}
+                mistakes={solution.userMistakes || []}
+                strengths={solution.userStrengths || []}
+                tips={solution.tips || []}
+              />
+            )}
+
+            {/* KEY FORMULAS */}
+            <KeyFormulas formulas={solution.keyFormulas} />
+
+            {/* DONNÉES + SOLUTION (the classic 2-column layout) */}
+            {sections && sections.length > 0 && (
+              <div className="rounded-2xl bg-white dark:bg-slate-900 shadow-sm overflow-hidden ring-1 ring-slate-200 dark:ring-slate-700">
+                <div className="grid grid-cols-12">
+                  <div className="col-span-4 p-4 bg-violet-50 dark:bg-violet-950/30 border-r border-slate-200 dark:border-slate-700">
+                    <h3 className="text-[10px] uppercase tracking-widest font-black text-violet-700 dark:text-violet-400 mb-3 border-b-2 border-violet-200 dark:border-violet-700 pb-1.5">Données</h3>
+                    <div className="space-y-1.5 font-mono text-xs text-slate-900 dark:text-slate-100">
+                      {solution.donnees?.map((d, i) => (
+                        d.isQuestion ? (
+                          <div key={i} className="font-semibold text-violet-700 dark:text-violet-300">
+                            {d.symbol} = <span className="text-amber-600 dark:text-amber-400">?</span>
+                          </div>
+                        ) : (
+                          <div key={i}>
+                            <span className="font-semibold">{d.symbol}</span>
+                            <span className="text-slate-500"> = </span>
+                            <span className="font-bold text-slate-900 dark:text-white">{d.value}</span>
+                            {d.unit && <span className="text-slate-600 dark:text-slate-400 ml-1">{d.unit}</span>}
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="col-span-8 p-4">
+                    {sections.map((section, i) => (
+                      <motion.div
+                        key={i}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.12 * i }}
+                        className={i < sections.length - 1 ? "pb-4 mb-4 border-b border-slate-100 dark:border-slate-800" : ""}
+                      >
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-white mb-2 flex items-baseline gap-1.5">
+                          <span className="text-violet-600 dark:text-violet-400">{section.number}-</span>
+                          <span className="italic text-slate-700 dark:text-slate-300">{section.verb}</span>{" "}
+                          <span className="text-slate-600 dark:text-slate-400 font-normal">{section.title}</span>
+                        </h4>
+                        <div className="space-y-1.5 pl-2 font-mono text-xs">
+                          {section.steps?.map((step, j) => (
+                            step.type === "result" && step.boxed ? (
+                              <div key={j} className="my-2 inline-block">
+                                <div className="px-3 py-1.5 border-2 border-emerald-500 dark:border-emerald-400 rounded-md bg-emerald-50 dark:bg-emerald-950/30 font-bold text-emerald-700 dark:text-emerald-300">
+                                  {step.content}
+                                </div>
+                              </div>
+                            ) : step.type === "conversion" ? (
+                              <div key={j} className="text-blue-700 dark:text-blue-400 italic">{step.content}</div>
+                            ) : (
+                              <div key={j} className="text-slate-700 dark:text-slate-300">{step.content}</div>
+                            )
+                          ))}
                         </div>
-                      ) : (
-                        <div key={i}>
-                          <span className="font-semibold">{d.symbol}</span>
-                          <span className="text-slate-500"> = </span>
-                          <span className="font-bold text-slate-900 dark:text-white">{d.value}</span>
-                          {d.unit && <span className="text-slate-600 dark:text-slate-400 ml-1">{d.unit}</span>}
-                        </div>
-                      )
+                      </motion.div>
                     ))}
                   </div>
                 </div>
-
-                <div className="col-span-8 p-4">
-                  {solution.sections?.map((section, i) => (
-                    <div key={i} className={i < solution.sections.length - 1 ? "pb-4 mb-4 border-b border-slate-100 dark:border-slate-800" : ""}>
-                      <h4 className="text-xs font-bold text-slate-900 dark:text-white mb-2 flex items-baseline gap-1.5">
-                        <span className="text-violet-600 dark:text-violet-400">{section.number}-</span>
-                        <span className="italic text-slate-700 dark:text-slate-300">{section.verb}</span>{" "}
-                        <span className="text-slate-600 dark:text-slate-400 font-normal">{section.title}</span>
-                      </h4>
-                      <div className="space-y-1.5 pl-2 font-mono text-xs">
-                        {section.steps?.map((step, j) => (
-                          step.type === "result" && step.boxed ? (
-                            <div key={j} className="my-2 inline-block">
-                              <div className="px-3 py-1.5 border-2 border-emerald-500 dark:border-emerald-400 rounded-md bg-emerald-50 dark:bg-emerald-950/30 font-bold text-emerald-700 dark:text-emerald-300">
-                                {step.content}
-                              </div>
-                            </div>
-                          ) : step.type === "conversion" ? (
-                            <div key={j} className="text-blue-700 dark:text-blue-400 italic">{step.content}</div>
-                          ) : (
-                            <div key={j} className="text-slate-700 dark:text-slate-300">{step.content}</div>
-                          )
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </div>
-            </div>
+            )}
 
+            {/* PRODUITS EN CROIX */}
+            {solution.produitsEnCroix && solution.produitsEnCroix.length > 0 && (
+              <ProduitsEnCroix data={solution.produitsEnCroix} />
+            )}
+
+            {/* PEDAGOGICAL SUMMARY */}
+            {solution.summary && <SummaryCard text={solution.summary} />}
+
+            {/* TRAPS */}
             {solution.traps?.length > 0 && (
               <section className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 p-4 border border-amber-200 dark:border-amber-500/30">
                 <h3 className="text-[10px] uppercase tracking-widest font-black text-amber-700 dark:text-amber-400 mb-2">⚠️ Pièges courants</h3>
@@ -285,7 +421,7 @@ export default function ScanSolve() {
             </motion.button>
 
             <div className="flex gap-2 mt-4">
-              <ShareButton type="scan_result" payload={{ enonce: solution.enonce, donnees: solution.donnees, sections: solution.sections }} label="Partager" />
+              <ShareButton type="scan_result" payload={{ enonce: solution.enonce, donnees: solution.donnees, sections }} label="Partager" />
               <motion.button whileTap={{ scale: 0.97 }} onClick={handlePDF}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold text-sm">
                 <FileDown size={16} />Télécharger PDF
@@ -293,6 +429,13 @@ export default function ScanSolve() {
             </div>
             <p className="text-center text-[11px] text-slate-500 mt-2">💡 Partage avec un camarade qui pourrait avoir besoin</p>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Image expand modal */}
+      <AnimatePresence>
+        {imageExpanded && (
+          <ImageExpandModal src={capturedImage} onClose={() => setImageExpanded(false)} />
         )}
       </AnimatePresence>
     </div>
