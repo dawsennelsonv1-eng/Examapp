@@ -1,5 +1,10 @@
-// src/App.jsx
-// FINAL: includes /share/:shareId public route for share-via-link.
+// src/App.jsx v20
+// New routes:
+//   /reviser → new Reviser hub (past exams + weekly quizzes) — was /quiz
+//   /cours → subject grid (was /reviser)
+//   /cours/:subjectId → chapter list
+//   /cours/:subjectId/:chapterId/:eventId → event detail (placeholder for now)
+// Keeps backward compat with old routes via redirects.
 
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useApp } from "./contexts/AppContext";
@@ -7,8 +12,9 @@ import AppShell from "./components/AppShell";
 import Home from "./pages/Home";
 import ScanSolve from "./pages/ScanSolve";
 import Classroom from "./pages/Classroom";
-import Quizzes from "./pages/Quizzes";
 import Reviser from "./pages/Reviser";
+import Cours from "./pages/Cours";
+import CoursSubject from "./pages/CoursSubject";
 import Profile from "./pages/Profile";
 import Onboarding from "./pages/Onboarding";
 import Admin from "./pages/Admin";
@@ -18,24 +24,24 @@ import Share from "./pages/Share";
 export default function App() {
   return (
     <Routes>
-      {/* Public — anyone can view (no auth, no shell) */}
       <Route path="/share/:shareId" element={<Share />} />
-
-      {/* Standalone (no tab bar) */}
       <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/admin" element={<Admin />} />
       <Route path="/paywall" element={<Paywall />} />
 
-      {/* Main app */}
       <Route path="/" element={<ProtectedShell />}>
         <Route index element={<Home />} />
-        <Route path="quiz" element={<Quizzes />} />
+        <Route path="reviser" element={<Reviser />} />
+        <Route path="cours" element={<Cours />} />
+        <Route path="cours/:subjectId" element={<CoursSubject />} />
         <Route path="scan" element={<ScanSolve />} />
         <Route path="classe" element={<Classroom />} />
-        <Route path="reviser" element={<Reviser />} />
         <Route path="profile" element={<Profile />} />
-        <Route path="matieres" element={<Navigate to="/reviser" replace />} />
-        <Route path="vault" element={<Navigate to="/reviser" replace />} />
+
+        {/* Backward compat redirects */}
+        <Route path="quiz" element={<Navigate to="/reviser" replace />} />
+        <Route path="matieres" element={<Navigate to="/cours" replace />} />
+        <Route path="vault" element={<Navigate to="/cours" replace />} />
       </Route>
     </Routes>
   );
