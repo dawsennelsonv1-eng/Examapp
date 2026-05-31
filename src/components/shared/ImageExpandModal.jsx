@@ -1,5 +1,6 @@
 // src/components/shared/ImageExpandModal.jsx
 // Fullscreen image viewer. Tap anywhere or X to close.
+// This file MUST exist because src/pages/ScanSolve.jsx imports it.
 
 import { motion, AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
