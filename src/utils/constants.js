@@ -1,5 +1,6 @@
-// src/utils/constants.js (v17 — exam dates corrected, MENFP wording removed)
-// Only the exam-related + persona descriptions changed. Everything else preserved.
+// src/utils/constants.js
+// Exports the v17 EXAM_DATES + a backward-compat TRACKS alias so AppContext.jsx
+// (which imports TRACKS) keeps working.
 
 export const EXAM_DATES = {
   "9AF": {
@@ -20,6 +21,25 @@ export const EXAM_DATES = {
 
 // Earliest start across all tracks — used for the home countdown
 export const EXAM_DATE = EXAM_DATES["9AF"].start;
+
+// Backward-compat: AppContext.jsx and other older files import TRACKS.
+// Keep this exported so the build doesn't break.
+export const TRACKS = [
+  {
+    id: "9AF",
+    label: "9ème AF",
+    fullLabel: "9ème Année Fondamentale",
+    examDate: EXAM_DATES["9AF"].start,
+    examRange: EXAM_DATES["9AF"].range,
+  },
+  {
+    id: "NS4",
+    label: "NS4",
+    fullLabel: "Nouveau Secondaire 4",
+    examDate: EXAM_DATES.NS4.start,
+    examRange: EXAM_DATES.NS4.range,
+  },
+];
 
 export const PERSONALITIES = [
   {
