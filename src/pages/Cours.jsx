@@ -1,22 +1,26 @@
-// src/pages/Cours.jsx — v22-fix
-// Toned-down design: white cards with subtle accent colors instead of full-bleed gradients.
-// Cleaner spacing, easier to scan, less visual noise.
+// src/pages/Cours.jsx — v23
+// Matches the screenshot you sent: dark cards in a 2-col grid, colored
+// rounded-square icon tiles, subject name in white, "Commencer >" link below.
 
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { BookOpen, ChevronRight } from "lucide-react";
+import {
+  Calculator, Atom, FlaskConical, Brain, Globe2,
+  Languages, BookOpen as BookIcon, GraduationCap,
+} from "lucide-react";
 import { SUBJECTS } from "../utils/coursData";
 import { useApp } from "../contexts/AppContext";
 
-// Subtle accent colors — used for the small icon tile, not the whole card
-const ACCENT_TILES = {
-  math: "bg-violet-100 dark:bg-violet-500/15 text-violet-600 dark:text-violet-400",
-  physique: "bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-400",
-  chimie: "bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-  biologie: "bg-green-100 dark:bg-green-500/15 text-green-600 dark:text-green-400",
-  francais: "bg-rose-100 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400",
-  sciences_sociales: "bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-500",
-  kreyol: "bg-red-100 dark:bg-red-500/15 text-red-600 dark:text-red-400",
+// Icon + gradient tile color per subject
+const SUBJECT_VISUALS = {
+  math: { icon: Calculator, tile: "from-violet-500 to-indigo-700" },
+  physique: { icon: Atom, tile: "from-blue-500 to-cyan-600" },
+  chimie: { icon: FlaskConical, tile: "from-emerald-500 to-teal-600" },
+  biologie: { icon: Brain, tile: "from-rose-500 to-pink-600" },
+  francais: { icon: BookIcon, tile: "from-fuchsia-500 to-pink-600" },
+  sciences_sociales: { icon: Globe2, tile: "from-amber-500 to-orange-600" },
+  philosophie: { icon: GraduationCap, tile: "from-slate-500 to-slate-700" },
+  kreyol: { icon: Languages, tile: "from-red-500 to-rose-600" },
 };
 
 export default function Cours() {
@@ -28,47 +32,39 @@ export default function Cours() {
 
   return (
     <div className="pb-28 pt-2">
-      <header className="px-4 pt-6 pb-2">
-        <div className="flex items-center gap-2 mb-1">
-          <BookOpen size={22} className="text-violet-600 dark:text-violet-400" />
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Cours</h1>
-        </div>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          Tes matières — chapitres, leçons et quiz
-        </p>
-      </header>
-
-      <main className="px-4 mt-4 space-y-2.5">
+      <div className="px-3 pt-3 grid grid-cols-2 gap-3">
         {visibleSubjects.map((subject, i) => {
-          const accent = ACCENT_TILES[subject.id] || "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400";
+          const visual = SUBJECT_VISUALS[subject.id] || { icon: BookIcon, tile: "from-slate-500 to-slate-700" };
+          const Icon = visual.icon;
           return (
             <motion.button
               key={subject.id}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.04 }}
-              whileTap={{ scale: 0.98 }}
+              whileTap={{ scale: 0.97 }}
               onClick={() => navigate(`/cours/${subject.id}`)}
-              className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 shadow-sm ring-1 ring-slate-100 dark:ring-slate-700 flex items-center gap-3 text-left"
+              className="relative bg-slate-900 rounded-2xl p-4 text-left ring-1 ring-slate-800/50"
             >
-              <div className={`w-11 h-11 rounded-xl ${accent} flex items-center justify-center text-xl flex-shrink-0`}>
-                {subject.icon}
+              {/* Colored icon tile */}
+              <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${visual.tile} flex items-center justify-center shadow-md mb-4`}>
+                <Icon size={26} className="text-white" strokeWidth={2.25} />
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="font-bold text-slate-900 dark:text-white text-sm">{subject.name}</div>
-                <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  {subject.tracks?.includes("9AF") && subject.tracks?.includes("NS4")
-                    ? "9ème AF + NS4"
-                    : subject.tracks?.[0] === "9AF"
-                    ? "9ème AF"
-                    : "NS4"}
-                </div>
+
+              {/* Subject name */}
+              <div className="font-black text-white text-base mb-1">
+                {subject.name}
               </div>
-              <ChevronRight size={18} className="text-slate-400 flex-shrink-0" />
+
+              {/* Commencer link */}
+              <div className="flex items-center gap-1 text-slate-400 text-xs font-semibold">
+                <span>Commencer</span>
+                <span>›</span>
+              </div>
             </motion.button>
           );
         })}
-      </main>
+      </div>
     </div>
   );
 }
