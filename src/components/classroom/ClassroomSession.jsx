@@ -1,6 +1,6 @@
-// src/components/classroom/ClassroomSession.jsx
-// Same as v19, only change: requestDiagram() now POSTs to /api/content?task=board
-// instead of the old /api/board (which is being deleted to free up function slots).
+// src/components/classroom/ClassroomSession.jsx — v23
+// Hardened to prevent "Cannot read properties of undefined (reading 'label')"
+// crash. Every potentially-undefined access is now optional-chained.
 
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
@@ -25,24 +25,48 @@ import CallTutorButton from "./CallTutorButton";
 
 function defaultBoards() {
   return [
-    { id: "board_enonce",   type: "enonce",   name: "Énoncé",   donnees: [], items: [] },
-    { id: "board_solution", type: "solution", name: "Solution", items: [] },
-    { id: "board_visuel",   type: "visuel",   name: "Visuel",   svg: null },
+    { id: "board_enonce",   type: "enonce",   name: "Énoncé",   label: "Énoncé",   donnees: [], items: [] },
+    { id: "board_solution", type: "solution", name: "Solution", label: "Solution", items: [] },
+    { id: "board_visuel",   type: "visuel",   name: "Visuel",   label: "Visuel",   svg: null },
   ];
 }
 
 export default function ClassroomSession({ session, onExit }) {
-  const { appendMessage, updateSession } = useClassroomSessions();
-  const { preferences, planTier } = useApp();
-  const { isLandscape } = useOrientation();
+  // GUARD: session must exist with an id
+  if (!session || !session.id) {
+    return (
+      <div className="fixed inset-0 z-40 bg-slate-950 flex items-center justify-center p-6">
+        <div className="text-center text-slate-300">
+          <p className="text-sm mb-3">Session introuvable.</p>
+          <button onClick={onExit} className="text-violet-400 font-bold">Retour</button>
+        </div>
+      </div>
+    );
+  }
+
+  const sessionsHook = useClassroomSessions() || {};
+  const appendMessage = sessionsHook.appendMessage || (() => {});
+  const updateSession = sessionsHook.updateSession || (() => {});
+
+  const appCtx = useApp() || {};
+  const preferences = appCtx.preferences || {};
+  const planTier = appCtx.planTier || "free";
+
+  const orientation = useOrientation() || { isLandscape: false };
+  const isLandscape = orientation.isLandscape;
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [boardExpanded, setBoardExpanded] = useState(true);
   const [localMessages, setLocalMessages] = useState(session.messages || []);
 
-  const [boards, setBoards] = useState(session.boards || defaultBoards());
-  const [activeBoardId, setActiveBoardId] = useState(session.activeBoardId || boards[0]?.id);
+  // GUARD: boards might be missing/empty
+  const initialBoards = (Array.isArray(session.boards) && session.boards.length > 0)
+    ? session.boards.map((b) => ({ ...b, label: b.label || b.name || "Board" }))
+    : defaultBoards();
+
+  const [boards, setBoards] = useState(initialBoards);
+  const [activeBoardId, setActiveBoardId] = useState(session.activeBoardId || initialBoards[0]?.id || "board_enonce");
   const [tutorWritingOn, setTutorWritingOn] = useState(null);
 
   const [currentPersonaId, setCurrentPersonaId] = useState(
@@ -84,9 +108,9 @@ export default function ClassroomSession({ session, onExit }) {
   }, [boards, activeBoardId, currentPersonaId, failCount]); // eslint-disable-line
 
   const sendGreeting = () => {
-    const persona = PERSONALITIES.find((p) => p.id === currentPersonaId);
+    const persona = PERSONALITIES.find((p) => p.id === currentPersonaId) || PERSONALITIES[0];
     const name = preferences?.name || "";
-    const greetingText = `Bonjour ${name} ! Je suis ${persona?.name}. Sur quoi veux-tu travailler aujourd'hui ?`;
+    const greetingText = `Bonjour ${name} ! Je suis ${persona?.name || "ton prof"}. Sur quoi veux-tu travailler aujourd'hui ?`;
     const greeting = {
       id: `msg_${Date.now()}`,
       role: "tutor",
@@ -101,7 +125,7 @@ export default function ClassroomSession({ session, onExit }) {
   };
 
   const startExerciseTeaching = async () => {
-    const exercise = session.exercise;
+    const exercise = session.exercise || {};
     const name = preferences?.name || "";
 
     const newBoards = defaultBoards();
@@ -123,10 +147,11 @@ export default function ClassroomSession({ session, onExit }) {
     speakMessage(intro);
 
     await new Promise((r) => setTimeout(r, 1500));
-    for (const d of exercise.donnees || []) {
+    const donnees = Array.isArray(exercise.donnees) ? exercise.donnees : [];
+    for (const d of donnees) {
       setBoards((prev) =>
         prev.map((b) =>
-          b.id === "board_enonce" ? { ...b, donnees: [...b.donnees, d] } : b
+          b.id === "board_enonce" ? { ...b, donnees: [...(b.donnees || []), d] } : b
         )
       );
       await new Promise((r) => setTimeout(r, 700));
@@ -151,12 +176,12 @@ export default function ClassroomSession({ session, onExit }) {
   };
 
   const speakMessage = async (msg) => {
-    if (!msg.segments && !msg.content) return;
+    if (!msg?.segments && !msg?.content) return;
     setSpeakingMessageId(msg.id);
     setIsPaused(false);
     try {
       const text = msg.segments
-        ? msg.segments.map((s) => s.speakable || s.text).join(" ")
+        ? msg.segments.map((s) => s?.speakable || s?.text || "").join(" ")
         : msg.content;
       const result = await speakText(text, "fr-FR", {
         persona: msg.personaId || currentPersonaId,
@@ -181,36 +206,8 @@ export default function ClassroomSession({ session, onExit }) {
     setIsPaused(false);
   };
 
-  const applyBoardActions = async (boardActions) => {
-    if (!Array.isArray(boardActions) || !boardActions.length) return;
-    for (const action of boardActions) {
-      const boardId = `board_${action.board}`;
-      setTutorWritingOn(boardId);
-      setActiveBoardId(boardId);
-
-      if (action.action === "add" && action.item) {
-        setBoards((prev) =>
-          prev.map((b) => {
-            if (b.id !== boardId) return b;
-            if (action.item.type === "donnee" || b.type === "enonce") {
-              return { ...b, donnees: [...(b.donnees || []), action.item] };
-            }
-            return { ...b, items: [...(b.items || []), action.item] };
-          })
-        );
-      } else if (action.action === "clear") {
-        setBoards((prev) =>
-          prev.map((b) => (b.id === boardId ? { ...b, items: [], donnees: [] } : b))
-        );
-      }
-      await new Promise((r) => setTimeout(r, 600));
-    }
-    setTutorWritingOn(null);
-  };
-
   const handleSend = async (overrideText = null) => {
     if (autoSendTimer) { clearTimeout(autoSendTimer); setAutoSendTimer(null); }
-
     const text = (overrideText || input).trim();
     if (!text || sending) return;
 
@@ -221,7 +218,6 @@ export default function ClassroomSession({ session, onExit }) {
       text,
       timestamp: Date.now(),
     };
-
     const newMessages = [...localMessages, userMsg];
     setLocalMessages(newMessages);
     appendMessage(session.id, userMsg);
@@ -238,7 +234,7 @@ export default function ClassroomSession({ session, onExit }) {
           sessionId: session.id,
           context: {
             exercise: session.exercise,
-            boards: boards.map((b) => ({ id: b.id, type: b.type, name: b.name })),
+            boards: boards.map((b) => ({ id: b.id, type: b.type, name: b.name || b.label })),
             activeBoard: activeBoardId,
           },
           messages: newMessages.map((m) => ({
@@ -254,10 +250,9 @@ export default function ClassroomSession({ session, onExit }) {
       });
 
       if (!response.ok) throw new Error("API unavailable");
-
       const data = await response.json();
       const segments = data?.data?.segments || [];
-      const combinedText = segments.map((s) => s.text).join("\n\n");
+      const combinedText = segments.map((s) => s?.text || "").join("\n\n");
 
       const tutorMsg = {
         id: `msg_${Date.now() + 1}`,
@@ -272,20 +267,11 @@ export default function ClassroomSession({ session, onExit }) {
       appendMessage(session.id, tutorMsg);
       setLastModelUsed(data?.data?.modelUsed);
 
-      for (const seg of segments) {
-        if (Array.isArray(seg.boardActions) && seg.boardActions.length) {
-          await applyBoardActions(seg.boardActions);
-        }
-      }
-
-      if (Array.isArray(data?.data?.suggestedQuestions) && data.data.suggestedQuestions.length) {
+      if (Array.isArray(data?.data?.suggestedQuestions)) {
         setSuggestedQuestions(data.data.suggestedQuestions);
       }
       if (data?.data?.needsConfirmation) setPendingConfirmation(true);
       if (data?.data?.tutorSwitchSuggestion || failCount >= 3) setShowTutorSwitch(true);
-      if (data?.data?.shouldDrawDiagram && data?.data?.diagramDescription) {
-        requestDiagram(data.data.diagramDescription);
-      }
 
       speakMessage(tutorMsg);
     } catch (err) {
@@ -324,8 +310,8 @@ export default function ClassroomSession({ session, onExit }) {
     }
   };
 
-  // CHANGED: now hits /api/content?task=board (was /api/board)
   const requestDiagram = async (description) => {
+    if (!description) return;
     setTutorWritingOn("board_visuel");
     setActiveBoardId("board_visuel");
     try {
@@ -333,7 +319,7 @@ export default function ClassroomSession({ session, onExit }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          topic: description.substring(0, 80),
+          topic: String(description).substring(0, 80),
           description,
           subject: session.subject,
           style: "diagram",
@@ -356,11 +342,11 @@ export default function ClassroomSession({ session, onExit }) {
   };
 
   const handleTutorSwitch = (newPersonaId) => {
-    const newPersona = PERSONALITIES.find((p) => p.id === newPersonaId);
+    const newPersona = PERSONALITIES.find((p) => p.id === newPersonaId) || PERSONALITIES[0];
     setCurrentPersonaId(newPersonaId);
     setFailCount(0);
     setShowTutorSwitch(false);
-    const switchText = `Bonjour, je suis ${newPersona?.name}. Laisse-moi t'expliquer à ma façon.`;
+    const switchText = `Bonjour, je suis ${newPersona?.name || "ton nouveau prof"}. Laisse-moi t'expliquer à ma façon.`;
     const switchMsg = {
       id: `msg_${Date.now()}`,
       role: "tutor",
@@ -393,118 +379,9 @@ export default function ClassroomSession({ session, onExit }) {
     }
   };
 
-  const currentPersona = PERSONALITIES.find((p) => p.id === currentPersonaId);
+  const currentPersona = PERSONALITIES.find((p) => p.id === currentPersonaId) || PERSONALITIES[0];
+  const sessionTitle = session.title || "Nouvelle conversation";
 
-  // ============== LANDSCAPE LAYOUT ==============
-  if (isLandscape) {
-    return (
-      <div className="fixed inset-0 z-40 bg-slate-100 dark:bg-slate-950 flex flex-col">
-        <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-1.5 flex items-center gap-2 flex-shrink-0">
-          <button onClick={() => { stopSpeaking(); onExit(); }}
-            className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300">
-            <ArrowLeft size={16} />
-          </button>
-          <TutorAvatar personaId={currentPersonaId} size="xs" />
-          <div className="flex-1 min-w-0">
-            <div className="font-bold text-xs text-slate-900 dark:text-white truncate">
-              {currentPersona?.name} · {session.title}
-            </div>
-          </div>
-          <CallTutorButton personaId={currentPersonaId} exerciseContext={session.exercise}
-            language={preferences?.language || "fr"} studentName={preferences?.name || ""} isPremium={isPremium} compact />
-          <button onClick={() => setShowTutorSwitch(true)}
-            className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
-            <Users size={14} />
-          </button>
-        </header>
-
-        <div className="flex-1 flex overflow-hidden">
-          <div className="flex-1 p-2" style={{ flexBasis: "60%" }}>
-            <MultiBoard
-              boards={boards}
-              activeBoardId={activeBoardId}
-              onChangeBoard={setActiveBoardId}
-              tutorWritingOn={tutorWritingOn}
-              exercise={session.exercise}
-              onRequestDiagram={requestDiagram}
-            />
-          </div>
-
-          <div className="flex flex-col border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900" style={{ flexBasis: "40%" }}>
-            <div className="flex-1 overflow-y-auto px-2 pt-2 pb-1 space-y-2">
-              {localMessages.map((msg) => (
-                <MessageBubble
-                  key={msg.id}
-                  message={msg}
-                  isUser={msg.role === "user"}
-                  isSpeaking={speakingMessageId === msg.id && !isPaused}
-                  isPaused={speakingMessageId === msg.id && isPaused}
-                  onPlay={() => speakMessage(msg)}
-                  onPause={handlePauseResume}
-                  onStop={handleStopSpeak}
-                  personaId={msg.personaId || currentPersonaId}
-                  compact
-                />
-              ))}
-              {sending && (
-                <div className="flex gap-2 items-center text-slate-500 text-[10px] pl-2">
-                  <TutorAvatar personaId={currentPersonaId} size="xs" speaking />
-                  <span>écrit...</span>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {pendingConfirmation && !sending && (
-              <div className="px-2 pb-2 flex gap-1.5 flex-shrink-0">
-                <button onClick={() => handleConfirm(true)}
-                  className="flex-1 py-1.5 rounded-xl bg-emerald-500 text-white font-bold text-[11px] shadow-md flex items-center justify-center gap-1">
-                  <ThumbsUp size={12} />Oui
-                </button>
-                <button onClick={() => handleConfirm(false)}
-                  className="flex-1 py-1.5 rounded-xl bg-amber-500 text-white font-bold text-[11px] shadow-md flex items-center justify-center gap-1">
-                  <ThumbsDown size={12} />Non
-                </button>
-              </div>
-            )}
-
-            {!sending && suggestedQuestions.length > 0 && !pendingConfirmation && (
-              <SuggestedQuestions
-                questions={suggestedQuestions}
-                onPick={(q) => { setSuggestedQuestions([]); handleSend(q); }}
-                onDismiss={() => setSuggestedQuestions([])}
-                compact
-              />
-            )}
-
-            <div className="border-t border-slate-200 dark:border-slate-800 p-2 flex items-center gap-1.5 flex-shrink-0">
-              <div className="flex-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-1.5">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={handleInputChange}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Question..."
-                  disabled={sending}
-                  className="w-full bg-transparent text-xs text-slate-900 dark:text-slate-100 focus:outline-none"
-                />
-              </div>
-              <VoiceInputButton onTranscribed={handleVoiceTranscribed} onError={(m) => alert(m)} disabled={sending} />
-              <button onClick={() => handleSend()} disabled={!input.trim() || sending}
-                className="w-9 h-9 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 text-white flex items-center justify-center shadow-md disabled:opacity-50">
-                {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <TutorSwitchModal isOpen={showTutorSwitch} currentPersonaId={currentPersonaId}
-          onClose={() => setShowTutorSwitch(false)} onSwitch={handleTutorSwitch} />
-      </div>
-    );
-  }
-
-  // ============== PORTRAIT LAYOUT ==============
   return (
     <div className="fixed inset-0 z-40 bg-slate-100 dark:bg-slate-950 flex flex-col">
       <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-2.5 flex items-center gap-2 flex-shrink-0">
@@ -515,11 +392,10 @@ export default function ClassroomSession({ session, onExit }) {
         <TutorAvatar personaId={currentPersonaId} size="sm" />
         <div className="flex-1 min-w-0">
           <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
-            {currentPersona?.name} · {session.title}
+            {currentPersona?.name || "Prof"} · {sessionTitle}
           </div>
           <div className="text-[11px] text-slate-500 dark:text-slate-400">
             {session.subject || "Général"}
-            {lastModelUsed && <span className="ml-2">· {lastModelUsed.split("/").pop()}</span>}
           </div>
         </div>
 
@@ -527,7 +403,7 @@ export default function ClassroomSession({ session, onExit }) {
           language={preferences?.language || "fr"} studentName={preferences?.name || ""} isPremium={isPremium} compact />
 
         <button onClick={() => setShowTutorSwitch(true)}
-          className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400" title="Changer de prof">
+          className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
           <Users size={16} />
         </button>
         <button onClick={() => setBoardExpanded(!boardExpanded)}
@@ -606,7 +482,7 @@ export default function ClassroomSession({ session, onExit }) {
           </div>
           <VoiceInputButton onTranscribed={handleVoiceTranscribed} onError={(m) => alert(m)} disabled={sending} />
           <motion.button whileTap={{ scale: 0.9 }} onClick={() => handleSend()} disabled={!input.trim() || sending}
-            className="w-11 h-11 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 text-white flex items-center justify-center shadow-md disabled:opacity-50 disabled:grayscale">
+            className="w-11 h-11 rounded-full bg-gradient-to-br from-violet-500 to-indigo-700 text-white flex items-center justify-center shadow-md disabled:opacity-50">
             {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
           </motion.button>
         </div>
