@@ -1,7 +1,6 @@
-// src/components/classroom/ClassroomSession.jsx v19
-// LANDSCAPE LAYOUT: when phone is rotated, board goes LEFT (60%) and chat goes RIGHT (40%).
-// Like Twitch/YouTube Lives. Portrait stays as before (board top, chat bottom).
-// Also wires the new onRequestDiagram so Visuel board can generate SVGs on demand.
+// src/components/classroom/ClassroomSession.jsx
+// Same as v19, only change: requestDiagram() now POSTs to /api/content?task=board
+// instead of the old /api/board (which is being deleted to free up function slots).
 
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
@@ -325,12 +324,12 @@ export default function ClassroomSession({ session, onExit }) {
     }
   };
 
-  // Wired to MultiBoard's "Demander un schéma" button + auto-trigger by AI
+  // CHANGED: now hits /api/content?task=board (was /api/board)
   const requestDiagram = async (description) => {
     setTutorWritingOn("board_visuel");
     setActiveBoardId("board_visuel");
     try {
-      const response = await fetch("/api/board", {
+      const response = await fetch("/api/content?task=board", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -375,7 +374,6 @@ export default function ClassroomSession({ session, onExit }) {
     speakMessage(switchMsg);
   };
 
-  // Voice input → fill text box + 7s auto-send
   const handleVoiceTranscribed = (text) => {
     setInput(text);
     if (autoSendTimer) clearTimeout(autoSendTimer);
@@ -397,11 +395,10 @@ export default function ClassroomSession({ session, onExit }) {
 
   const currentPersona = PERSONALITIES.find((p) => p.id === currentPersonaId);
 
-  // ============== LANDSCAPE LAYOUT (Twitch-style) ==============
+  // ============== LANDSCAPE LAYOUT ==============
   if (isLandscape) {
     return (
       <div className="fixed inset-0 z-40 bg-slate-100 dark:bg-slate-950 flex flex-col">
-        {/* Compact header */}
         <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-1.5 flex items-center gap-2 flex-shrink-0">
           <button onClick={() => { stopSpeaking(); onExit(); }}
             className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300">
@@ -421,9 +418,7 @@ export default function ClassroomSession({ session, onExit }) {
           </button>
         </header>
 
-        {/* Split: board left, chat right */}
         <div className="flex-1 flex overflow-hidden">
-          {/* Board — 60% */}
           <div className="flex-1 p-2" style={{ flexBasis: "60%" }}>
             <MultiBoard
               boards={boards}
@@ -435,7 +430,6 @@ export default function ClassroomSession({ session, onExit }) {
             />
           </div>
 
-          {/* Chat — 40% */}
           <div className="flex flex-col border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900" style={{ flexBasis: "40%" }}>
             <div className="flex-1 overflow-y-auto px-2 pt-2 pb-1 space-y-2">
               {localMessages.map((msg) => (
@@ -510,7 +504,7 @@ export default function ClassroomSession({ session, onExit }) {
     );
   }
 
-  // ============== PORTRAIT LAYOUT (default) ==============
+  // ============== PORTRAIT LAYOUT ==============
   return (
     <div className="fixed inset-0 z-40 bg-slate-100 dark:bg-slate-950 flex flex-col">
       <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-2.5 flex items-center gap-2 flex-shrink-0">
