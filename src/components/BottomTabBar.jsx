@@ -1,19 +1,21 @@
-// src/components/BottomTabBar.jsx v20
-// Navigation: Accueil · Cours · Scan (FAB) · Réviser · Classe
+// src/components/BottomTabBar.jsx — v22-fix
+// Correct order per user spec:
+//   Accueil · Réviser · Scan (FAB) · Classe · Cours
+// Classe icon = MessageSquare (cleaner, what v18 had)
 
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Home as HomeIcon, BookOpen, GraduationCap,
-  MessageCircle, Scan,
+  Home as HomeIcon, GraduationCap, MessageSquare,
+  BookOpen, Scan,
 } from "lucide-react";
 
 const TABS = [
-  { id: "home", path: "/", label: "Accueil", icon: HomeIcon },
-  { id: "cours", path: "/cours", label: "Cours", icon: BookOpen },
-  { id: "scan", path: "/scan", label: "", icon: Scan, isFAB: true },
+  { id: "home",    path: "/",        label: "Accueil", icon: HomeIcon },
   { id: "reviser", path: "/reviser", label: "Réviser", icon: GraduationCap },
-  { id: "classe", path: "/classe", label: "Classe", icon: MessageCircle },
+  { id: "scan",    path: "/scan",    label: "",        icon: Scan, isFAB: true },
+  { id: "classe",  path: "/classe",  label: "Classe",  icon: MessageSquare },
+  { id: "cours",   path: "/cours",   label: "Cours",   icon: BookOpen },
 ];
 
 export default function BottomTabBar() {
