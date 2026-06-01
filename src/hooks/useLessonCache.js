@@ -1,24 +1,18 @@
-// src/hooks/useLessonCache.js v21
-// Caches AI-generated lesson content by eventId.
-// First visit: fetches from /api/lesson and stores locally.
-// Subsequent visits: instant load from cache.
-// Cache version tag: bump if lesson schema changes.
+// src/hooks/useLessonCache.js
+// Hits the merged /api/content?task=lesson endpoint (was /api/lesson).
 
 const STORAGE_KEY = "laureat.lessonCache.v1";
-const MAX_ENTRIES = 80; // keep storage small
+const MAX_ENTRIES = 80;
 
 function readCache() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
+  } catch { return {}; }
 }
 
 function writeCache(obj) {
   try {
-    // If too big, drop oldest
     const entries = Object.entries(obj).sort((a, b) => (b[1].cachedAt || 0) - (a[1].cachedAt || 0));
     const trimmed = Object.fromEntries(entries.slice(0, MAX_ENTRIES));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
@@ -43,11 +37,11 @@ export function clearLessonCache() {
 }
 
 export async function fetchLesson({ subject, chapter, event, track, language }) {
-  // Check cache first
   const cached = getCachedLesson(event.id);
   if (cached) return { lesson: cached, fromCache: true };
 
-  const response = await fetch("/api/lesson", {
+  // Now hits the merged content endpoint
+  const response = await fetch("/api/content?task=lesson", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ subject, chapter, event, track, language }),
