@@ -1,11 +1,24 @@
-// api/share.js
+// api/share.js — v24
 // POST: create shareable session (returns shareId)
 // GET: retrieve shared session by shareId
+//
+// FIX (Bug 3): @vercel/kv is imported LAZILY. A top-level
+// `import { kv } from "@vercel/kv"` crashes the whole serverless function on
+// cold start if the package isn't installed, which made every share fail
+// silently. Now we try to load it at request time and fall back to an
+// in-memory store if it's unavailable.
 
-import { kv } from "@vercel/kv";
-
-const hasKV = Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 const memStore = new Map();
+
+async function getKV() {
+  if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) return null;
+  try {
+    const mod = await import("@vercel/kv");
+    return mod.kv || null;
+  } catch {
+    return null;
+  }
+}
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -22,7 +35,8 @@ export default async function handler(req, res) {
       const shareId = `${type}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
       const data = { type, payload, createdAt: Date.now(), views: 0 };
 
-      if (hasKV) {
+      const kv = await getKV();
+      if (kv) {
         await kv.set(`share:${shareId}`, data, { ex: 60 * 60 * 24 * 30 }); // 30 days
         await kv.incr("metrics:total_shares");
       } else {
@@ -41,7 +55,8 @@ export default async function handler(req, res) {
 
     try {
       let data;
-      if (hasKV) {
+      const kv = await getKV();
+      if (kv) {
         data = await kv.get(`share:${shareId}`);
         if (data) {
           await kv.incr(`share:${shareId}:views`);
