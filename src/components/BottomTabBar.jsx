@@ -1,6 +1,9 @@
-// src/components/BottomTabBar.jsx — v23
-// Matches your v18 screenshot exactly:
-//  - 5 slots: Accueil · Réviser · SCAN (FAB with label inside) · Classe · Cours
+// src/components/BottomTabBar.jsx — v24
+// Names and order UNCHANGED from v23 (Dawsen's choice):
+//   Accueil · Réviser · SCAN (FAB) · Classe · Cours
+// ONLY the icons were swapped to match the v18 reference screenshot:
+//   Accueil -> house, Réviser -> open book, SCAN -> scan-corners FAB,
+//   Classe -> graduation cap, Cours -> bar-chart.
 //  - SCAN button has "SCAN" text below the icon, inside the FAB
 //  - Other tabs: icon top, label below (small)
 //  - Active tab: violet color
@@ -9,16 +12,16 @@
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Home as HomeIcon, GraduationCap, MessageSquare,
-  BookOpen, Scan,
+  Home as HomeIcon, BookOpen, GraduationCap,
+  BarChart3, ScanLine,
 } from "lucide-react";
 
 const TABS = [
   { id: "home",    path: "/",        label: "Accueil", icon: HomeIcon },
-  { id: "reviser", path: "/reviser", label: "Réviser", icon: GraduationCap },
-  { id: "scan",    path: "/scan",    label: "SCAN",    icon: Scan, isFAB: true },
-  { id: "classe",  path: "/classe",  label: "Classe",  icon: MessageSquare },
-  { id: "cours",   path: "/cours",   label: "Cours",   icon: BookOpen },
+  { id: "reviser", path: "/reviser", label: "Réviser", icon: BookOpen },
+  { id: "scan",    path: "/scan",    label: "SCAN",    icon: ScanLine, isFAB: true },
+  { id: "classe",  path: "/classe",  label: "Classe",  icon: GraduationCap },
+  { id: "cours",   path: "/cours",   label: "Cours",   icon: BarChart3 },
 ];
 
 export default function BottomTabBar() {
