@@ -1,4 +1,4 @@
-// src/pages/ReviserQuiz.jsx v21
+// src/pages/ReviserQuiz.jsx v24
 // Launches a weekly quiz. Generates questions on first visit, caches them.
 // Wraps QuizPlayer.
 
@@ -44,7 +44,7 @@ export default function ReviserQuiz() {
     // Otherwise generate
     (async () => {
       try {
-        const response = await fetch("/api/lesson", {
+        const response = await fetch("/api/content?task=lesson", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
