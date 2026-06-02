@@ -88,8 +88,13 @@ export default function MessageBubble({
   );
 }
 
+const FALLBACK_TYPE_INFO = { label: "Explication", icon: "💬" };
+
 function SegmentBubble({ segment }) {
-  const typeInfo = MESSAGE_TYPES[segment.type] || MESSAGE_TYPES.explain;
+  const seg = segment || {};
+  const typeInfo =
+    (MESSAGE_TYPES && (MESSAGE_TYPES[seg.type] || MESSAGE_TYPES.explain)) ||
+    FALLBACK_TYPE_INFO;
 
   const bubbleStyles = {
     thinking: "bg-slate-100 dark:bg-slate-800/70 italic text-slate-700 dark:text-slate-300 border-l-2 border-slate-400",
@@ -100,11 +105,11 @@ function SegmentBubble({ segment }) {
   };
 
   return (
-    <div className={`relative rounded-2xl rounded-bl-sm px-4 py-2.5 ${bubbleStyles[segment.type] || bubbleStyles.explain}`}>
+    <div className={`relative rounded-2xl rounded-bl-sm px-4 py-2.5 ${bubbleStyles[seg.type] || bubbleStyles.explain}`}>
       <div className="absolute -top-1.5 -left-1.5 w-6 h-6 rounded-full bg-white dark:bg-slate-900 flex items-center justify-center text-xs shadow-md">
         <span title={typeInfo.label}>{typeInfo.icon}</span>
       </div>
-      <p className="text-sm leading-relaxed whitespace-pre-wrap pl-2">{segment.text}</p>
+      <p className="text-sm leading-relaxed whitespace-pre-wrap pl-2">{seg.text}</p>
     </div>
   );
 }
