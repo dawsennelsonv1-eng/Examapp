@@ -8,17 +8,19 @@ import { Share2, Copy, Check, Loader2 } from "lucide-react";
 export default function ShareButton({ type, payload, label = "Partager", compact = false }) {
   const [sharing, setSharing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const handleShare = async () => {
     setSharing(true);
+    setFailed(false);
     try {
       const response = await fetch("/api/share", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type, payload }),
       });
-      const data = await response.json();
-      if (!data?.data?.shareId) throw new Error("Failed");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.data?.shareId) throw new Error("Failed");
 
       const url = `${window.location.origin}/share/${data.data.shareId}`;
       const text = type === "scan_result"
@@ -38,6 +40,8 @@ export default function ShareButton({ type, payload, label = "Partager", compact
       }
     } catch (err) {
       console.error("Share failed:", err);
+      setFailed(true);
+      setTimeout(() => setFailed(false), 2500);
     } finally {
       setSharing(false);
     }
@@ -79,7 +83,7 @@ export default function ShareButton({ type, payload, label = "Partager", compact
       {sharing ? <Loader2 size={16} className="animate-spin" /> :
        copied ? <Check size={16} /> :
        <Share2 size={16} />}
-      {sharing ? "Création..." : copied ? "Copié !" : label}
+      {sharing ? "Création..." : copied ? "Copié !" : failed ? "Échec, réessaie" : label}
     </motion.button>
   );
 }
