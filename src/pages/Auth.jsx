@@ -9,7 +9,7 @@ import { Mail, Lock, User, ArrowRight, Loader2, Sparkles, GraduationCap, CheckCi
 import { useAuth } from "../contexts/AuthContext";
 
 export default function Auth() {
-  const { signUp, signIn, signInWithMagicLink } = useAuth();
+  const { signUp, signIn, signInWithMagicLink, signInWithGoogle } = useAuth();
   const [mode, setMode] = useState("signup"); // signup | login
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -48,6 +48,14 @@ export default function Auth() {
     else setMagicSent(true);
   };
 
+  const handleGoogle = async () => {
+    setError(null);
+    setBusy(true);
+    const { error: err } = await signInWithGoogle();
+    // On success the browser redirects to Google, so we usually don't reach here.
+    if (err) { setBusy(false); setError(translateAuthError(err.message)); }
+  };
+
   return (
     <div className="min-h-screen relative overflow-hidden bg-slate-950 flex flex-col">
       {/* Atmospheric background */}
@@ -78,6 +86,22 @@ export default function Auth() {
         initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.1 }}
         className="mt-auto rounded-t-[2rem] bg-slate-900/80 backdrop-blur-xl ring-1 ring-white/10 px-6 pt-6 pb-10 shadow-2xl"
       >
+        {/* Google sign-in — primary, shown first */}
+        <button
+          onClick={handleGoogle}
+          disabled={busy}
+          className="w-full flex items-center justify-center gap-3 py-3.5 rounded-2xl bg-white text-slate-800 font-bold text-sm shadow-md disabled:opacity-60 mb-4"
+        >
+          <GoogleG />
+          Continuer avec Google
+        </button>
+
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex-1 h-px bg-white/10" />
+          <span className="text-[11px] text-white/40 font-medium">ou avec un email</span>
+          <div className="flex-1 h-px bg-white/10" />
+        </div>
+
         {/* Tabs */}
         <div className="flex p-1 rounded-2xl bg-slate-800/70 mb-6">
           {[["signup", "Créer un compte"], ["login", "Se connecter"]].map(([key, label]) => (
@@ -154,6 +178,17 @@ function Field({ icon: Icon, placeholder, type = "text", value, onChange, onEnte
         className="flex-1 bg-transparent text-white placeholder:text-white/35 text-sm focus:outline-none"
       />
     </div>
+  );
+}
+
+function GoogleG() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.62z"/>
+      <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/>
+      <path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/>
+      <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+    </svg>
   );
 }
 
