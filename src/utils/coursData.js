@@ -159,3 +159,17 @@ export function getChapter(subjectId, chapterId) {
 export function getEvent(subjectId, chapterId, eventId) {
   return getChapter(subjectId, chapterId)?.events.find((e) => e.id === eventId);
 }
+
+// Count all events (lessons) available for a given track. Used as the progress
+// denominator ("X / total leçons"). Counts events in subjects that include the
+// track, across all their chapters.
+export function countEventsForTrack(track) {
+  if (!track) return 0;
+  let total = 0;
+  for (const subject of SUBJECTS) {
+    if (subject.tracks && !subject.tracks.includes(track)) continue;
+    const chapters = CHAPTERS[subject.id] || [];
+    for (const ch of chapters) total += (ch.events?.length || 0);
+  }
+  return total;
+}
