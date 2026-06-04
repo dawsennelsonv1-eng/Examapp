@@ -15,6 +15,7 @@ import {
   CheckCircle2, XCircle, ChevronRight, RotateCcw, X,
   Heart, Sparkles, MessageCircle, Flame, Trophy,
 } from "lucide-react";
+import { logEvent } from "../../services/analytics";
 
 export default function QuizPlayer({
   title = "Quiz",
@@ -51,6 +52,11 @@ export default function QuizPlayer({
     setMatchPicks({});
     setMatchSelectedLeft(null);
   }, [index]);
+
+  useEffect(() => {
+    logEvent("quiz_start", { title, total, ref_year: reference?.year || null });
+    // eslint-disable-next-line
+  }, []);
 
   if (!current && !done) {
     return (
@@ -116,11 +122,13 @@ export default function QuizPlayer({
   const nextQuestion = () => {
     if (hearts <= 0 && feedback === "incorrect") {
       setDone(true);
+      logEvent("quiz_complete", { title, score: finalScore, correct: correctCount, total, failed: true, ref_year: reference?.year || null });
       onComplete?.({ score: finalScore, correctCount, total, answers, failed: true });
       return;
     }
     if (index + 1 >= total) {
       setDone(true);
+      logEvent("quiz_complete", { title, score: finalScore, correct: correctCount, total, failed: false, ref_year: reference?.year || null });
       onComplete?.({ score: finalScore, correctCount, total, answers });
     } else {
       setIndex(index + 1);
