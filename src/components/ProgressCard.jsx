@@ -6,13 +6,20 @@
 import { motion } from "framer-motion";
 import { BookOpenCheck, Target } from "lucide-react";
 import { useProgress } from "../hooks/useProgress";
+import { useApp } from "../contexts/AppContext";
+import { countEventsForTrack } from "../utils/coursData";
 
 export default function ProgressCard({ totalEvents = null }) {
   const { completedCount, quizAverage, quizCount } = useProgress();
+  const { track } = useApp();
+
+  // If a denominator isn't passed, compute it from the track's lesson count.
+  const denom = totalEvents != null ? totalEvents : countEventsForTrack(track);
 
   if (completedCount === 0 && quizCount === 0) return null; // nothing yet — don't clutter
 
-  const pct = totalEvents ? Math.min(100, Math.round((completedCount / totalEvents) * 100)) : null;
+  const pct = denom ? Math.min(100, Math.round((completedCount / denom) * 100)) : null;
+  const totalLabel = denom || null;
 
   return (
     <motion.div
@@ -30,7 +37,7 @@ export default function ProgressCard({ totalEvents = null }) {
           </div>
           <div>
             <div className="text-lg font-black text-slate-900 dark:text-white leading-none">
-              {completedCount}{totalEvents ? <span className="text-sm text-slate-400">/{totalEvents}</span> : null}
+              {completedCount}{totalLabel ? <span className="text-sm text-slate-400">/{totalLabel}</span> : null}
             </div>
             <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">leçons finies</div>
           </div>
