@@ -23,6 +23,7 @@ export default function QuizPlayer({
   onClose,
   onAskTutor,
   contextLabel = "",
+  reference = null, // { year, exercise, track } — lets the student look up the source
 }) {
   const total = questions.length;
   const [index, setIndex] = useState(0);
@@ -30,6 +31,9 @@ export default function QuizPlayer({
   const [feedback, setFeedback] = useState(null);
   const [selectedOption, setSelectedOption] = useState(null);
   const [textAnswer, setTextAnswer] = useState("");
+  const [flipped, setFlipped] = useState(false);          // flashcards
+  const [matchPicks, setMatchPicks] = useState({});       // matching: leftId -> rightId
+  const [matchSelectedLeft, setMatchSelectedLeft] = useState(null);
   const [hearts, setHearts] = useState(3);
   const [done, setDone] = useState(false);
   const [streak, setStreak] = useState(0);
@@ -43,6 +47,9 @@ export default function QuizPlayer({
     setTextAnswer("");
     setFeedback(null);
     setSelectedOption(null);
+    setFlipped(false);
+    setMatchPicks({});
+    setMatchSelectedLeft(null);
   }, [index]);
 
   if (!current && !done) {
@@ -81,6 +88,29 @@ export default function QuizPlayer({
     const expected = String(current.correctAnswer || "").trim().toLowerCase();
     const correct = userAns === expected || userAns.includes(expected) || expected.includes(userAns);
     submitAnswer(correct, textAnswer);
+  };
+
+  // Flashcards: flip to reveal, student self-grades (knew it / didn't).
+  const handleFlashcardGrade = (knewIt) => {
+    if (feedback) return;
+    submitAnswer(knewIt, knewIt ? "knew" : "missed");
+  };
+
+  // Matching: pick a left item, then a right item; auto-submit when all paired.
+  const handleMatchLeft = (leftId) => {
+    if (feedback) return;
+    setMatchSelectedLeft(leftId);
+  };
+  const handleMatchRight = (rightId) => {
+    if (feedback || matchSelectedLeft == null) return;
+    const next = { ...matchPicks, [matchSelectedLeft]: rightId };
+    setMatchPicks(next);
+    setMatchSelectedLeft(null);
+    const pairs = current.pairs || [];
+    if (Object.keys(next).length >= pairs.length) {
+      const allCorrect = pairs.every((p) => next[p.id] === p.id);
+      submitAnswer(allCorrect, next);
+    }
   };
 
   const nextQuestion = () => {
@@ -218,6 +248,11 @@ export default function QuizPlayer({
             {contextLabel}
           </div>
         )}
+        {reference?.year && (
+          <div className="text-[10px] text-slate-500 px-1 mt-0.5">
+            Réf : Examen {reference.year}{reference.exercise ? ` · ${reference.exercise}` : ""}{reference.track ? ` · ${reference.track}` : ""}
+          </div>
+        )}
       </header>
 
       {/* Question content */}
@@ -231,14 +266,29 @@ export default function QuizPlayer({
             transition={{ duration: 0.3, ease: "easeOut" }}
           >
             <div className="text-[10px] uppercase tracking-widest font-black text-violet-400 mb-3">
-              {current.type === "fill_blank" ? "Complète la phrase" : "Choisis la bonne réponse"}
+              {current.type === "fill_blank" ? "Complète la phrase"
+                : current.type === "flashcards" ? "Carte mémoire"
+                : current.type === "matching" ? "Associe les paires"
+                : current.type === "schema" ? "Observe le schéma"
+                : "Choisis la bonne réponse"}
             </div>
             <h3 className="text-2xl font-black text-white leading-tight mb-7">
               {current.question}
             </h3>
 
-            {/* Multiple choice */}
-            {current.type === "multiple_choice" && (
+            {/* Optional schema image/SVG shown above the answer area */}
+            {(current.type === "schema" || current.schemaSvg || current.imageUrl) && (
+              <div className="mb-5 rounded-2xl bg-white p-3 flex items-center justify-center overflow-hidden">
+                {current.schemaSvg ? (
+                  <div className="w-full flex items-center justify-center" dangerouslySetInnerHTML={{ __html: current.schemaSvg }} />
+                ) : current.imageUrl ? (
+                  <img src={current.imageUrl} alt="schéma" className="max-h-56 object-contain" />
+                ) : null}
+              </div>
+            )}
+
+            {/* Multiple choice (also used by schema questions that have options) */}
+            {(current.type === "multiple_choice" || current.type === "schema") && current.options && (
               <div className="space-y-2.5">
                 {current.options?.map((opt, oi) => {
                   const isCorrectOpt = oi === current.correctIndex;
@@ -303,6 +353,77 @@ export default function QuizPlayer({
                     VALIDER
                   </motion.button>
                 )}
+              </div>
+            )}
+
+            {/* Flashcards — tap to flip, then self-grade */}
+            {current.type === "flashcards" && (
+              <div className="space-y-4">
+                <motion.button
+                  onClick={() => !feedback && setFlipped((f) => !f)}
+                  whileTap={{ scale: 0.98 }}
+                  className="w-full min-h-[180px] rounded-3xl bg-gradient-to-br from-slate-900 to-slate-800 ring-1 ring-slate-700 flex items-center justify-center p-6 text-center"
+                >
+                  <div>
+                    <div className="text-[10px] uppercase tracking-widest font-black text-slate-500 mb-2">
+                      {flipped ? "Réponse" : "Question — tape pour retourner"}
+                    </div>
+                    <div className="text-xl font-bold text-white leading-snug">
+                      {flipped ? (current.correctAnswer || current.back || "—") : (current.front || current.question)}
+                    </div>
+                  </div>
+                </motion.button>
+
+                {flipped && !feedback && (
+                  <div className="flex gap-2">
+                    <motion.button whileTap={{ scale: 0.97 }} onClick={() => handleFlashcardGrade(false)}
+                      className="flex-1 py-3.5 rounded-2xl bg-slate-800 text-rose-300 font-black text-sm">
+                      Je savais pas
+                    </motion.button>
+                    <motion.button whileTap={{ scale: 0.97 }} onClick={() => handleFlashcardGrade(true)}
+                      className="flex-1 py-3.5 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white font-black text-sm">
+                      Je savais !
+                    </motion.button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Matching — pick a left item, then its pair on the right */}
+            {current.type === "matching" && Array.isArray(current.pairs) && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  {current.pairs.map((p) => {
+                    const picked = matchPicks[p.id] != null;
+                    const active = matchSelectedLeft === p.id;
+                    return (
+                      <button key={`L-${p.id}`} disabled={feedback !== null || picked}
+                        onClick={() => handleMatchLeft(p.id)}
+                        className={`w-full p-3 rounded-xl text-sm font-bold text-left ring-2 transition-colors ${
+                          active ? "bg-violet-500/20 ring-violet-500 text-white"
+                          : picked ? "bg-slate-800/50 ring-slate-800 text-slate-500"
+                          : "bg-slate-900 ring-slate-800 text-slate-200"
+                        }`}>
+                        {p.left}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="space-y-2">
+                  {[...current.pairs].sort((a, b) => (a.right > b.right ? 1 : -1)).map((p) => {
+                    const usedBy = Object.entries(matchPicks).find(([, r]) => r === p.id);
+                    return (
+                      <button key={`R-${p.id}`} disabled={feedback !== null || Boolean(usedBy)}
+                        onClick={() => handleMatchRight(p.id)}
+                        className={`w-full p-3 rounded-xl text-sm font-bold text-left ring-2 transition-colors ${
+                          usedBy ? "bg-slate-800/50 ring-slate-800 text-slate-500"
+                          : "bg-slate-900 ring-slate-800 text-slate-200"
+                        }`}>
+                        {p.right}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </motion.div>
