@@ -1,27 +1,29 @@
-// src/lib/supabase.js v22-fix
-// STUB version — does not import @supabase/supabase-js so the build succeeds.
+// src/lib/supabase.js — v24
+// Real client. Reads config from Vite env vars (set these in Vercel):
+//   VITE_SUPABASE_URL       = https://<your-ref>.supabase.co
+//   VITE_SUPABASE_ANON_KEY  = <your anon / publishable key>   (NEVER the service_role key)
 //
-// When you're ready to wire Supabase:
-//   1. Run in your terminal:  npm install @supabase/supabase-js
-//   2. Add to Vercel env vars:
-//        VITE_SUPABASE_URL = https://<your-ref>.supabase.co
-//        VITE_SUPABASE_ANON_KEY = <your anon key>
-//   3. Replace this file with the commented-out real version below
-//
-// Until then, `supabase` is null and all consumers handle that gracefully.
+// The anon key is safe in client code — it's protected by Row Level Security.
+// If Supabase isn't configured, `supabase` is null and every consumer degrades
+// gracefully to localStorage-only behavior (the app still works offline / pre-auth).
 
-export const supabase = null;
-
-/*
-// ============= REAL VERSION — paste this in once Supabase is set up =============
 import { createClient } from "@supabase/supabase-js";
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-export const supabase = (url && key) ? createClient(url, key) : null;
+export const supabase = url && key
+  ? createClient(url, key, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true, // needed for magic-link redirects
+      },
+    })
+  : null;
+
+export const isSupabaseConfigured = Boolean(supabase);
 
 if (!supabase && typeof window !== "undefined") {
-  console.warn("[supabase] Not configured. Set VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY.");
+  console.warn("[supabase] Not configured — running in local-only mode. Set VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY in Vercel.");
 }
-*/
