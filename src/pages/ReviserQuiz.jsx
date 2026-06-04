@@ -99,6 +99,7 @@ export default function ReviserQuiz() {
     <QuizPlayer
       title={quizMeta?.title}
       contextLabel={`Quiz hebdomadaire`}
+      reference={quizMeta?.referencedExam || null}
       questions={questions}
       onClose={() => navigate("/reviser")}
       onComplete={() => {}}
