@@ -66,10 +66,6 @@ export default function Home() {
           <span className="text-xs font-bold bg-white/15 backdrop-blur-sm px-3 py-1.5 rounded-full ring-1 ring-white/20">
             {examInfo.label}
           </span>
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/20 backdrop-blur-sm ring-1 ring-amber-400/30">
-            <Flame size={14} className="text-amber-300" fill="currentColor" />
-            <span className="text-xs font-bold text-amber-100">3 jours</span>
-          </div>
         </div>
 
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="relative">

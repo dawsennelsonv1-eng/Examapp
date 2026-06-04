@@ -225,7 +225,6 @@ export default function CoursEvent() {
                 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                 whileTap={{ scale: 0.97 }}
                 onClick={() => setQuizOpen(true)}
-                animate-on-mount
                 className="w-full mt-2 p-5 rounded-3xl bg-gradient-to-br from-violet-500 via-purple-600 to-indigo-700 text-white font-bold shadow-xl flex items-center gap-3"
               >
                 <div className="w-12 h-12 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center">
