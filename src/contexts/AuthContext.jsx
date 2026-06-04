@@ -99,6 +99,18 @@ export function AuthProvider({ children }) {
     return { data, error };
   }, []);
 
+  const signInWithGoogle = useCallback(async () => {
+    if (!isSupabaseConfigured) return { error: { message: "Auth non configuré." } };
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin,   // back to the app after Google
+        queryParams: { access_type: "offline", prompt: "select_account" },
+      },
+    });
+    return { data, error };
+  }, []);
+
   const signOut = useCallback(async () => {
     if (!isSupabaseConfigured) return;
     await supabase.auth.signOut();
@@ -127,8 +139,8 @@ export function AuthProvider({ children }) {
     user: session?.user || null,
     profile,
     isAuthenticated: Boolean(session?.user),
-    signUp, signIn, signInWithMagicLink, signOut, updateProfile,
-  }), [loading, session, profile, signUp, signIn, signInWithMagicLink, signOut, updateProfile]);
+    signUp, signIn, signInWithMagicLink, signInWithGoogle, signOut, updateProfile,
+  }), [loading, session, profile, signUp, signIn, signInWithMagicLink, signInWithGoogle, signOut, updateProfile]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
