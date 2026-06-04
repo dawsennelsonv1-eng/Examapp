@@ -31,6 +31,7 @@ import ShareButton from "../components/shared/ShareButton";
 import { useApp } from "../contexts/AppContext";
 import { useScanHistory } from "../hooks/useScanHistory";
 import { exportSolutionToPDF } from "../services/pdfService";
+import { logEvent } from "../services/analytics";
 
 const API = "/api/solve";
 
@@ -75,6 +76,8 @@ export default function ScanSolve() {
     setSolution(null);
     setStep("enonce");        // optimistic: we're about to show the énoncé
     setSolving(true);
+    const t0 = Date.now();
+    logEvent("scan_start", { mode, input_type: imageData ? "image" : "text" });
     try {
       const res = await fetch(API, {
         method: "POST",
@@ -90,12 +93,14 @@ export default function ScanSolve() {
         const body = await res.json();
         setError(body.message || "L'image n'est pas assez claire.");
         setStep("error"); setSolving(false);
+        logEvent("scan_failed", { mode, stage: "extract", reason: "ocr_failed" });
         return;
       }
       if (!res.ok) throw new Error(`Server ${res.status}`);
 
       const { data } = await res.json();
       setExtracted(data);
+      logEvent("scan_extracted", { mode, subject: data?.subject, subject_family: data?.subjectFamily, count: data?.count, extract_ms: Date.now() - t0 });
 
       if (data.multipleExercises) {
         setSolving(false);
@@ -117,6 +122,7 @@ export default function ScanSolve() {
   // ---- Phase 2: SOLVE (background) ----
   const runSolve = async (extractPayload, index, mode) => {
     setSolving(true);
+    const t0 = Date.now();
     try {
       const res = await fetch(API, {
         method: "POST",
@@ -139,6 +145,14 @@ export default function ScanSolve() {
       setStep("solution");
       setSolving(false);
 
+      logEvent("scan_complete", {
+        mode,
+        subject: extractPayload.subject,
+        subject_family: extractPayload.subjectFamily,
+        model_used: data?.modelUsed || null,
+        solve_ms: Date.now() - t0,
+      });
+
       if (mode === "solve") {
         addScan({
           enonce: data.enonce,
@@ -160,6 +174,7 @@ export default function ScanSolve() {
       console.error("Solve error:", err);
       setError("Le prof n'a pas pu résoudre. Réessaie.");
       setStep("error"); setSolving(false);
+      logEvent("scan_failed", { mode, stage: "solve", reason: String(err?.message || "error") });
     }
   };
 
@@ -201,6 +216,7 @@ export default function ScanSolve() {
       timestamp: Date.now(),
     };
     sessionStorage.setItem("laureat.pendingExercise", JSON.stringify(exerciseData));
+    logEvent("scan_to_tutor", { subject: extracted?.subject });
     navigate("/classe?new=1");
   };
 
