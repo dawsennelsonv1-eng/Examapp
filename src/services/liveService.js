@@ -25,6 +25,7 @@ export class GeminiLiveSession {
     this.isPlaying = false;
     this.playbackContext = null;
     this.videoCaptureInterval = null;
+    this._captureVideo = null;
     this.model = null;
     this.voiceName = null;
     this.systemPrompt = null;
@@ -188,28 +189,78 @@ export class GeminiLiveSession {
   }
 
   async startCamera(facingMode = "environment") {
+    // Robust acquisition: some Android devices fail to start the BACK camera
+    // while the mic capture pipeline is live ("Could not start video source")
+    // and/or return a track that never produces frames (black). We try a few
+    // constraint sets, then wait for the track to actually deliver a frame
+    // before returning, so the UI never binds to a dead/black stream.
+    const attempts = [
+      { video: { facingMode: { exact: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+      { video: { facingMode, width: { ideal: 640 }, height: { ideal: 480 } } },
+      { video: true }, // last resort: any camera
+    ];
+
+    let stream = null;
+    let lastErr = null;
+    for (const constraints of attempts) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (stream) break;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (!stream) {
+      this.onError(lastErr || new Error("Impossible de démarrer la caméra"));
+      return null;
+    }
+
+    // Confirm the track is live and producing frames before we hand it back.
     try {
-      this.videoStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode, width: { ideal: 640 }, height: { ideal: 480 } },
-      });
+      this.videoStream = stream;
       const video = document.createElement("video");
-      video.srcObject = this.videoStream;
+      video.srcObject = stream;
       video.muted = true;
-      await video.play();
+      video.playsInline = true;
+      this._captureVideo = video;
+
+      await new Promise((resolve) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+        video.onloadedmetadata = () => video.play().then(finish).catch(finish);
+        video.onloadeddata = finish;
+        // Safety: don't hang forever if events don't fire.
+        setTimeout(finish, 1500);
+      });
+
+      // If the track died immediately, treat as failure (black-screen guard).
+      const track = stream.getVideoTracks()[0];
+      if (!track || track.readyState === "ended") {
+        this.stopCamera();
+        this.onError(new Error("La source vidéo n'a pas pu démarrer"));
+        return null;
+      }
+
       this.videoCaptureInterval = setInterval(() => {
-        if (!this.isConnected) return;
+        if (!this.isConnected || !this._captureVideo) return;
+        const v = this._captureVideo;
+        if (!v.videoWidth) return; // no frame yet — skip
         const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 480;
-        canvas.getContext("2d").drawImage(video, 0, 0);
+        canvas.width = v.videoWidth;
+        canvas.height = v.videoHeight;
+        canvas.getContext("2d").drawImage(v, 0, 0);
         const b64 = canvas.toDataURL("image/jpeg", 0.6).split(",")[1];
-        this.ws.send(JSON.stringify({
-          realtimeInput: { mediaChunks: [{ mimeType: "image/jpeg", data: b64 }] },
-        }));
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({
+            realtimeInput: { mediaChunks: [{ mimeType: "image/jpeg", data: b64 }] },
+          }));
+        }
       }, 2000);
+
       this.onStatus("camera_on");
       return this.videoStream;
     } catch (err) {
+      this.stopCamera();
       this.onError(err);
       return null;
     }
@@ -217,6 +268,7 @@ export class GeminiLiveSession {
 
   stopCamera() {
     if (this.videoCaptureInterval) { clearInterval(this.videoCaptureInterval); this.videoCaptureInterval = null; }
+    if (this._captureVideo) { try { this._captureVideo.srcObject = null; } catch {} this._captureVideo = null; }
     if (this.videoStream) { this.videoStream.getTracks().forEach((t) => t.stop()); this.videoStream = null; }
     this.onStatus("camera_off");
   }
