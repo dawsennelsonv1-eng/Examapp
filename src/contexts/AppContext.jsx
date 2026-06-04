@@ -42,6 +42,18 @@ export function AppProvider({ children }) {
   // Default dark
   const [theme, setThemeState] = useState(() => getInitial(STORAGE_KEYS.THEME, "dark"));
 
+  // Explicit onboarding flag (Onboarding.jsx sets this). Kept alongside the
+  // derived check below for robustness.
+  const [onboardingFlag, setOnboardingFlag] = useState(() => getInitial("laureat.onboarding", null));
+
+  const setOnboardingComplete = useCallback((val = true) => {
+    setOnboardingFlag(val ? "1" : null);
+    try {
+      if (val) localStorage.setItem("laureat.onboarding", "1");
+      else localStorage.removeItem("laureat.onboarding");
+    } catch {}
+  }, []);
+
   useEffect(() => {
     const root = document.documentElement;
     if (theme === "dark") root.classList.add("dark");
@@ -79,19 +91,21 @@ export function AppProvider({ children }) {
     []
   );
 
-  // Has the user completed onboarding fully? (both track AND preferences)
-  const onboardingComplete = Boolean(track && preferences?.language && preferences?.personality);
+  // Has the user completed onboarding fully? (track AND preferences, or explicit flag)
+  const onboardingComplete = Boolean(
+    (track && preferences?.language && preferences?.personality) || onboardingFlag
+  );
 
   const value = useMemo(
     () => ({
       track, setTrack, isTrackSelected: Boolean(track),
-      preferences, setPreferences, onboardingComplete,
+      preferences, setPreferences, onboardingComplete, setOnboardingComplete,
       lang,
       theme, toggleTheme,
       t,
       TRACKS,
     }),
-    [track, setTrack, preferences, setPreferences, onboardingComplete, theme, toggleTheme, t]
+    [track, setTrack, preferences, setPreferences, onboardingComplete, setOnboardingComplete, theme, toggleTheme, t]
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
