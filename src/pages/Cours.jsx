@@ -9,6 +9,7 @@ import {
   Languages, BookOpen as BookIcon, GraduationCap,
 } from "lucide-react";
 import { SUBJECTS } from "../utils/coursData";
+import { subjectInTrack } from "../utils/trackConfig";
 import { useApp } from "../contexts/AppContext";
 
 // Icon + gradient tile color per subject
@@ -27,7 +28,7 @@ export default function Cours() {
   const navigate = useNavigate();
   const { track } = useApp();
   const visibleSubjects = SUBJECTS.filter(
-    (s) => !s.tracks || s.tracks.includes(track || "NS4")
+    (s) => subjectInTrack(s, track || "NS4")
   );
 
   return (
