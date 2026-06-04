@@ -19,6 +19,7 @@ import CoursEvent from "./pages/CoursEvent";
 import Profile from "./pages/Profile";
 import Onboarding from "./pages/Onboarding";
 import AdminDashboard from "./pages/AdminDashboard";
+import AdminConfig from "./pages/AdminConfig";
 import Paywall from "./pages/Paywall";
 import Share from "./pages/Share";
 import Auth from "./pages/Auth";
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="classe" element={<Classroom />} />
         <Route path="profile" element={<Profile />} />
         <Route path="admin" element={<AdminDashboard />} />
+        <Route path="admin/config" element={<AdminConfig />} />
 
         {/* Backward compat */}
         <Route path="quiz" element={<Navigate to="/reviser" replace />} />
