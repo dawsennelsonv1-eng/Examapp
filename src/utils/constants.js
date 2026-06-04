@@ -3,20 +3,24 @@
 // If a file imports something that doesn't exist here, add it.
 
 // ===== EXAM DATES =====
+// Sourced from trackConfig.js (single source of truth) so dates can never disagree
+// across the homepage, exam list, and countdowns.
+import { TRACK_CONFIG } from "./trackConfig";
+
 export const EXAM_DATES = {
   "9AF": {
-    label: "9ème AF",
-    fullLabel: "9ème Année Fondamentale",
-    start: new Date("2026-06-29T08:00:00"),
-    end: new Date("2026-07-02T17:00:00"),
-    range: "29 juin – 2 juillet",
+    label: TRACK_CONFIG["9AF"].label,
+    fullLabel: TRACK_CONFIG["9AF"].fullLabel,
+    start: TRACK_CONFIG["9AF"].examStart,
+    end: TRACK_CONFIG["9AF"].examEnd,
+    range: TRACK_CONFIG["9AF"].examRange,
   },
   NS4: {
-    label: "NS4",
-    fullLabel: "Nouveau Secondaire 4",
-    start: new Date("2026-07-03T08:00:00"),
-    end: new Date("2026-07-07T17:00:00"),
-    range: "3 – 7 juillet",
+    label: TRACK_CONFIG.NS4.label,
+    fullLabel: TRACK_CONFIG.NS4.fullLabel,
+    start: TRACK_CONFIG.NS4.examStart,
+    end: TRACK_CONFIG.NS4.examEnd,
+    range: TRACK_CONFIG.NS4.examRange,
   },
 };
 
@@ -88,18 +92,12 @@ export const USAGE_CAPS = {
 export const DAILY_LIMITS = USAGE_CAPS; // alias for older naming
 
 // ===== PERSONALITIES =====
-// `avatarUrl` is a polished, illustrated professional avatar (DiceBear "personas"
-// style — clean faces, not childish emojis). `color` is the gradient fallback,
-// `icon` kept only as a last-resort fallback. Swap avatarUrl for custom art later.
-const AV = (seed, opts = "") =>
-  `https://api.dicebear.com/9.x/personas/svg?seed=${encodeURIComponent(seed)}&backgroundColor=transparent${opts}`;
-
 export const PERSONALITIES = [
-  { id: "joseph",     name: "M. Joseph",     title: "Le professeur vétéran",        description: "Patient, sage, méthodique. Comme un grand-père qui enseigne.", voiceId: "Achernar", color: "from-violet-500 to-indigo-700",  icon: "👨‍🏫", avatarUrl: AV("Joseph-prof", "&hair=balding,shortCombover&facialHair=full") },
-  { id: "tikens",     name: "Ti-Kens",       title: "Le grand frère cool",          description: "Énergique, motivant. Comme un ami qui sait tout.",            voiceId: "Puck",     color: "from-cyan-500 to-blue-600",       icon: "🎧",    avatarUrl: AV("TiKens-coach", "&hair=shortComboverChops,fro") },
-  { id: "victoria",   name: "Mlle. Victoria",title: "La mentore brillante",         description: "Élégante, inspirante. Elle valide ton intelligence.",         voiceId: "Aoede",    color: "from-fuchsia-500 to-purple-600",  icon: "✨",    avatarUrl: AV("Victoria-mentor", "&hair=longHair,bobCut") },
-  { id: "marckenson", name: "M. Marckenson", title: "Le coach intense",             description: "Direct, motivant. Il te pousse à donner ton maximum.",        voiceId: "Charon",   color: "from-amber-500 to-orange-600",    icon: "🎯",    avatarUrl: AV("Marckenson-coach", "&hair=shortCombover&facialHair=goatee") },
-  { id: "camille",    name: "Mlle. Camille", title: "La grande sœur bienveillante", description: "Douce, patiente. Un espace safe pour apprendre.",             voiceId: "Leda",     color: "from-rose-500 to-pink-600",       icon: "💝",    avatarUrl: AV("Camille-soeur", "&hair=longHair,curly") },
+  { id: "joseph",     name: "M. Joseph",     title: "Le professeur vétéran",          description: "Patient, sage, méthodique. Comme un grand-père qui enseigne.", voiceId: "Achernar", icon: "👨‍🏫" },
+  { id: "tikens",     name: "Ti-Kens",       title: "Le grand frère cool",            description: "Énergique, motivant. Comme un ami qui sait tout.",              voiceId: "Puck",     icon: "🎧" },
+  { id: "victoria",   name: "Mlle. Victoria",title: "La mentore brillante",           description: "Élégante, inspirante. Elle valide ton intelligence.",          voiceId: "Aoede",    icon: "✨" },
+  { id: "marckenson", name: "M. Marckenson", title: "Le coach intense",               description: "Direct, motivant. Il te pousse à donner ton maximum.",         voiceId: "Charon",   icon: "🎯" },
+  { id: "camille",    name: "Mlle. Camille", title: "La grande sœur bienveillante",   description: "Douce, patiente. Un espace safe pour apprendre.",              voiceId: "Leda",     icon: "💝" },
 ];
 
 export const PERSONALITY_IDS = PERSONALITIES.map((p) => p.id);
@@ -160,16 +158,6 @@ export const MESSAGE_TYPES = {
   QUESTION:    "question",
   PRAISE:      "praise",
   THINKING:    "thinking",
-};
-
-// Per-segment display info (label + icon). This is what MessageBubble looks up.
-// Keyed by the lowercase segment.type the chat API returns.
-export const MESSAGE_TYPE_INFO = {
-  thinking:    { label: "Réflexion",   icon: "🤔" },
-  acknowledge: { label: "Accueil",     icon: "💬" },
-  explain:     { label: "Explication", icon: "📘" },
-  question:    { label: "Question",    icon: "❓" },
-  praise:      { label: "Bravo",       icon: "🌟" },
 };
 
 // ===== MODELS =====
