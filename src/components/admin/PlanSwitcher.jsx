@@ -6,20 +6,26 @@ import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Crown, Eye, ChevronDown, User, Zap, BarChart3, Check,
+  Crown, Eye, ChevronDown, User, Zap, BarChart3, Check, Settings, GraduationCap,
 } from "lucide-react";
 import { useAdminAccess } from "../../hooks/useAdminAccess";
 
 const PLAN_OPTIONS = [
   { id: null,        label: "Vue admin réelle",   sublabel: "Voir ton vrai plan",  icon: Crown,  color: "from-amber-500 to-orange-600" },
   { id: "free",      label: "Aperçu Gratuit",      sublabel: "Voir comme un free",   icon: User,   color: "from-slate-400 to-slate-600" },
-  { id: "basic",     label: "Aperçu Basic",        sublabel: "900 HTG · limité",     icon: Zap,    color: "from-blue-500 to-cyan-600" },
-  { id: "premium",   label: "Aperçu Premium",      sublabel: "2400 HTG · illimité",  icon: Crown,  color: "from-amber-500 to-orange-600" },
+  { id: "basic",     label: "Aperçu Basic",        sublabel: "Limité",               icon: Zap,    color: "from-blue-500 to-cyan-600" },
+  { id: "premium",   label: "Aperçu Premium",      sublabel: "Illimité",             icon: Crown,  color: "from-amber-500 to-orange-600" },
+];
+
+const TRACK_OPTIONS = [
+  { id: null,  label: "Niveau réel" },
+  { id: "9AF", label: "Aperçu 9ème AF" },
+  { id: "NS4", label: "Aperçu NS4" },
 ];
 
 export default function PlanSwitcher() {
   const navigate = useNavigate();
-  const { isAdmin, viewAsPlan, setViewAsPlan } = useAdminAccess();
+  const { isAdmin, viewAsPlan, setViewAsPlan, viewAsTrack, setViewAsTrack } = useAdminAccess();
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
@@ -86,6 +92,20 @@ export default function PlanSwitcher() {
               </div>
             </button>
 
+            {/* Config link */}
+            <button
+              onClick={() => { setOpen(false); navigate("/admin/config"); }}
+              className="w-full p-3 flex items-center gap-3 text-left hover:bg-violet-50 dark:hover:bg-violet-950/30 border-b border-slate-100 dark:border-slate-700"
+            >
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-slate-600 to-slate-800 flex items-center justify-center text-white shadow-sm">
+                <Settings size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-sm text-slate-900 dark:text-white">Configuration</div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">Prix, dates, fonctionnalités</div>
+              </div>
+            </button>
+
             {/* Plan preview options */}
             <div className="py-1">
               <div className="px-3 py-1.5 text-[10px] uppercase tracking-widest font-black text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
@@ -109,6 +129,34 @@ export default function PlanSwitcher() {
                         {opt.label}
                       </div>
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{opt.sublabel}</div>
+                    </div>
+                    {active && <Check size={13} className="text-violet-600 flex-shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Track preview options */}
+            <div className="py-1 border-t border-slate-100 dark:border-slate-700">
+              <div className="px-3 py-1.5 text-[10px] uppercase tracking-widest font-black text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                <GraduationCap size={10} />
+                Prévisualiser le niveau
+              </div>
+              {TRACK_OPTIONS.map((opt) => {
+                const active = opt.id === viewAsTrack;
+                return (
+                  <button
+                    key={opt.id || "real-track"}
+                    onClick={() => { setViewAsTrack(opt.id); setOpen(false); }}
+                    className={`w-full px-3 py-2 flex items-center gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 ${active ? "bg-violet-50 dark:bg-violet-950/30" : ""}`}
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white flex-shrink-0">
+                      <GraduationCap size={13} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className={`font-semibold text-xs ${active ? "text-violet-700 dark:text-violet-300" : "text-slate-900 dark:text-white"}`}>
+                        {opt.label}
+                      </div>
                     </div>
                     {active && <Check size={13} className="text-violet-600 flex-shrink-0" />}
                   </button>
