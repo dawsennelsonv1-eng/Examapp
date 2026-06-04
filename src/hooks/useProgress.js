@@ -24,8 +24,46 @@ function write(p) {
 
 export function useProgress() {
   const [progress, setProgress] = useState(read);
+  const [synced, setSynced] = useState(false);
 
   useEffect(() => { write(progress); }, [progress]);
+
+  // One-time pull from the cloud so progress follows the user across devices.
+  // Local and cloud are MERGED (union of completed events, concat of scores).
+  useEffect(() => {
+    if (synced || !supabase) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: u } = await supabase.auth.getUser();
+        if (!u?.user || cancelled) return;
+        const [{ data: views }, { data: attempts }] = await Promise.all([
+          supabase.from("lesson_views").select("event_id, created_at").eq("user_id", u.user.id),
+          supabase.from("quiz_attempts").select("quiz_id, score, created_at").eq("user_id", u.user.id).order("created_at", { ascending: true }).limit(100),
+        ]);
+        if (cancelled) return;
+        setProgress((p) => {
+          const completedEvents = { ...p.completedEvents };
+          (views || []).forEach((v) => {
+            if (!completedEvents[v.event_id]) completedEvents[v.event_id] = new Date(v.created_at).getTime();
+          });
+          // Merge scores by (id+timestamp) signature to avoid duplicates.
+          const sig = (q) => `${q.id}_${q.at}`;
+          const seen = new Set(p.quizScores.map(sig));
+          const cloudScores = (attempts || []).map((a) => ({
+            id: a.quiz_id, score: a.score, at: new Date(a.created_at).getTime(),
+          })).filter((q) => !seen.has(sig(q)));
+          return {
+            ...p,
+            completedEvents,
+            quizScores: [...p.quizScores, ...cloudScores].slice(-100),
+          };
+        });
+      } catch { /* offline / not signed in — local stays authoritative */ }
+      finally { if (!cancelled) setSynced(true); }
+    })();
+    return () => { cancelled = true; };
+  }, [synced]);
 
   const markEventComplete = useCallback((eventId, meta = {}) => {
     if (!eventId) return;
@@ -36,9 +74,9 @@ export function useProgress() {
     logEvent("lesson_complete", { event_id: eventId, ...meta });
     if (supabase) {
       supabase.auth.getUser().then(({ data }) => {
-        if (data?.user) supabase.from("lesson_views").insert({
+        if (data?.user) supabase.from("lesson_views").upsert({
           user_id: data.user.id, event_id: eventId, completed: true,
-        }).then(() => {}, () => {});
+        }, { onConflict: "user_id,event_id", ignoreDuplicates: true }).then(() => {}, () => {});
       });
     }
   }, []);
