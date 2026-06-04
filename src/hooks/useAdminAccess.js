@@ -18,8 +18,10 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useUsage } from "./useUsage";
+import { useApp } from "../contexts/AppContext";
 
 const VIEW_AS_KEY = "laureat.viewAsPlan";
+const VIEW_AS_TRACK_KEY = "laureat.viewAsTrack";
 const LOCAL_ADMIN_KEY = "laureat.admin";
 
 // Lazy-load Supabase only if it exists. Won't break the build if missing.
@@ -38,6 +40,9 @@ export function useAdminAccess() {
   const [userId, setUserId] = useState(null);
   const [viewAsPlan, setViewAsPlanState] = useState(() => {
     try { return sessionStorage.getItem(VIEW_AS_KEY) || null; } catch { return null; }
+  });
+  const [viewAsTrack, setViewAsTrackState] = useState(() => {
+    try { return sessionStorage.getItem(VIEW_AS_TRACK_KEY) || null; } catch { return null; }
   });
 
   useEffect(() => {
@@ -92,7 +97,23 @@ export function useAdminAccess() {
     } catch {}
   }, []);
 
-  return { isAdmin, loading, userId, viewAsPlan, setViewAsPlan };
+  const setViewAsTrack = useCallback((track) => {
+    setViewAsTrackState(track);
+    try {
+      if (track) sessionStorage.setItem(VIEW_AS_TRACK_KEY, track);
+      else sessionStorage.removeItem(VIEW_AS_TRACK_KEY);
+    } catch {}
+  }, []);
+
+  return { isAdmin, loading, userId, viewAsPlan, setViewAsPlan, viewAsTrack, setViewAsTrack };
+}
+
+// Returns the track the user should see — admin's viewAs preview if set, else real track
+export function useEffectiveTrack() {
+  const { track } = useApp();
+  const { isAdmin, viewAsTrack } = useAdminAccess();
+  if (isAdmin && viewAsTrack) return viewAsTrack;
+  return track;
 }
 
 // Returns the plan the user should see — admin's viewAs preview if set, else real plan
