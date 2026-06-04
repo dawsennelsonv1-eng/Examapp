@@ -6,7 +6,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Phone, PhoneOff, Camera, CameraOff, SwitchCamera,
-  Mic, MicOff, Volume2, Loader2, X,
+  Mic, MicOff, Volume2, Loader2, X, PenSquare,
 } from "lucide-react";
 import TutorAvatar from "../shared/TutorAvatar";
 import { createLiveSession } from "../../services/liveService";
@@ -26,6 +26,13 @@ export default function CallTutorSession({
   const [facingMode, setFacingMode] = useState("environment");
   const [micMuted, setMicMuted] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
+
+  // Hidden board: stays out of the way until the AI (or the user) decides a
+  // visual would help, then it slides in. Keeps the call simple by default.
+  const [boardSvg, setBoardSvg] = useState(null);
+  const [boardOpen, setBoardOpen] = useState(false);
+  const [boardLoading, setBoardLoading] = useState(false);
+  const lastBoardReqRef = useRef(0);
 
   const sessionRef = useRef(null);
   const videoRef = useRef(null);
@@ -53,6 +60,11 @@ export default function CallTutorSession({
         studentName,
         onTranscript: ({ role, text }) => {
           setTranscript((prev) => [...prev.slice(-10), { role, text, ts: Date.now() }]);
+          // If the TUTOR mentions showing/drawing something, reveal the board
+          // and generate the schema in the background. Throttled so it fires once.
+          if (role === "tutor" && /tableau|sch[ée]ma|dessin|regarde|je te montre|illustration|diagramme/i.test(text)) {
+            requestCallBoard(text);
+          }
         },
         onStatus: (s) => setStatus(s),
         onError: (err) => {
@@ -134,6 +146,37 @@ export default function CallTutorSession({
     onEnd?.();
   };
 
+  // Generate a schema for the call's hidden board (AI- or user-triggered).
+  const requestCallBoard = async (description) => {
+    const now = Date.now();
+    if (boardLoading) return;
+    if (now - lastBoardReqRef.current < 8000) return; // throttle auto-triggers
+    lastBoardReqRef.current = now;
+    setBoardOpen(true);
+    setBoardLoading(true);
+    try {
+      const res = await fetch("/api/content?task=board", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: String(description || "schéma").substring(0, 80),
+          description: description || "Illustration pour aider l'élève pendant l'appel",
+          subject: exerciseContext?.subject || "Général",
+          style: "diagram",
+          exerciseContext,
+        }),
+      });
+      if (res.ok) {
+        const svg = (await res.json())?.data?.svg;
+        if (svg) setBoardSvg(svg);
+      }
+    } catch (err) {
+      console.warn("Call board failed:", err);
+    } finally {
+      setBoardLoading(false);
+    }
+  };
+
   const formatTime = (sec) => {
     const m = Math.floor(sec / 60);
     const s = sec % 60;
@@ -142,6 +185,36 @@ export default function CallTutorSession({
 
   return (
     <div className="fixed inset-0 z-50 bg-gradient-to-br from-slate-950 via-violet-950 to-indigo-950 flex flex-col">
+      {/* Hidden board — slides in when AI or user reveals it */}
+      <AnimatePresence>
+        {boardOpen && (
+          <motion.div
+            initial={{ y: "-100%" }} animate={{ y: 0 }} exit={{ y: "-100%" }}
+            transition={{ type: "spring", damping: 26, stiffness: 220 }}
+            className="absolute inset-x-0 top-0 z-30 mx-3 mt-16 rounded-2xl bg-white shadow-2xl overflow-hidden max-h-[55%]"
+          >
+            <div className="flex items-center justify-between px-3 py-2 bg-slate-100">
+              <span className="text-[11px] font-black uppercase tracking-widest text-violet-700">Tableau</span>
+              <button onClick={() => setBoardOpen(false)} className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center text-slate-700">
+                <X size={14} />
+              </button>
+            </div>
+            <div className="p-3 overflow-y-auto flex items-center justify-center min-h-[140px]">
+              {boardLoading && !boardSvg ? (
+                <div className="flex flex-col items-center gap-2 text-slate-500 py-6">
+                  <Loader2 size={22} className="animate-spin text-violet-500" />
+                  <span className="text-xs font-semibold">Le prof prépare un schéma...</span>
+                </div>
+              ) : boardSvg ? (
+                <div className="w-full flex items-center justify-center" dangerouslySetInnerHTML={{ __html: boardSvg }} />
+              ) : (
+                <span className="text-xs text-slate-400 py-6">Aucun schéma pour l'instant.</span>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Top status bar */}
       <header className="flex items-center justify-between p-4 text-white">
         <button
@@ -296,8 +369,17 @@ export default function CallTutorSession({
             {micMuted ? <MicOff size={22} /> : <Mic size={22} />}
           </motion.button>
 
-          {/* Spacer */}
-          <div className="w-12" />
+          {/* Board toggle — reveal/hide the tableau */}
+          <motion.button
+            whileTap={{ scale: 0.9 }}
+            onClick={() => setBoardOpen((v) => !v)}
+            className={`w-12 h-12 rounded-full backdrop-blur-md flex items-center justify-center transition-colors ${
+              boardOpen ? "bg-violet-500/30 text-violet-200" : "bg-white/10 text-white"
+            }`}
+            title="Tableau"
+          >
+            <PenSquare size={18} />
+          </motion.button>
         </div>
 
         <p className="text-center text-[10px] text-white/40 mt-4 uppercase tracking-widest font-bold">
