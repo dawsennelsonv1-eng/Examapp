@@ -92,13 +92,22 @@ export default function CallTutorSession({
     if (!session) return;
     if (cameraOn) {
       session.stopCamera();
+      if (videoRef.current) videoRef.current.srcObject = null;
       setCameraOn(false);
     } else {
-      const stream = await session.startCamera(facingMode);
-      if (stream && videoRef.current) {
-        videoRef.current.srcObject = stream;
+      try {
+        const stream = await session.startCamera(facingMode);
+        if (!stream) throw new Error("no-stream");
+        setCameraOn(true);
+        // assign after the element is shown
+        requestAnimationFrame(() => {
+          if (videoRef.current) videoRef.current.srcObject = stream;
+        });
+      } catch (err) {
+        console.warn("Camera start failed:", err);
+        setError("Impossible de démarrer la caméra. Vérifie la permission et réessaie.");
+        setCameraOn(false);
       }
-      setCameraOn(true);
     }
   };
 
@@ -106,12 +115,18 @@ export default function CallTutorSession({
     const session = sessionRef.current;
     if (!session || !cameraOn) return;
     const newMode = facingMode === "environment" ? "user" : "environment";
-    session.stopCamera();
-    const stream = await session.startCamera(newMode);
-    if (stream && videoRef.current) {
-      videoRef.current.srcObject = stream;
+    try {
+      session.stopCamera();
+      const stream = await session.startCamera(newMode);
+      if (!stream) throw new Error("no-stream");
+      setFacingMode(newMode);
+      requestAnimationFrame(() => {
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      });
+    } catch (err) {
+      console.warn("Camera switch failed:", err);
+      setError("Impossible de changer de caméra sur cet appareil.");
     }
-    setFacingMode(newMode);
   };
 
   const handleEndCall = () => {
@@ -156,58 +171,39 @@ export default function CallTutorSession({
 
       {/* Main area: tutor avatar OR camera */}
       <div className="flex-1 flex items-center justify-center px-6 relative">
+        {/* Video is ALWAYS mounted (just hidden when camera is off) so that
+            videoRef.current exists the moment we assign srcObject — this was the
+            cause of the black-camera bug (ref was null on first toggle). */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={`w-full max-w-md aspect-square rounded-3xl object-cover bg-black ${cameraOn ? "block" : "hidden"}`}
+        />
         {cameraOn ? (
-          <>
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full max-w-md aspect-square rounded-3xl object-cover bg-black"
-            />
-            {/* Small avatar in corner when camera on */}
-            <div className="absolute top-4 right-4">
-              <TutorAvatar
-                personaId={personaId}
-                size="md"
-                speaking={status === "speaking"}
-                glow
-              />
-            </div>
-          </>
+          <div className="absolute top-4 right-4">
+            <TutorAvatar personaId={personaId} size="md" speaking={status === "speaking"} glow />
+          </div>
         ) : (
           <div className="text-center">
             <motion.div
               animate={status === "speaking" ? { scale: [1, 1.08, 1] } : { scale: 1 }}
               transition={{ duration: 1.2, repeat: Infinity }}
             >
-              <TutorAvatar
-                personaId={personaId}
-                size="xl"
-                speaking={status === "speaking"}
-                glow
-              />
+              <TutorAvatar personaId={personaId} size="xl" speaking={status === "speaking"} glow />
             </motion.div>
             <h2 className="mt-6 text-2xl font-black text-white">{persona.name}</h2>
             <p className="text-sm text-white/60 mt-1">{persona.title}</p>
 
-            {/* Voice waveform when speaking */}
             {(status === "speaking" || status === "recording") && (
               <div className="mt-6 flex items-center justify-center gap-1.5 h-8">
                 {[...Array(7)].map((_, i) => (
                   <motion.div
                     key={i}
-                    className={`w-1.5 rounded-full ${
-                      status === "speaking" ? "bg-amber-400" : "bg-emerald-400"
-                    }`}
-                    animate={{
-                      height: ["12px", "32px", "12px"],
-                    }}
-                    transition={{
-                      duration: 0.6 + i * 0.08,
-                      repeat: Infinity,
-                      delay: i * 0.05,
-                    }}
+                    className={`w-1.5 rounded-full ${status === "speaking" ? "bg-amber-400" : "bg-emerald-400"}`}
+                    animate={{ height: ["12px", "32px", "12px"] }}
+                    transition={{ duration: 0.6 + i * 0.08, repeat: Infinity, delay: i * 0.05 }}
                   />
                 ))}
               </div>

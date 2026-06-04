@@ -5,13 +5,14 @@
 import { motion } from "framer-motion";
 import { Volume2, VolumeX, Pause, Play, User } from "lucide-react";
 import TutorAvatar from "../shared/TutorAvatar";
-import { MESSAGE_TYPES } from "../../utils/constants";
+import { MESSAGE_TYPE_INFO } from "../../utils/constants";
 
 export default function MessageBubble({
   message,
   isUser,
   isSpeaking,
   isPaused,
+  visibleSegments,
   onPlay,
   onPause,
   onStop,
@@ -37,7 +38,29 @@ export default function MessageBubble({
   }
 
   // Tutor message — could have segments
-  const segments = message.segments || [{ type: "explain", text: message.content || message.text, speakable: message.speakable }];
+  const allSegments = message.segments || [{ type: "explain", text: message.content || message.text, speakable: message.speakable }];
+  // visibleSegments controls speech↔text sync; undefined means "show all".
+  const count = typeof visibleSegments === "number" ? visibleSegments : allSegments.length;
+  const segments = allSegments.slice(0, Math.max(0, count));
+
+  // Nothing revealed yet (about to speak) — render an empty placeholder so layout
+  // doesn't jump, but show the avatar already.
+  if (segments.length === 0) {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-2 justify-start">
+        <TutorAvatar personaId={personaId} size="sm" speaking={isSpeaking} />
+        <div className="max-w-[80%] flex items-center">
+          <div className="rounded-2xl rounded-bl-sm px-4 py-2.5 bg-white dark:bg-slate-800 shadow-sm">
+            <span className="inline-flex gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: "120ms" }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: "240ms" }} />
+            </span>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -93,7 +116,7 @@ const FALLBACK_TYPE_INFO = { label: "Explication", icon: "💬" };
 function SegmentBubble({ segment }) {
   const seg = segment || {};
   const typeInfo =
-    (MESSAGE_TYPES && (MESSAGE_TYPES[seg.type] || MESSAGE_TYPES.explain)) ||
+    (MESSAGE_TYPE_INFO && (MESSAGE_TYPE_INFO[seg.type] || MESSAGE_TYPE_INFO.explain)) ||
     FALLBACK_TYPE_INFO;
 
   const bubbleStyles = {
