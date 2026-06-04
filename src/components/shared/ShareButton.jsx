@@ -14,7 +14,7 @@ export default function ShareButton({ type, payload, label = "Partager", compact
     setSharing(true);
     setFailed(false);
     try {
-      const response = await fetch("/api/share", {
+      const response = await fetch("/api/content?task=share", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type, payload }),
