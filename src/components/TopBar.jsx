@@ -1,14 +1,13 @@
-// src/components/TopBar.jsx — v23 (v18 style restored)
-// Logo + "Laureat AI / MENFP PREP" on the left.
-// Flame streak + Bell + Profile circle on the right.
-// Admin badge (if admin) tucks in between flame and bell.
-// Hides on: /scan, /admin, /classe with ?session=, /onboarding
+// src/components/TopBar.jsx — v24
+// Logo + "Laureat AI / EXAMEN PREP" on the left.
+// Admin switcher + Notifications bell + Profile circle on the right.
+// (Dead streak button removed; bell is now a real notifications panel.)
 
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Bell, Flame } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
 import PlanSwitcher from "./admin/PlanSwitcher";
+import NotificationsBell from "./NotificationsBell";
 
 const HIDDEN_ROUTES = ["/scan", "/admin", "/onboarding", "/paywall"];
 
@@ -42,33 +41,18 @@ export default function TopBar({ streak = 3 }) {
               Laureat <span className="text-violet-400">AI</span>
             </div>
             <div className="text-[10px] uppercase tracking-widest font-bold text-slate-500">
-              MENFP PREP
+              EXAMEN PREP
             </div>
           </div>
         </button>
 
-        {/* Right: streak + bell + admin + profile */}
+        {/* Right: admin + notifications + profile */}
         <div className="flex items-center gap-1.5">
-          {/* Streak */}
-          <motion.button
-            whileTap={{ scale: 0.92 }}
-            className="flex items-center justify-center w-10 h-10 rounded-full bg-slate-800/70"
-            aria-label="Streak"
-          >
-            <Flame size={18} className="text-amber-400" />
-          </motion.button>
-
           {/* Admin badge — invisible unless admin */}
           <PlanSwitcher />
 
-          {/* Bell */}
-          <motion.button
-            whileTap={{ scale: 0.92 }}
-            className="flex items-center justify-center w-10 h-10 rounded-full bg-slate-800/70"
-            aria-label="Notifications"
-          >
-            <Bell size={18} className="text-slate-300" />
-          </motion.button>
+          {/* Notifications (real panel: welcome + exam countdown + admin messages) */}
+          <NotificationsBell />
 
           {/* Profile circle */}
           <motion.button
