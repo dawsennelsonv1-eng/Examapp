@@ -1,11 +1,15 @@
 // api/content.js
-// MERGED endpoint that replaces board.js + lesson.js + brain.js.
+// MERGED endpoint that replaces board.js + lesson.js + brain.js + verify-payment.js.
 // Routes by ?task= query param or body.task field.
 //
 // Usage from frontend:
-//   POST /api/content?task=board   { description, subject, style, exerciseContext }
-//   POST /api/content?task=lesson  { subject, chapter, event, track, language }
-//   POST /api/content?task=brain   { task: "decision"|"chat"|..., prompt, messages, ... }
+//   POST /api/content?task=board          { description, subject, style, exerciseContext }
+//   POST /api/content?task=lesson         { subject, chapter, event, track, language }
+//   POST /api/content?task=brain          { task: "decision"|"chat"|..., prompt, messages, ... }
+//   POST /api/content?task=verify_payment { accessToken, planTier, method, amount, proofType, ... }
+//     (verify_payment merged here to stay under Vercel's 12-function cap.)
+
+import { getSupabaseAdmin } from "./_supabaseAdmin";
 
 const TASK_MODELS = {
   decision: ["anthropic/claude-opus-4.7", "google/gemini-3-pro-preview"],
@@ -36,6 +40,17 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   const task = (req.query?.task || req.body?.task || "").toString().toLowerCase();
+
+  // verify_payment uses the Supabase admin client; it doesn't require OPENROUTER
+  // unless a screenshot needs OCR. Handle it before the OPENROUTER key check.
+  if (task === "verify_payment") {
+    try {
+      return await handleVerifyPayment(req, res);
+    } catch (err) {
+      console.error("/api/content verify_payment error:", err);
+      return res.status(500).json({ error: "Server error", message: err.message });
+    }
+  }
 
   const KEY = process.env.OPENROUTER_API_KEY;
   if (!KEY) return res.status(500).json({ error: "Server misconfigured" });
@@ -232,6 +247,124 @@ async function callOpenRouter(KEY, model, promptOrMessages, { jsonMode, maxToken
     return { text: raw };
   } catch (err) {
     console.warn(`Model ${model} failed:`, err.message);
+    return null;
+  }
+}
+
+// ============== VERIFY PAYMENT (merged from verify-payment.js) ==============
+// POST /api/content?task=verify_payment
+//   { accessToken, planTier, method, amount, proofType, transactionId?,
+//     screenshotData?, customerName, customerWhatsapp }
+async function handleVerifyPayment(req, res) {
+  const admin = getSupabaseAdmin();
+  if (!admin) return res.status(500).json({ error: "server not configured" });
+
+  const {
+    accessToken, planTier, method, amount, proofType,
+    transactionId, screenshotData, customerName, customerWhatsapp,
+  } = req.body || {};
+
+  if (!accessToken) return res.status(401).json({ error: "not signed in" });
+  if (!planTier || !method || !proofType) return res.status(400).json({ error: "missing fields" });
+
+  // Identify the user securely from their token.
+  const { data: userData, error: userErr } = await admin.auth.getUser(accessToken);
+  if (userErr || !userData?.user) return res.status(401).json({ error: "invalid session" });
+  const user = userData.user;
+
+  // Resolve the transaction id (typed or OCR'd from the screenshot).
+  let txId = (transactionId || "").trim();
+  if (proofType === "screenshot") {
+    if (!screenshotData) return res.status(400).json({ error: "no screenshot" });
+    txId = await extractPaymentId(screenshotData);
+    if (!txId) {
+      return res.status(422).json({
+        error: "ocr_failed",
+        message: "Nou pa rive li ID a sou imaj la. Tape l alamen silvouplè.",
+      });
+    }
+  }
+  if (!txId) return res.status(400).json({ error: "no transaction id" });
+
+  // Look up an unconsumed matching SMS.
+  const { data: rows } = await admin
+    .from("payment_sms").select("*")
+    .eq("method", method).eq("transaction_id", txId).limit(1);
+  const sms = rows?.[0];
+
+  const baseTx = {
+    user_id: user.id, plan_tier: planTier, method,
+    amount: amount ?? sms?.amount ?? null,
+    submitted_transaction_id: txId, proof_type: proofType,
+    customer_name: customerName || null, customer_whatsapp: customerWhatsapp || null,
+  };
+
+  if (!sms) {
+    await admin.from("transactions").insert({ ...baseTx, status: "pending", note: "no matching SMS yet" });
+    return res.status(200).json({ data: { status: "pending", message: "Nou poko jwenn peman an. Tann kèk minit epi eseye ankò." } });
+  }
+  if (sms.consumed) {
+    await admin.from("transactions").insert({ ...baseTx, status: "duplicate", matched_sms_id: sms.id, note: "id already used" });
+    return res.status(200).json({ data: { status: "duplicate", message: "Sa ID transaksyon sa a deja itilize. Chak peman sèvi yon sèl fwa." } });
+  }
+  if (amount != null && sms.amount != null && Number(sms.amount) < Number(amount)) {
+    await admin.from("transactions").insert({ ...baseTx, status: "rejected", matched_sms_id: sms.id, note: `amount ${sms.amount} < ${amount}` });
+    return res.status(200).json({ data: { status: "rejected", message: `Montan an pa kòrèk. Nou resevwa ${sms.amount} HTG.` } });
+  }
+
+  // MATCH — consume the SMS atomically (only if still unconsumed), then upgrade.
+  const { data: consumed } = await admin
+    .from("payment_sms")
+    .update({ consumed: true, consumed_by: user.id })
+    .eq("id", sms.id).eq("consumed", false)
+    .select().single();
+
+  if (!consumed) {
+    await admin.from("transactions").insert({ ...baseTx, status: "duplicate", matched_sms_id: sms.id, note: "race: consumed" });
+    return res.status(200).json({ data: { status: "duplicate", message: "Sa ID transaksyon sa a deja itilize." } });
+  }
+
+  await admin.from("transactions").insert({ ...baseTx, status: "verified", matched_sms_id: sms.id });
+
+  const expires = new Date();
+  expires.setMonth(expires.getMonth() + 1);
+  await admin.from("profiles").update({
+    plan_tier: planTier,
+    plan_started_at: new Date().toISOString(),
+    plan_expires_at: expires.toISOString(),
+  }).eq("id", user.id);
+
+  return res.status(200).json({ data: { status: "verified", planTier, message: "Peman konfime! Ou gen aksè kounye a. 🎉" } });
+}
+
+async function extractPaymentId(imageData) {
+  const KEY = process.env.OPENROUTER_API_KEY;
+  if (!KEY) return null;
+  try {
+    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}` },
+      body: JSON.stringify({
+        model: "google/gemini-3.5-flash-lite",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "Sou kaptiran ekran resi MonCash/NatCash sa a, jwenn SÈLMAN nimewo ID/transaction/reference la. Reponn JSON: {\"id\":\"...\"}. Si ou pa wè l, {\"id\":null}." },
+            { type: "image_url", image_url: { url: imageData } },
+          ],
+        }],
+        response_format: { type: "json_object" },
+        max_tokens: 100,
+        temperature: 0,
+      }),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const raw = data?.choices?.[0]?.message?.content;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw.replace(/```json\s*|\s*```/g, "").trim());
+    return parsed?.id ? String(parsed.id).trim() : null;
+  } catch {
     return null;
   }
 }
