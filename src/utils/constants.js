@@ -160,6 +160,16 @@ export const MESSAGE_TYPES = {
   THINKING:    "thinking",
 };
 
+// Per-segment display info (label + icon). This is what MessageBubble looks up.
+// Keyed by the lowercase segment.type the chat API returns.
+export const MESSAGE_TYPE_INFO = {
+  thinking:    { label: "Réflexion",   icon: "🤔" },
+  acknowledge: { label: "Accueil",     icon: "💬" },
+  explain:     { label: "Explication", icon: "📘" },
+  question:    { label: "Question",    icon: "❓" },
+  praise:      { label: "Bravo",       icon: "🌟" },
+};
+
 // ===== MODELS =====
 export const MODELS = {
   CHAT_PRIMARY:   "google/gemini-3-pro-preview",
