@@ -51,6 +51,24 @@ export function AuthProvider({ children }) {
         supabase.from("profiles").update({ last_active_at: new Date().toISOString() }).eq("id", user.id);
       }
       setProfile(prof);
+
+      // One-time migration: if the profile has no track yet but the device has
+      // local onboarding data, push it up so it follows the user across devices.
+      try {
+        if (prof && !prof.track) {
+          const localTrack = localStorage.getItem("laureat.track");
+          const localPrefs = JSON.parse(localStorage.getItem("laureat.preferences") || "null");
+          const patch = {};
+          if (localTrack) patch.track = localTrack;
+          if (localPrefs?.personality) patch.personality = localPrefs.personality;
+          if (localPrefs?.language) patch.language = localPrefs.language;
+          if (Object.keys(patch).length) {
+            await supabase.from("profiles").update(patch).eq("id", user.id);
+            setProfile((p) => ({ ...(p || {}), ...patch }));
+          }
+        }
+      } catch (e) { console.warn("[auth] local->profile migration skipped:", e?.message); }
+
       setAnalyticsContext({ userId: user.id, track: prof?.track || null, planTier: prof?.plan_tier || "free" });
       startAnalyticsSession();
       logEvent("app_open", {});
