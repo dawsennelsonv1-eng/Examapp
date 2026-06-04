@@ -15,6 +15,7 @@ import {
   speakText, stopSpeaking, pauseSpeaking, resumeSpeaking,
 } from "../../services/ttsService";
 import { PERSONALITIES } from "../../utils/constants";
+import { logEvent } from "../../services/analytics";
 import MultiBoard from "./MultiBoard";
 import MessageBubble from "./MessageBubble";
 import SuggestedQuestions from "./SuggestedQuestions";
@@ -233,6 +234,7 @@ export default function ClassroomSession({ session, onExit }) {
     if (autoSendTimer) { clearTimeout(autoSendTimer); setAutoSendTimer(null); }
     const text = (overrideText || input).trim();
     if (!text || sending) return;
+    logEvent("tutor_message", { subject: session?.subject || null, persona: currentPersonaId, length: text.length });
 
     const userMsg = {
       id: `msg_${Date.now()}`,
@@ -416,6 +418,7 @@ Réponds en JSON: { "needsBoard": true|false, "description": "ce que le schéma 
           setBoards((prev) => prev.map((b) => (b.id === "board_visuel" ? { ...b, svg } : b)));
           setActiveBoardId("board_visuel");
           setBoardExpanded(true);
+          logEvent("tutor_board_shown", { subject: session?.subject || null, trigger: "ai_brain" });
         }
       }
     } catch (err) {
