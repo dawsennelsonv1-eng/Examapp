@@ -33,7 +33,7 @@ import { useScanHistory } from "../hooks/useScanHistory";
 import { exportSolutionToPDF } from "../services/pdfService";
 import { logEvent } from "../services/analytics";
 
-const API = "/api/solve";
+const API = "/api/content?task=solve";
 
 export default function ScanSolve() {
   const navigate = useNavigate();
