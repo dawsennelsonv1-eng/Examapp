@@ -4,7 +4,7 @@
 //   2. choose method (MonCash / NatCash) -> your receiving number appears (copy)
 //   3. enter name + WhatsApp
 //   4. proof: type transaction ID OR upload screenshot (one hides the other)
-//   5. submit -> /api/verify-payment -> match against forwarded SMS -> grant access
+//   5. submit -> /api/content?task=verify_payment -> match SMS -> grant access
 //
 // Receiving numbers come from Vite env vars you set:
 //   VITE_MONCASH_NUMBER, VITE_NATCASH_NUMBER
@@ -79,7 +79,7 @@ export default function Paywall() {
       const accessToken = sess?.session?.access_token;
       if (!accessToken) { setResult({ status: "error", message: "Konekte anvan." }); setBusy(false); return; }
 
-      const res = await fetch("/api/verify-payment", {
+      const res = await fetch("/api/content?task=verify_payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
