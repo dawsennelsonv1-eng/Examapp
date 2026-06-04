@@ -73,19 +73,19 @@ function playAudioUrl(audioUrl) {
 }
 
 export async function speakText(text, lang = "fr-FR", options = {}) {
-  const { persona = "joseph", onModelUsed } = options;
+  const { persona = "joseph", onModelUsed, onChunkStart, onChunkEnd } = options;
 
   stopSpeaking();
-  if (!text) return { duration: 0, modelUsed: null };
+  if (!text) return { duration: 0, modelUsed: null, chunks: [] };
 
   cancelToken = { cancelled: false };
   const myToken = cancelToken;
 
   const chunks = splitIntoSentences(text);
-  if (chunks.length === 0) return { duration: 0, modelUsed: null };
+  if (chunks.length === 0) return { duration: 0, modelUsed: null, chunks: [] };
 
-  // CRITICAL: start fetching ALL chunks in parallel (limited to first 3 to avoid overwhelm)
-  // The first chunk is fetched and played immediately.
+  // CRITICAL: start fetching ALL chunks in parallel (the first plays immediately,
+  // the rest are pre-fetched so playback is gapless).
   const pendingFetches = chunks.map((c) => fetchChunkAudio(c, persona));
 
   const playbackPromise = (async () => {
@@ -94,15 +94,20 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
       const audioResult = await pendingFetches[i];
       if (myToken.cancelled) break;
       onModelUsed?.(lastModelUsed);
+      // Fire RIGHT BEFORE this chunk is heard, so the UI can reveal the matching
+      // text at the same moment the audio for it starts (text↔speech sync).
+      onChunkStart?.(i, chunks[i]);
       if (audioResult?.audioUrl) {
         await playAudioUrl(audioResult.audioUrl);
       } else if (audioResult?.useBrowserFallback) {
         await browserSpeakChunk(audioResult.text, lang);
       }
+      onChunkEnd?.(i, chunks[i]);
     }
   })();
 
-  return { duration: 0, promise: playbackPromise, modelUsed: lastModelUsed };
+  // Return the chunks synchronously so the caller can align its text to them.
+  return { duration: 0, promise: playbackPromise, modelUsed: lastModelUsed, chunks };
 }
 
 function browserSpeakChunk(text, lang = "fr-FR") {
