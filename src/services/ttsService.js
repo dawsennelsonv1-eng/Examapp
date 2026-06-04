@@ -35,7 +35,7 @@ function splitIntoSentences(text) {
 async function fetchChunkAudio(text, persona) {
   try {
     const t0 = Date.now();
-    const response = await fetch("/api/tts", {
+    const response = await fetch("/api/content?task=tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, persona }),
