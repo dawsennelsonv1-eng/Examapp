@@ -11,6 +11,7 @@ import { useApp } from "../contexts/AppContext";
 import { EXAM_DATES, PERSONALITIES } from "../utils/constants";
 import { useClassroomSessions } from "../hooks/useClassroom";
 import ScanHistoryCard from "../components/home/ScanHistoryCard";
+import ProgressCard from "../components/ProgressCard";
 import TutorAvatar from "../components/shared/TutorAvatar";
 import { useState } from "react";
 
@@ -90,6 +91,7 @@ export default function Home() {
       </header>
 
       <main className="px-4 py-6 space-y-6 -mt-4 relative z-10">
+        <ProgressCard />
         <AnimatePresence>
           {showBanner && (
             <motion.div

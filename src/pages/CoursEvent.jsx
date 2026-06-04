@@ -14,12 +14,14 @@ import {
 import { getSubject, getChapter, getEvent } from "../utils/coursData";
 import { fetchLesson, getCachedLesson } from "../hooks/useLessonCache";
 import { useApp } from "../contexts/AppContext";
+import { useProgress } from "../hooks/useProgress";
 import QuizPlayer from "../components/quiz/QuizPlayer";
 
 export default function CoursEvent() {
   const { subjectId, chapterId, eventId } = useParams();
   const navigate = useNavigate();
   const { track, preferences } = useApp();
+  const { markEventComplete, recordQuizScore } = useProgress();
 
   const subject = getSubject(subjectId);
   const chapter = getChapter(subjectId, chapterId);
@@ -261,7 +263,10 @@ export default function CoursEvent() {
             questions={lesson.miniQuiz}
             onClose={() => setQuizOpen(false)}
             onAskTutor={handleAskTutor}
-            onComplete={() => {}}
+            onComplete={(r) => {
+              markEventComplete(eventId, { subject: subject?.id, chapter: chapterId });
+              recordQuizScore(`cours_${eventId}`, r?.score ?? 0, { subject: subject?.id });
+            }}
           />
         )}
       </AnimatePresence>

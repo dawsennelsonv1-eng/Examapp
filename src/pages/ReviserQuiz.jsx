@@ -8,11 +8,13 @@ import { Loader2 } from "lucide-react";
 import { WEEKLY_QUIZZES } from "../utils/reviserData";
 import QuizPlayer from "../components/quiz/QuizPlayer";
 import { useApp } from "../contexts/AppContext";
+import { useProgress } from "../hooks/useProgress";
 
 export default function ReviserQuiz() {
   const { quizId } = useParams();
   const navigate = useNavigate();
   const { track, preferences } = useApp();
+  const { recordQuizScore } = useProgress();
 
   const quizMeta = WEEKLY_QUIZZES.find((q) => q.id === quizId);
 
@@ -102,7 +104,7 @@ export default function ReviserQuiz() {
       reference={quizMeta?.referencedExam || null}
       questions={questions}
       onClose={() => navigate("/reviser")}
-      onComplete={() => {}}
+      onComplete={(r) => recordQuizScore(quizId, r?.score ?? 0, { type: "weekly", ref_year: quizMeta?.referencedExam?.year || null })}
     />
   );
 }
