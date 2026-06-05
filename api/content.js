@@ -9,7 +9,20 @@
 //   POST /api/content?task=verify_payment { accessToken, planTier, method, amount, proofType, ... }
 //     (verify_payment merged here to stay under Vercel's 12-function cap.)
 
-import { getSupabaseAdmin } from "./_supabaseAdmin";
+import { createClient } from "@supabase/supabase-js";
+
+// Inlined admin client (was ./_supabaseAdmin — removed to avoid an ESM module
+// resolution failure on Vercel that 500'd the whole endpoint). Server-only;
+// uses the service role key which bypasses RLS. Never expose this client-side.
+let _admin = null;
+function getSupabaseAdmin() {
+  if (_admin) return _admin;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  _admin = createClient(url, key, { auth: { persistSession: false } });
+  return _admin;
+}
 
 const TASK_MODELS = {
   decision: ["anthropic/claude-opus-4.7", "google/gemini-3-pro-preview"],
