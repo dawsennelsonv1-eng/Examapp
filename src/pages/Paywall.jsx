@@ -22,11 +22,23 @@ import { useApp } from "../contexts/AppContext";
 import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
 import { logEvent } from "../services/analytics";
+import { PLAN_PRICES, PLAN_FEATURES } from "../utils/constants";
 
-const PLANS = {
-  basic:   { id: "basic",   name: "Basic",   price: 900,  icon: Zap,   features: ["Scans illimités", "Quiz hebdomadaires", "Cours complets"] },
-  premium: { id: "premium", name: "Premium", price: 2400, icon: Crown, features: ["Tout le Basic", "Prof IA en appel", "Examens des 5 dernières années", "Vérification illimitée"] },
-};
+// Prices and features come from constants.js (single source of truth) so they
+// can never drift from the rest of the app again. Icons stay local (components).
+const PLAN_ICONS = { basic: Zap, premium: Crown };
+
+const PLANS = ["basic", "premium"].reduce((acc, id) => {
+  const f = PLAN_FEATURES[id] || {};
+  acc[id] = {
+    id,
+    name: f.label || (id === "premium" ? "Premium" : "Basic"),
+    price: PLAN_PRICES[id],
+    icon: PLAN_ICONS[id],
+    features: Array.isArray(f.included) ? f.included : [],
+  };
+  return acc;
+}, {});
 
 const METHODS = {
   moncash: { id: "moncash", name: "MonCash", color: "#ED1C24", number: import.meta.env.VITE_MONCASH_NUMBER || "—", logo: "/logos/moncash.svg" },
