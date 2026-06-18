@@ -87,27 +87,45 @@ Exercice: ${JSON.stringify(context.exercise).substring(0, 1500)}
 Si échec:
 - 1: réexplique différemment
 - 2: analogie haïtienne concrète
-- 3: ${prefs.language === "fr" ? "explique avec un schéma" : "kreyòl + diagramme"} (shouldDrawDiagram: true)
+- 3: ${prefs.language === "fr" ? "explique avec un schéma" : "kreyòl + diagramme"} (mets une courte description dans boardActions.visual)
 - 4+: tutorSwitchSuggestion: true`;
     }
 
     systemPrompt += `
 
+🔴 LE TABLEAU (TRÈS IMPORTANT):
+Tu écris au tableau via "boardActions". Le texte parlé ("text") reste court et SANS
+math; TOUTES les formules, calculs et résultats vont dans boardActions.solution.
+- boardActions.solution = la liste ORDONNÉE des étapes à écrire sur le tableau Solution.
+  Chaque étape: { "type": "...", "content": "..." }
+  types: "formula" (une formule), "substitution" (remplacement des valeurs),
+         "conversion" (changement d'unité), "result" (résultat — ajoute "boxed": true),
+         "step" (courte phrase explicative).
+- boardActions.visual = courte description d'un schéma SEULEMENT si un dessin aide
+  vraiment à comprendre, sinon null. Ne demande PAS de schéma à chaque tour.
+- boardActions.focus = "solution" | "visuel" | "enonce" (le tableau à montrer).
+Quand tu résous un exercice, remplis boardActions.solution et VA JUSQU'AU BOUT
+(jusqu'au résultat encadré).
+
 FORMAT JSON STRICT:
 {
   "segments": [
-    {
-      "type": "thinking" | "acknowledge" | "explain" | "question" | "praise",
-      "text": "2 phrases max, pas de math/code",
-      "speakable": "version pour voix",
-      "boardActions": [...]
-    }
+    { "type": "acknowledge|explain|question|praise|thinking",
+      "text": "2 phrases max, AUCUNE math",
+      "speakable": "version pour la voix" }
   ],
+  "boardActions": {
+    "solution": [
+      { "type": "formula", "content": "v = d / t" },
+      { "type": "substitution", "content": "v = 100 / 20" },
+      { "type": "result", "content": "v = 5 m/s", "boxed": true }
+    ],
+    "visual": null,
+    "focus": "solution"
+  },
   "suggestedQuestions": ["question courte 1", "question courte 2"],
-  "needsConfirmation": true | false,
-  "tutorSwitchSuggestion": true | false,
-  "shouldDrawDiagram": true | false,
-  "diagramDescription": "description si pertinent"
+  "needsConfirmation": false,
+  "tutorSwitchSuggestion": false
 }`;
 
     const conversationHistory = (messages || []).slice(-10).map((m) => ({
@@ -187,7 +205,6 @@ FORMAT JSON STRICT:
         type: s.type || "explain",
         text: cleanText(s.text || ""),
         speakable: cleanText(s.speakable || s.text || ""),
-        boardActions: Array.isArray(s.boardActions) ? s.boardActions : [],
       }))
       .filter((s) => s.text);
 
@@ -196,20 +213,48 @@ FORMAT JSON STRICT:
         type: "explain",
         text: parsed.reply || "Je réfléchis à ta question.",
         speakable: parsed.reply || "Je réfléchis à ta question.",
-        boardActions: [],
       });
     }
+
+    // Build ONE top-level boardActions object: { solution:[{type,content,boxed?}],
+    // visual:string|null, focus:string|null } — exactly what ClassroomSession reads.
+    const ba = (parsed.boardActions && typeof parsed.boardActions === "object" && !Array.isArray(parsed.boardActions))
+      ? parsed.boardActions : {};
+
+    // Back-compat: older outputs sometimes nested step strings under segment.boardActions.
+    let rawSteps = Array.isArray(ba.solution) ? ba.solution : [];
+    if (rawSteps.length === 0) {
+      rawSteps = (Array.isArray(parsed.segments) ? parsed.segments : [])
+        .flatMap((s) => (Array.isArray(s.boardActions) ? s.boardActions : []));
+    }
+    const solution = rawSteps
+      .map((step) =>
+        typeof step === "string"
+          ? { type: "step", content: cleanText(step) }
+          : {
+              type: step.type || "step",
+              content: cleanText(step.content || step.text || ""),
+              ...(step.boxed ? { boxed: true } : {}),
+            }
+      )
+      .filter((s) => s.content);
+
+    const visual =
+      ba.visual ||
+      (parsed.shouldDrawDiagram ? (parsed.diagramDescription || "schéma explicatif") : null);
+    const validFocus = ["solution", "visuel", "enonce"];
+    const focus = validFocus.includes(ba.focus) ? ba.focus : (solution.length ? "solution" : null);
+    const boardActions = { solution, visual: visual || null, focus };
 
     return res.status(200).json({
       data: {
         segments,
+        boardActions,
         suggestedQuestions: Array.isArray(parsed.suggestedQuestions)
           ? parsed.suggestedQuestions.slice(0, 2).map((q) => String(q).substring(0, 80))
           : [],
         needsConfirmation: Boolean(parsed.needsConfirmation),
         tutorSwitchSuggestion: Boolean(parsed.tutorSwitchSuggestion),
-        shouldDrawDiagram: Boolean(parsed.shouldDrawDiagram),
-        diagramDescription: parsed.diagramDescription || null,
         modelUsed,
       },
     });

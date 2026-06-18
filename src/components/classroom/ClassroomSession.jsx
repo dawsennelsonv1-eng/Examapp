@@ -271,7 +271,7 @@ export default function ClassroomSession({ session, onExit }) {
       // The AI drives the boards. It can return boardActions telling us what to
       // write where: solution steps go to the solution board, and it can request
       // a visual diagram. We always ensure at least one visual gets drawn.
-      await applyBoardActions(data?.data?.boardActions, combinedText);
+      await applyBoardActions(data?.data?.boardActions);
 
       if (Array.isArray(data?.data?.suggestedQuestions)) {
         setSuggestedQuestions(data.data.suggestedQuestions);
@@ -318,42 +318,31 @@ export default function ClassroomSession({ session, onExit }) {
 
   // Apply the AI's board instructions. Shape (all optional):
   //   boardActions: {
-  //     solution: ["step 1 text", "step 2 text", ...],   // appended to solution board
-  //     visual:   "description of a diagram to draw",      // drawn on the visual board
-  //     focus:    "solution" | "visuel" | "enonce"         // which board to show
+  //     solution: [{ type, content, boxed? }, ...],  // appended to the solution board
+  //     visual:   "description of a diagram to draw", // drawn on the visual board
+  //     focus:    "solution" | "visuel" | "enonce"    // which board to show
   //   }
-  // Rule enforced here: whenever the solution board gets steps, we make sure the
-  // visual board has at least one diagram so there's always a visual aid.
-  const applyBoardActions = async (actions, fallbackText) => {
+  // Visuals are drawn ONLY when the AI asks (keeps it fast); solution steps render
+  // instantly because they ride along in the same chat reply.
+  const applyBoardActions = async (actions) => {
     const a = actions || {};
 
-    // 1. Solution steps → solution board
+    // 1. Solution steps → solution board (objects: {type, content, boxed?}).
     if (Array.isArray(a.solution) && a.solution.length) {
+      const steps = a.solution.map((s) =>
+        typeof s === "string" ? { type: "step", content: s } : s
+      );
       setBoards((prev) => prev.map((b) =>
         b.id === "board_solution"
-          ? { ...b, items: [...(b.items || []), ...a.solution.map((t) => ({ text: t }))] }
+          ? { ...b, items: [...(b.items || []), ...steps] }
           : b
       ));
     }
 
-    // 2. Visual diagram → visual board (explicit request)
-    let drewVisual = false;
-    if (a.visual) {
-      await requestDiagram(a.visual);
-      drewVisual = true;
-    }
+    // 2. Visual diagram → only on explicit request from the AI.
+    if (a.visual) await requestDiagram(a.visual);
 
-    // 3. Guarantee at least one visual exists for this exercise. If the AI didn't
-    //    ask for one but we already have solution content and the visual board is
-    //    still empty, draw one from the topic so the student always gets a picture.
-    const visualBoard = boards.find((b) => b.id === "board_visuel");
-    const visualEmpty = !visualBoard?.svg;
-    if (!drewVisual && visualEmpty && (a.solution?.length || session.exercise)) {
-      const topic = session.exercise?.enonce || session.subject || fallbackText?.slice(0, 80);
-      if (topic) await requestDiagram(`Schéma explicatif pour: ${topic}`);
-    }
-
-    // 4. Focus the board the AI wants shown (default: solution while solving)
+    // 3. Focus the board the AI wants shown (default: solution while solving).
     const focusMap = { solution: "board_solution", visuel: "board_visuel", enonce: "board_enonce" };
     if (a.focus && focusMap[a.focus]) {
       setActiveBoardId(focusMap[a.focus]);

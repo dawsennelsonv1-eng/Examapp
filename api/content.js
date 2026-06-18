@@ -40,9 +40,9 @@ const LESSON_MODELS = [
 ];
 
 const BOARD_MODELS = [
-  "anthropic/claude-opus-4.7",
-  "openai/gpt-5.5",
   "google/gemini-3.1-pro",
+  "openai/gpt-5.5",
+  "anthropic/claude-opus-4.7",
 ];
 
 export default async function handler(req, res) {
@@ -862,7 +862,7 @@ async function handleShare(req, res) {
 //  - Diagnostic info in response so we can see what's actually happening.
 
 const PERSONA_VOICES = {
-  joseph:     { gemini: "Achernar", eleven: "VR6AewLTigWG4xSOukaG" },
+  joseph:     { gemini: "Iapetus",  eleven: "VR6AewLTigWG4xSOukaG" },
   tikens:     { gemini: "Puck",     eleven: "pNInz6obpgDQGcFmaJgB" },
   victoria:   { gemini: "Aoede",    eleven: "XB0fDUnXU5powFXDhCwa" },
   marckenson: { gemini: "Charon",   eleven: "TxGEqnHWrfWFTfGW9XjX" },

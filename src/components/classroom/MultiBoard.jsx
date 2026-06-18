@@ -76,7 +76,7 @@ function BoardEnonce({ board, exercise }) {
   const items = board.items || [];
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="font-handwriting space-y-3">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-3">
       {exercise?.enonce && (
         <div className="text-base text-slate-900 dark:text-white leading-relaxed">{exercise.enonce}</div>
       )}
@@ -128,7 +128,7 @@ function BoardSolution({ board }) {
   }
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="font-handwriting space-y-2 font-mono">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-2 font-mono">
       {items.map((item, i) => (
         <motion.div
           key={i}
@@ -146,7 +146,7 @@ function BoardSolution({ board }) {
           }
           style={item.highlight ? { backgroundColor: item.highlight } : undefined}
         >
-          {item.content}
+          {item.content || item.text}
         </motion.div>
       ))}
     </motion.div>
