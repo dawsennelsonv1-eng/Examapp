@@ -7,6 +7,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useUsage } from "./useUsage";
 import { useApp } from "../contexts/AppContext";
+import { ADMIN_EMAILS } from "../utils/constants";
 
 const VIEW_AS_KEY = "laureat.viewAsPlan";
 const VIEW_AS_TRACK_KEY = "laureat.viewAsTrack";
@@ -45,6 +46,16 @@ export function useAdminAccess() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setIsAdmin(false); setUserId(null); setLoading(false); return; }
       setUserId(user.id);
+
+      // Founder/email allowlist: grant admin if the signed-in email is allowed,
+      // regardless of the profiles.statut row. This makes admin work even when a
+      // Google-vs-email duplicate account put statut on a different profile id,
+      // or when RLS blocks reading statut.
+      const email = (user.email || "").toLowerCase();
+      if (Array.isArray(ADMIN_EMAILS) && ADMIN_EMAILS.includes(email)) {
+        setIsAdmin(true); setLoading(false); return;
+      }
+
       const { data, error } = await supabase
         .from("profiles").select("statut").eq("id", user.id).single();
       setIsAdmin(!error && data?.statut === "admin");

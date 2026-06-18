@@ -230,6 +230,11 @@ export const MODELS = {
   OCR_PRIMARY:    "google/gemini-3.5-flash-lite",
 };
 
+// ===== ADMIN =====
+// Emails granted admin access directly (founder bootstrap), independent of the
+// profiles.statut DB flag. Compared in lowercase. Add teammates here as needed.
+export const ADMIN_EMAILS = ["laureataihaiti@gmail.com"];
+
 // ===== APP META =====
 export const APP_NAME = "Laureat AI";
 export const APP_URL  = "https://examapp-virid.vercel.app";
