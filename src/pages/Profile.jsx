@@ -6,18 +6,24 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   User, Edit2, Check, X, Settings, Crown, Zap,
-  Moon, Sun, Sparkles, RotateCcw, Info,
+  Moon, Sun, Sparkles, RotateCcw, Info, ShieldCheck, ChevronRight,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../contexts/AppContext";
 import { useUsage } from "../hooks/useUsage";
-import { PERSONALITIES, LANGUAGE_OPTIONS, STORAGE_KEYS } from "../utils/constants";
+import { useAdminAccess } from "../hooks/useAdminAccess";
+import { PERSONALITIES, LANGUAGE_OPTIONS, STORAGE_KEYS, PLAN_FEATURES } from "../utils/constants";
 import { APP_VERSION, BUILD_DATE, BUILD_NOTES } from "../utils/version";
 
 export default function Profile() {
   const navigate = useNavigate();
   const { track, preferences, setPreferences, theme, toggleTheme } = useApp();
-  const { planTier } = useUsage();
+  const { planTier: rawPlanTier } = useUsage();
+  const { isAdmin } = useAdminAccess();
+
+  // Safety: never render an object as the plan. Coerce to a known tier string.
+  const planTier = ["free", "basic", "premium"].includes(rawPlanTier) ? rawPlanTier : "free";
+  const planInfo = PLAN_FEATURES[planTier] || PLAN_FEATURES.free;
 
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(preferences?.name || "");
@@ -161,19 +167,57 @@ export default function Profile() {
               <Crown size={24} />
               <div className="flex-1 text-left">
                 <div className="font-bold">Passer en Premium</div>
-                <div className="text-xs opacity-90">Scans, chats, voix HD illimités</div>
+                <div className="text-xs opacity-90">Scans illimités, appels avec le prof IA, et plus</div>
               </div>
+              <ChevronRight size={20} />
             </motion.button>
           ) : (
-            <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center gap-3">
-              <Check size={20} />
-              <div className="flex-1">
-                <div className="font-bold capitalize">Plan {planTier} actif</div>
-                <div className="text-xs opacity-90">Tu profites de tous les avantages</div>
+            <div className="rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white p-4 shadow-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <Check size={20} />
+                <div className="font-bold">Plan {planInfo.label} actif</div>
               </div>
+              <div className="space-y-1">
+                {(planInfo.included || []).slice(0, 5).map((f, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs text-white/90">
+                    <Check size={13} className="flex-shrink-0" />
+                    <span>{f}</span>
+                  </div>
+                ))}
+              </div>
+              {planTier === "basic" && (
+                <button onClick={() => navigate("/paywall")}
+                  className="mt-3 w-full py-2 rounded-xl bg-white/20 text-white text-xs font-bold">
+                  Passer en Premium pour les appels →
+                </button>
+              )}
             </div>
           )}
         </Section>
+
+        {/* Admin — only visible to admins */}
+        {isAdmin && (
+          <Section icon={<ShieldCheck size={18} className="text-violet-600" />} title="Administration">
+            <div className="rounded-2xl bg-white dark:bg-slate-800 shadow-sm divide-y divide-slate-100 dark:divide-slate-700">
+              <button onClick={() => navigate("/admin")} className="w-full p-4 flex items-center gap-3 text-left">
+                <Crown size={18} className="text-amber-500" />
+                <div className="flex-1">
+                  <div className="font-semibold text-sm text-slate-900 dark:text-white">Tableau de bord</div>
+                  <div className="text-[11px] text-slate-500">Métriques & KPIs</div>
+                </div>
+                <ChevronRight size={16} className="text-slate-400" />
+              </button>
+              <button onClick={() => navigate("/admin/config")} className="w-full p-4 flex items-center gap-3 text-left">
+                <Settings size={18} className="text-slate-500" />
+                <div className="flex-1">
+                  <div className="font-semibold text-sm text-slate-900 dark:text-white">Configuration</div>
+                  <div className="text-[11px] text-slate-500">Prix, dates, fonctionnalités</div>
+                </div>
+                <ChevronRight size={16} className="text-slate-400" />
+              </button>
+            </div>
+          </Section>
+        )}
 
         <Section icon={<Settings size={18} className="text-slate-600" />} title="Paramètres">
           <div className="rounded-2xl bg-white dark:bg-slate-800 shadow-sm divide-y divide-slate-100 dark:divide-slate-700">

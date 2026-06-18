@@ -19,11 +19,17 @@ function loadUsage() {
   }
 }
 
+const VALID_TIERS = ["free", "basic", "premium"];
+
 export function useUsage() {
   const [usage, setUsage] = useState(() => loadUsage());
   const [planTier, setPlanTier] = useState(() => {
     try {
-      return localStorage.getItem(STORAGE_KEYS.PLAN_TIER) || "free";
+      const raw = localStorage.getItem(STORAGE_KEYS.PLAN_TIER);
+      // Guard: only accept a known tier string. Anything else (an object that
+      // leaked in, stale JSON, null) falls back to "free" — this repairs users
+      // whose stored value got corrupted.
+      return VALID_TIERS.includes(raw) ? raw : "free";
     } catch {
       return "free";
     }
@@ -65,9 +71,10 @@ export function useUsage() {
   }, []);
 
   const upgradePlan = useCallback((newTier) => {
-    setPlanTier(newTier);
+    const tier = VALID_TIERS.includes(newTier) ? newTier : "free";
+    setPlanTier(tier);
     try {
-      localStorage.setItem(STORAGE_KEYS.PLAN_TIER, newTier);
+      localStorage.setItem(STORAGE_KEYS.PLAN_TIER, tier);
     } catch {}
   }, []);
 

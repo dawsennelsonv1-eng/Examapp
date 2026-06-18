@@ -5,6 +5,7 @@
 
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
+import { Phone } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
 import PlanSwitcher from "./admin/PlanSwitcher";
 import NotificationsBell from "./NotificationsBell";
@@ -31,9 +32,8 @@ export default function TopBar({ streak = 3 }) {
         {/* Left: Logo + name */}
         <button onClick={() => navigate("/")} className="flex items-center gap-2.5">
           <div className="relative">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 via-purple-600 to-indigo-700 flex items-center justify-center text-white font-black text-lg shadow-lg shadow-violet-500/30">
-              L
-            </div>
+            <img src="/logo-tile.png" alt="Laureat AI"
+              className="w-10 h-10 rounded-xl shadow-lg shadow-violet-500/30 object-cover" />
             <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-slate-950" />
           </div>
           <div className="text-left">
@@ -46,10 +46,20 @@ export default function TopBar({ streak = 3 }) {
           </div>
         </button>
 
-        {/* Right: admin + notifications + profile */}
+        {/* Right: admin + call + notifications + profile */}
         <div className="flex items-center gap-1.5">
           {/* Admin badge — invisible unless admin */}
           <PlanSwitcher />
+
+          {/* Call the tutor — jumps into Classe ready to call */}
+          <motion.button
+            whileTap={{ scale: 0.92 }}
+            onClick={() => navigate("/classe?call=1")}
+            className="flex items-center justify-center w-10 h-10 rounded-full bg-emerald-500/90 shadow-md shadow-emerald-500/30"
+            aria-label="Appeler le prof"
+          >
+            <Phone size={17} className="text-white" fill="white" />
+          </motion.button>
 
           {/* Notifications (real panel: welcome + exam countdown + admin messages) */}
           <NotificationsBell />

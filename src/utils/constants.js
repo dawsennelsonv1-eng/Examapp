@@ -3,24 +3,20 @@
 // If a file imports something that doesn't exist here, add it.
 
 // ===== EXAM DATES =====
-// Sourced from trackConfig.js (single source of truth) so dates can never disagree
-// across the homepage, exam list, and countdowns.
-import { TRACK_CONFIG } from "./trackConfig";
-
 export const EXAM_DATES = {
   "9AF": {
-    label: TRACK_CONFIG["9AF"].label,
-    fullLabel: TRACK_CONFIG["9AF"].fullLabel,
-    start: TRACK_CONFIG["9AF"].examStart,
-    end: TRACK_CONFIG["9AF"].examEnd,
-    range: TRACK_CONFIG["9AF"].examRange,
+    label: "9ème AF",
+    fullLabel: "9ème Année Fondamentale",
+    start: new Date("2026-06-29T08:00:00"),
+    end: new Date("2026-07-02T17:00:00"),
+    range: "29 juin – 2 juillet",
   },
   NS4: {
-    label: TRACK_CONFIG.NS4.label,
-    fullLabel: TRACK_CONFIG.NS4.fullLabel,
-    start: TRACK_CONFIG.NS4.examStart,
-    end: TRACK_CONFIG.NS4.examEnd,
-    range: TRACK_CONFIG.NS4.examRange,
+    label: "NS4",
+    fullLabel: "Nouveau Secondaire 4",
+    start: new Date("2026-07-03T08:00:00"),
+    end: new Date("2026-07-07T17:00:00"),
+    range: "3 – 7 juillet",
   },
 };
 
@@ -42,26 +38,80 @@ export const PLAN_TIERS = {
 };
 
 export const PLAN_PRICES = {
-  basic: 900,
-  premium: 2400,
+  basic: 750,
+  premium: 1200,
 };
 
 export const PLAN_PRICES_HTG = PLAN_PRICES; // alias
 
+// ===== PLAN FEATURES (for the tier comparison / checker UI) =====
+// `included` drives the checkmark list; premium includes everything.
+export const PLAN_FEATURES = {
+  free: {
+    label: "Gratuit",
+    price: 0,
+    tagline: "Pour essayer",
+    included: [
+      "2 scans par jour",
+      "5 messages au prof par jour",
+      "Quiz hebdomadaire (1)",
+      "Anciens examens (avant 2019)",
+    ],
+    excluded: [
+      "Appels avec le prof IA",
+      "Scan illimité",
+      "Examens des 5 dernières années",
+      "Vérification de réponses",
+    ],
+  },
+  basic: {
+    label: "Basic",
+    price: 750,
+    tagline: "Pour réviser sérieusement",
+    included: [
+      "20 scans par jour",
+      "Messages au prof illimités",
+      "Voix du prof illimitée",
+      "Tous les quiz hebdomadaires",
+      "Cours complets",
+      "5 vérifications de réponses / jour",
+    ],
+    excluded: [
+      "Appels avec le prof IA",
+      "Examens des 5 dernières années",
+    ],
+  },
+  premium: {
+    label: "Premium",
+    price: 1200,
+    tagline: "Tout, sans limite",
+    highlight: true,
+    included: [
+      "Tout le Basic, sans limite",
+      "📞 Appels avec le prof IA (exclusif)",
+      "Scan illimité",
+      "Examens des 5 dernières années",
+      "Vérifications illimitées",
+      "Support prioritaire WhatsApp",
+    ],
+    excluded: [],
+  },
+};
+
 // ===== USAGE LIMITS =====
 export const USAGE_CAPS = {
   free: {
-    scans_per_day: 3,
-    chat_messages_per_day: 10,
-    tts_per_day: 5,
+    scans_per_day: 2,
+    chat_messages_per_day: 5,
+    tts_per_day: 3,
     voice_call_minutes_per_day: 0,
     camera_scans_per_day: 0,
     verification_scans_per_day: 0,
-    past_exams_unlocked_before_year: 2022,
+    past_exams_unlocked_before_year: 2019,
     weekly_quizzes_per_week: 1,
     // legacy field name compatibility
-    dailyScans: 3,
-    dailyChats: 10,
+    dailyScans: 2,
+    dailyChats: 5,
   },
   basic: {
     scans_per_day: 20,
@@ -93,10 +143,10 @@ export const DAILY_LIMITS = USAGE_CAPS; // alias for older naming
 
 // ===== PERSONALITIES =====
 export const PERSONALITIES = [
-  { id: "joseph",     name: "M. Joseph",     title: "Le professeur vétéran",          description: "Patient, sage, méthodique. Comme un grand-père qui enseigne.", voiceId: "Achernar", icon: "👨‍🏫" },
+  { id: "joseph",     name: "M. Joseph",     title: "Le professeur vétéran",          description: "Patient, sage, méthodique. Comme un grand-père qui enseigne.", voiceId: "Iapetus",  icon: "👨‍🏫" },
   { id: "tikens",     name: "Ti-Kens",       title: "Le grand frère cool",            description: "Énergique, motivant. Comme un ami qui sait tout.",              voiceId: "Puck",     icon: "🎧" },
   { id: "victoria",   name: "Mlle. Victoria",title: "La mentore brillante",           description: "Élégante, inspirante. Elle valide ton intelligence.",          voiceId: "Aoede",    icon: "✨" },
-  { id: "marckenson", name: "M. Marckenson", title: "Le coach intense",               description: "Direct, motivant. Il te pousse à donner ton maximum.",         voiceId: "Charon",   icon: "🎯" },
+  { id: "marckenson", name: "M. Marckenson", title: "Le coach intense",               description: "Direct, motivant. Il te pousse à donner ton maximum.",         voiceId: "Fenrir",   icon: "🎯" },
   { id: "camille",    name: "Mlle. Camille", title: "La grande sœur bienveillante",   description: "Douce, patiente. Un espace safe pour apprendre.",              voiceId: "Leda",     icon: "💝" },
 ];
 
@@ -119,7 +169,9 @@ export const STORAGE_KEYS = {
   TRACK:                  "laureat.track",
   THEME:                  "laureat.theme",
   USAGE:                  "laureat.usage",
+  USAGE_TODAY:            "laureat.usage",   // alias — useUsage references this name
   PLAN:                   "laureat.plan",
+  PLAN_TIER:              "laureat.plan",    // alias — useUsage references this name
   SCAN_HISTORY:           "laureat.scanHistory",
   CLASSROOM_SESSIONS:     "laureat.classroom.sessions",
   LAST_SESSION_SUMMARY:   "laureat.lastSessionSummary",
@@ -160,8 +212,7 @@ export const MESSAGE_TYPES = {
   THINKING:    "thinking",
 };
 
-// Per-segment display info (label + icon). This is what MessageBubble looks up.
-// Keyed by the lowercase segment.type the chat API returns.
+// Per-segment display info (label + icon). MessageBubble looks this up.
 export const MESSAGE_TYPE_INFO = {
   thinking:    { label: "Réflexion",   icon: "🤔" },
   acknowledge: { label: "Accueil",     icon: "💬" },
