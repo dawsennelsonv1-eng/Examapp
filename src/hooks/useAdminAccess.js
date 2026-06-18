@@ -1,20 +1,8 @@
-// src/hooks/useAdminAccess.js v22-fix
-// Admin gate that works WITHOUT Supabase. When Supabase is set up later, the
-// import will resolve and Supabase check kicks in automatically.
+// src/hooks/useAdminAccess.js — v24 (fixed)
+// Admin gate. Reads profiles.statut from Supabase AND honors a local override.
+// Fixes "I set myself admin but no button" by RE-CHECKING on auth state changes.
 //
-// HOW TO BECOME ADMIN RIGHT NOW (no Supabase needed):
-//   1. Open the app in your browser
-//   2. Open DevTools console (long-press refresh on mobile Chrome → "Open DevTools")
-//   3. Run: localStorage.setItem("laureat.admin", "1")
-//   4. Refresh the page
-//   5. The amber "Admin" badge appears in the top-right
-//
-// To stop being admin (test as a normal user):
-//   localStorage.removeItem("laureat.admin")
-//
-// When you set up Supabase later, this file already supports it — once you
-// install @supabase/supabase-js and create src/lib/supabase.js, the Supabase
-// check runs alongside the localStorage check.
+// Instant local override (offline / emergency): localStorage.setItem("laureat.admin","1")
 
 import { useEffect, useState, useCallback } from "react";
 import { useUsage } from "./useUsage";
@@ -24,7 +12,6 @@ const VIEW_AS_KEY = "laureat.viewAsPlan";
 const VIEW_AS_TRACK_KEY = "laureat.viewAsTrack";
 const LOCAL_ADMIN_KEY = "laureat.admin";
 
-// Lazy-load Supabase only if it exists. Won't break the build if missing.
 async function getSupabaseClient() {
   try {
     const mod = await import("../lib/supabase");
@@ -45,49 +32,42 @@ export function useAdminAccess() {
     try { return sessionStorage.getItem(VIEW_AS_TRACK_KEY) || null; } catch { return null; }
   });
 
+  const checkAdmin = useCallback(async () => {
+    try {
+      if (localStorage.getItem(LOCAL_ADMIN_KEY) === "1") {
+        setIsAdmin(true); setLoading(false); return;
+      }
+    } catch {}
+
+    const supabase = await getSupabaseClient();
+    if (!supabase) { setIsAdmin(false); setLoading(false); return; }
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setIsAdmin(false); setUserId(null); setLoading(false); return; }
+      setUserId(user.id);
+      const { data, error } = await supabase
+        .from("profiles").select("statut").eq("id", user.id).single();
+      setIsAdmin(!error && data?.statut === "admin");
+    } catch (err) {
+      console.warn("Admin check exception:", err?.message);
+      setIsAdmin(false);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-
+    let sub;
     (async () => {
-      // 1. Local override always wins (lets you test admin features offline)
-      try {
-        if (localStorage.getItem(LOCAL_ADMIN_KEY) === "1") {
-          if (!cancelled) { setIsAdmin(true); setLoading(false); }
-          return;
-        }
-      } catch {}
-
-      // 2. Try Supabase — but only if installed
+      await checkAdmin();
       const supabase = await getSupabaseClient();
-      if (!supabase) {
-        if (!cancelled) { setIsAdmin(false); setLoading(false); }
-        return;
-      }
-
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (cancelled) return;
-        if (!user) { setIsAdmin(false); setLoading(false); return; }
-        setUserId(user.id);
-
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("statut")
-          .eq("id", user.id)
-          .single();
-
-        if (cancelled) return;
-        if (error) { console.warn("Admin check failed:", error.message); setIsAdmin(false); }
-        else setIsAdmin(data?.statut === "admin");
-      } catch (err) {
-        console.warn("Admin check exception:", err.message);
-      } finally {
-        if (!cancelled) setLoading(false);
+      if (supabase && !cancelled) {
+        sub = supabase.auth.onAuthStateChange(() => { checkAdmin(); });
       }
     })();
-
-    return () => { cancelled = true; };
-  }, []);
+    return () => { cancelled = true; sub?.data?.subscription?.unsubscribe?.(); };
+  }, [checkAdmin]);
 
   const setViewAsPlan = useCallback((plan) => {
     setViewAsPlanState(plan);
@@ -108,18 +88,16 @@ export function useAdminAccess() {
   return { isAdmin, loading, userId, viewAsPlan, setViewAsPlan, viewAsTrack, setViewAsTrack };
 }
 
-// Returns the track the user should see — admin's viewAs preview if set, else real track
-export function useEffectiveTrack() {
-  const { track } = useApp();
-  const { isAdmin, viewAsTrack } = useAdminAccess();
-  if (isAdmin && viewAsTrack) return viewAsTrack;
-  return track;
-}
-
-// Returns the plan the user should see — admin's viewAs preview if set, else real plan
 export function useEffectivePlan() {
   const { planTier } = useUsage();
   const { isAdmin, viewAsPlan } = useAdminAccess();
   if (isAdmin && viewAsPlan) return viewAsPlan;
   return planTier;
+}
+
+export function useEffectiveTrack() {
+  const { track } = useApp();
+  const { isAdmin, viewAsTrack } = useAdminAccess();
+  if (isAdmin && viewAsTrack) return viewAsTrack;
+  return track;
 }
