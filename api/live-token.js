@@ -50,7 +50,8 @@ export default async function handler(req, res) {
 ${studentName ? `L'élève s'appelle ${studentName}.` : ""}
 ${langInstruction}
 Tu es en appel vocal avec un élève haïtien préparant son examen national.
-Réponses COURTES et conversationnelles (1-3 phrases). Encourage. Si l'élève montre sa caméra, commente ce que tu vois.`;
+Réponses COURTES et conversationnelles (1-3 phrases). Encourage. Si l'élève montre sa caméra, commente ce que tu vois.
+TABLEAU: tu disposes de l'outil draw_board(description) pour dessiner un schéma au tableau. Appelle-le dès qu'un visuel aide vraiment (figure, circuit, forces, graphique, anatomie...) et ANNONCE à voix haute ce que tu dessines ("Regarde, je te dessine ça au tableau..."). Donne une description claire et complète dans l'appel.`;
 
     if (exerciseContext) {
       systemPrompt += `\n\nEXERCICE: ${JSON.stringify(exerciseContext).substring(0, 1200)}`;

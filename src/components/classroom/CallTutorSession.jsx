@@ -60,8 +60,8 @@ export default function CallTutorSession({
         studentName,
         onTranscript: ({ role, text }) => {
           setTranscript((prev) => [...prev.slice(-10), { role, text, ts: Date.now() }]);
-          // If the TUTOR mentions showing/drawing something, reveal the board
-          // and generate the schema in the background. Throttled so it fires once.
+          // Fallback: if the model speaks about drawing but didn't call the
+          // tool, the keyword match still reveals a board. Throttled.
           if (role === "tutor" && /tableau|sch[ée]ma|dessin|regarde|je te montre|illustration|diagramme/i.test(text)) {
             requestCallBoard(text);
           }
@@ -72,6 +72,14 @@ export default function CallTutorSession({
           setStatus("error");
         },
         onTutorTurn: () => setStatus("speaking"),
+        // The AI explicitly asked to draw (function-calling) — primary path.
+        onToolCall: (fc) => {
+          if (fc?.name === "draw_board") {
+            const desc = fc?.args?.description || "schéma explicatif";
+            setBoardOpen(true);
+            requestCallBoard(desc, { force: true });
+          }
+        },
       });
       sessionRef.current = session;
 
@@ -147,10 +155,10 @@ export default function CallTutorSession({
   };
 
   // Generate a schema for the call's hidden board (AI- or user-triggered).
-  const requestCallBoard = async (description) => {
+  const requestCallBoard = async (description, { force = false } = {}) => {
     const now = Date.now();
     if (boardLoading) return;
-    if (now - lastBoardReqRef.current < 8000) return; // throttle auto-triggers
+    if (!force && now - lastBoardReqRef.current < 8000) return; // throttle keyword auto-triggers
     lastBoardReqRef.current = now;
     setBoardOpen(true);
     setBoardLoading(true);

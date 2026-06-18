@@ -8,7 +8,7 @@ const WS_BASE =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
 export class GeminiLiveSession {
-  constructor({ onTranscript, onStatus, onError, onTutorTurn }) {
+  constructor({ onTranscript, onStatus, onError, onTutorTurn, onToolCall }) {
     this.ws = null;
     this.mediaStream = null;
     this.videoStream = null;
@@ -21,6 +21,7 @@ export class GeminiLiveSession {
     this.onStatus = onStatus || (() => {});
     this.onError = onError || (() => {});
     this.onTutorTurn = onTutorTurn || (() => {});
+    this.onToolCall = onToolCall || (() => {});
     this.audioQueue = [];
     this.isPlaying = false;
     this.playbackContext = null;
@@ -29,13 +30,15 @@ export class GeminiLiveSession {
     this.model = null;
     this.voiceName = null;
     this.systemPrompt = null;
+    this.tools = null;
   }
 
-  async connect(apiKey, model, voiceName, systemPrompt) {
+  async connect(apiKey, model, voiceName, systemPrompt, tools = null) {
     this.onStatus("connecting");
     this.model = model;
     this.voiceName = voiceName;
     this.systemPrompt = systemPrompt;
+    this.tools = tools;
 
     return new Promise((resolve, reject) => {
       try {
@@ -64,6 +67,7 @@ export class GeminiLiveSession {
               systemInstruction: {
                 parts: [{ text: systemPrompt }],
               },
+              ...(this.tools ? { tools: this.tools } : {}),
               outputAudioTranscription: {},
               inputAudioTranscription: {},
             },
@@ -130,6 +134,18 @@ export class GeminiLiveSession {
         return;
       }
 
+      // Function calling: the model asks us to draw on the board.
+      if (data.toolCall) {
+        const calls = data.toolCall.functionCalls || [];
+        for (const fc of calls) {
+          try { this.onToolCall(fc); } catch (e) { console.warn("[Live] onToolCall threw:", e); }
+          this.sendToolResponse(fc);
+        }
+        return;
+      }
+      // The model can cancel a pending tool call — nothing to undo, just ignore.
+      if (data.toolCallCancellation) return;
+
       if (data.serverContent) {
         const sc = data.serverContent;
         if (sc.modelTurn?.parts) {
@@ -151,6 +167,17 @@ export class GeminiLiveSession {
       }
     } catch (err) {
       console.warn("[Live] parse error:", err);
+    }
+  }
+
+  sendToolResponse(fc) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    const fr = { name: fc?.name, response: { result: "ok" } };
+    if (fc?.id) fr.id = fc.id;
+    try {
+      this.ws.send(JSON.stringify({ toolResponse: { functionResponses: [fr] } }));
+    } catch (e) {
+      console.warn("[Live] sendToolResponse failed:", e);
     }
   }
 
@@ -339,10 +366,34 @@ function base64ToArrayBuffer(base64) {
   return bytes.buffer;
 }
 
+// Function-calling tool: lets the tutor draw on the board during a call.
+const BOARD_TOOL = [
+  {
+    functionDeclarations: [
+      {
+        name: "draw_board",
+        description:
+          "Affiche un schéma/dessin sur le tableau pour aider l'élève. À utiliser quand un visuel aide vraiment (figure géométrique, circuit, forces, graphique, anatomie, carte...). Annonce à voix haute que tu dessines.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            description: {
+              type: "STRING",
+              description:
+                "Description claire et complète de ce qu'il faut dessiner, en français (ex: 'triangle rectangle ABC, angle droit en B, AB=3, BC=4').",
+            },
+          },
+          required: ["description"],
+        },
+      },
+    ],
+  },
+];
+
 // Convenience: fetch config from backend + try connecting with first working model
 export async function createLiveSession({
   persona = "joseph", language = "fr", exerciseContext = null, studentName = "",
-  onTranscript, onStatus, onError, onTutorTurn,
+  onTranscript, onStatus, onError, onTutorTurn, onToolCall,
 }) {
   console.log("[Live] Fetching config from /api/live-token...");
   const tokenResponse = await fetch("/api/live-token", {
@@ -361,9 +412,9 @@ export async function createLiveSession({
   // Try each model until one connects
   let lastErr = null;
   for (const model of data.models) {
-    const session = new GeminiLiveSession({ onTranscript, onStatus, onError, onTutorTurn });
+    const session = new GeminiLiveSession({ onTranscript, onStatus, onError, onTutorTurn, onToolCall });
     try {
-      await session.connect(data.apiKey, model, data.voiceName, data.systemPrompt);
+      await session.connect(data.apiKey, model, data.voiceName, data.systemPrompt, BOARD_TOOL);
       console.log("[Live] ✅ Connected with model:", model);
       return session;
     } catch (err) {
