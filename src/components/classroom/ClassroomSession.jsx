@@ -10,12 +10,12 @@ import {
 } from "lucide-react";
 import { useClassroomSessions } from "../../hooks/useClassroom";
 import { useApp } from "../../contexts/AppContext";
+import { useUsage } from "../../hooks/useUsage";
 import { useOrientation } from "../../hooks/useOrientation";
 import {
   speakText, stopSpeaking, pauseSpeaking, resumeSpeaking,
 } from "../../services/ttsService";
 import { PERSONALITIES } from "../../utils/constants";
-import { logEvent } from "../../services/analytics";
 import MultiBoard from "./MultiBoard";
 import MessageBubble from "./MessageBubble";
 import SuggestedQuestions from "./SuggestedQuestions";
@@ -51,7 +51,7 @@ export default function ClassroomSession({ session, onExit }) {
 
   const appCtx = useApp() || {};
   const preferences = appCtx.preferences || {};
-  const planTier = appCtx.planTier || "free";
+  const { planTier = "free" } = useUsage() || {};
 
   const orientation = useOrientation() || { isLandscape: false };
   const isLandscape = orientation.isLandscape;
@@ -77,9 +77,6 @@ export default function ClassroomSession({ session, onExit }) {
 
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
   const [isPaused, setIsPaused] = useState(false);
-  // Speech↔text sync: how many segments of a given message are currently revealed.
-  // While a tutor message is being spoken, segments appear in time with the audio.
-  const [revealCounts, setRevealCounts] = useState({}); // { [messageId]: number }
 
   const [failCount, setFailCount] = useState(session.failCount || 0);
   const [suggestedQuestions, setSuggestedQuestions] = useState([]);
@@ -183,32 +180,17 @@ export default function ClassroomSession({ session, onExit }) {
     if (!msg?.segments && !msg?.content) return;
     setSpeakingMessageId(msg.id);
     setIsPaused(false);
-
-    const segments = Array.isArray(msg.segments) && msg.segments.length
-      ? msg.segments
-      : [{ type: "explain", text: msg.content, speakable: msg.content }];
-
-    // Start every tutor message with 0 segments revealed, then reveal each one
-    // right as its audio begins — so the text and the voice are in sync.
-    setRevealCounts((prev) => ({ ...prev, [msg.id]: 0 }));
-
     try {
-      for (let i = 0; i < segments.length; i++) {
-        const seg = segments[i];
-        const text = seg?.speakable || seg?.text || "";
-        // Reveal this segment the instant we begin speaking it.
-        setRevealCounts((prev) => ({ ...prev, [msg.id]: i + 1 }));
-        if (!text) continue;
-        const result = await speakText(text, "fr-FR", {
-          persona: msg.personaId || currentPersonaId,
-        });
-        if (result?.promise) await result.promise;
-      }
+      const text = msg.segments
+        ? msg.segments.map((s) => s?.speakable || s?.text || "").join(" ")
+        : msg.content;
+      const result = await speakText(text, "fr-FR", {
+        persona: msg.personaId || currentPersonaId,
+      });
+      if (result?.promise) await result.promise;
     } catch (err) {
       console.warn("Speech failed:", err);
     } finally {
-      // Make sure the whole message is visible once speech ends (or if it failed).
-      setRevealCounts((prev) => ({ ...prev, [msg.id]: segments.length }));
       setSpeakingMessageId(null);
       setIsPaused(false);
     }
@@ -221,11 +203,6 @@ export default function ClassroomSession({ session, onExit }) {
 
   const handleStopSpeak = () => {
     stopSpeaking();
-    if (speakingMessageId) {
-      const m = localMessages.find((x) => x.id === speakingMessageId);
-      const total = m?.segments?.length || 1;
-      setRevealCounts((prev) => ({ ...prev, [speakingMessageId]: total }));
-    }
     setSpeakingMessageId(null);
     setIsPaused(false);
   };
@@ -234,7 +211,6 @@ export default function ClassroomSession({ session, onExit }) {
     if (autoSendTimer) { clearTimeout(autoSendTimer); setAutoSendTimer(null); }
     const text = (overrideText || input).trim();
     if (!text || sending) return;
-    logEvent("tutor_message", { subject: session?.subject || null, persona: currentPersonaId, length: text.length });
 
     const userMsg = {
       id: `msg_${Date.now()}`,
@@ -292,6 +268,11 @@ export default function ClassroomSession({ session, onExit }) {
       appendMessage(session.id, tutorMsg);
       setLastModelUsed(data?.data?.modelUsed);
 
+      // The AI drives the boards. It can return boardActions telling us what to
+      // write where: solution steps go to the solution board, and it can request
+      // a visual diagram. We always ensure at least one visual gets drawn.
+      await applyBoardActions(data?.data?.boardActions, combinedText);
+
       if (Array.isArray(data?.data?.suggestedQuestions)) {
         setSuggestedQuestions(data.data.suggestedQuestions);
       }
@@ -299,9 +280,6 @@ export default function ClassroomSession({ session, onExit }) {
       if (data?.data?.tutorSwitchSuggestion || failCount >= 3) setShowTutorSwitch(true);
 
       speakMessage(tutorMsg);
-      // AI brain decides (in the background) whether a visual would help, and if so
-      // generates it and reveals the Visuel board. No "beg button" needed.
-      maybeAutoBoard(newMessages, tutorMsg);
     } catch (err) {
       console.error("Chat error:", err);
       const errText = "Pas de connexion. Réessaie.";
@@ -338,6 +316,52 @@ export default function ClassroomSession({ session, onExit }) {
     }
   };
 
+  // Apply the AI's board instructions. Shape (all optional):
+  //   boardActions: {
+  //     solution: ["step 1 text", "step 2 text", ...],   // appended to solution board
+  //     visual:   "description of a diagram to draw",      // drawn on the visual board
+  //     focus:    "solution" | "visuel" | "enonce"         // which board to show
+  //   }
+  // Rule enforced here: whenever the solution board gets steps, we make sure the
+  // visual board has at least one diagram so there's always a visual aid.
+  const applyBoardActions = async (actions, fallbackText) => {
+    const a = actions || {};
+
+    // 1. Solution steps → solution board
+    if (Array.isArray(a.solution) && a.solution.length) {
+      setBoards((prev) => prev.map((b) =>
+        b.id === "board_solution"
+          ? { ...b, items: [...(b.items || []), ...a.solution.map((t) => ({ text: t }))] }
+          : b
+      ));
+    }
+
+    // 2. Visual diagram → visual board (explicit request)
+    let drewVisual = false;
+    if (a.visual) {
+      await requestDiagram(a.visual);
+      drewVisual = true;
+    }
+
+    // 3. Guarantee at least one visual exists for this exercise. If the AI didn't
+    //    ask for one but we already have solution content and the visual board is
+    //    still empty, draw one from the topic so the student always gets a picture.
+    const visualBoard = boards.find((b) => b.id === "board_visuel");
+    const visualEmpty = !visualBoard?.svg;
+    if (!drewVisual && visualEmpty && (a.solution?.length || session.exercise)) {
+      const topic = session.exercise?.enonce || session.subject || fallbackText?.slice(0, 80);
+      if (topic) await requestDiagram(`Schéma explicatif pour: ${topic}`);
+    }
+
+    // 4. Focus the board the AI wants shown (default: solution while solving)
+    const focusMap = { solution: "board_solution", visuel: "board_visuel", enonce: "board_enonce" };
+    if (a.focus && focusMap[a.focus]) {
+      setActiveBoardId(focusMap[a.focus]);
+    } else if (a.solution?.length) {
+      setActiveBoardId("board_solution");
+    }
+  };
+
   const requestDiagram = async (description) => {
     if (!description) return;
     setTutorWritingOn("board_visuel");
@@ -364,65 +388,6 @@ export default function ClassroomSession({ session, onExit }) {
       }
     } catch (err) {
       console.warn("Diagram request failed:", err);
-    } finally {
-      setTutorWritingOn(null);
-    }
-  };
-
-  // AI brain: decide whether a diagram would help understanding, and if so build it.
-  // This replaces the old "user must press Demander un schéma" flow.
-  const maybeAutoBoard = async (messages, tutorMsg) => {
-    try {
-      const lastTutorText = tutorMsg?.content || "";
-      const lastUserText = [...messages].reverse().find((m) => m.role === "user")?.content || "";
-
-      const decideRes = await fetch("/api/content?task=decision", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonMode: true,
-          temperature: 0.2,
-          maxTokens: 300,
-          prompt:
-`Tu es le "cerveau" d'un prof IA haïtien. En te basant sur l'échange ci-dessous,
-décide si un SCHÉMA/diagramme visuel aiderait vraiment l'élève à comprendre MAINTENANT.
-Ne propose un schéma que si c'est utile (géométrie, forces, circuits, anatomie, cycles, cartes...).
-
-ÉLÈVE: ${lastUserText}
-PROF: ${lastTutorText}
-MATIÈRE: ${session.subject || "Général"}
-
-Réponds en JSON: { "needsBoard": true|false, "description": "ce que le schéma doit montrer (1 phrase)" }`,
-        }),
-      });
-      if (!decideRes.ok) return;
-      const decision = (await decideRes.json())?.data;
-      if (!decision?.needsBoard || !decision?.description) return;
-
-      // Brain decided yes → generate and reveal the visual.
-      setTutorWritingOn("board_visuel");
-      const boardRes = await fetch("/api/content?task=board", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          topic: String(decision.description).substring(0, 80),
-          description: decision.description,
-          subject: session.subject,
-          style: "diagram",
-          exerciseContext: session.exercise,
-        }),
-      });
-      if (boardRes.ok) {
-        const svg = (await boardRes.json())?.data?.svg;
-        if (svg) {
-          setBoards((prev) => prev.map((b) => (b.id === "board_visuel" ? { ...b, svg } : b)));
-          setActiveBoardId("board_visuel");
-          setBoardExpanded(true);
-          logEvent("tutor_board_shown", { subject: session?.subject || null, trigger: "ai_brain" });
-        }
-      }
-    } catch (err) {
-      console.warn("Auto-board failed:", err);
     } finally {
       setTutorWritingOn(null);
     }
@@ -499,26 +464,18 @@ Réponds en JSON: { "needsBoard": true|false, "description": "ce que le schéma 
         </button>
       </header>
 
-      {/* Board + chat: stacked in portrait, side-by-side (chat left / board right) in landscape */}
-      <div className={isLandscape ? "flex-1 flex flex-row-reverse min-h-0" : "flex-1 flex flex-col min-h-0"}>
-        <motion.div
-          animate={isLandscape ? {} : { height: boardExpanded ? "50%" : "25%" }}
-          transition={{ duration: 0.3 }}
-          className={isLandscape ? "w-3/5 h-full p-2" : "flex-shrink-0 px-2 pt-2"}
-        >
-          <MultiBoard
-            boards={boards}
-            activeBoardId={activeBoardId}
-            onChangeBoard={setActiveBoardId}
-            tutorWritingOn={tutorWritingOn}
-            exercise={session.exercise}
-            onRequestDiagram={requestDiagram}
-          />
-        </motion.div>
+      <motion.div animate={{ height: boardExpanded ? "50%" : "25%" }} transition={{ duration: 0.3 }} className="flex-shrink-0 px-2 pt-2">
+        <MultiBoard
+          boards={boards}
+          activeBoardId={activeBoardId}
+          onChangeBoard={setActiveBoardId}
+          tutorWritingOn={tutorWritingOn}
+          exercise={session.exercise}
+          onRequestDiagram={requestDiagram}
+        />
+      </motion.div>
 
-        <div className={isLandscape
-          ? "w-2/5 h-full overflow-y-auto px-3 pt-3 pb-1 space-y-3 border-r border-slate-200 dark:border-slate-800"
-          : "flex-1 overflow-y-auto px-3 pt-3 pb-1 space-y-3"}>
+      <div className="flex-1 overflow-y-auto px-3 pt-3 pb-1 space-y-3">
         {localMessages.map((msg) => (
           <MessageBubble
             key={msg.id}
@@ -526,7 +483,6 @@ Réponds en JSON: { "needsBoard": true|false, "description": "ce que le schéma 
             isUser={msg.role === "user"}
             isSpeaking={speakingMessageId === msg.id && !isPaused}
             isPaused={speakingMessageId === msg.id && isPaused}
-            visibleSegments={revealCounts[msg.id]}
             onPlay={() => speakMessage(msg)}
             onPause={handlePauseResume}
             onStop={handleStopSpeak}
@@ -540,7 +496,6 @@ Réponds en JSON: { "needsBoard": true|false, "description": "ce que le schéma 
           </div>
         )}
         <div ref={messagesEndRef} />
-      </div>
       </div>
 
       {pendingConfirmation && !sending && (

@@ -7,8 +7,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, FileText, ChevronRight, Calendar,
-  CheckCircle2, MessageCircle, Sparkles,
+  CheckCircle2, MessageCircle, Sparkles, Download, Loader2,
 } from "lucide-react";
+import { useExams } from "../hooks/useExams";
 
 // Subject icons + colors for the viewer
 const SUBJECT_DISPLAY = {
@@ -39,8 +40,22 @@ const SAMPLE_EXERCISES = {
 export default function ReviserExam() {
   const { year, track } = useParams();
   const navigate = useNavigate();
+  const { exams, getPdfUrl } = useExams();
 
   const [selectedSubject, setSelectedSubject] = useState(null);
+  const [openingPdf, setOpeningPdf] = useState(null);
+
+  // PDFs uploaded by admin for this exam (matching year + track).
+  const examPdfs = (exams || []).filter(
+    (e) => String(e.year) === String(year) && e.track === track
+  );
+
+  const openPdf = async (exam) => {
+    setOpeningPdf(exam.id);
+    const url = await getPdfUrl(exam.pdf_path);
+    setOpeningPdf(null);
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+  };
 
   const subjects = track === "9AF"
     ? ["mathematiques", "francais", "sciences_sociales", "creole"]
@@ -69,6 +84,30 @@ export default function ReviserExam() {
       </header>
 
       <main className="px-4 mt-4">
+        {/* Real exam PDFs uploaded by admin for this year/track */}
+        {examPdfs.length > 0 && (
+          <section className="mb-4">
+            <h2 className="text-[10px] uppercase tracking-widest font-black text-slate-500 dark:text-slate-400 mb-2 px-1">
+              Épreuves officielles (PDF)
+            </h2>
+            <div className="space-y-2">
+              {examPdfs.map((exam) => (
+                <button key={exam.id} onClick={() => openPdf(exam)}
+                  className="w-full p-3.5 rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-700 text-white flex items-center gap-3 shadow-md">
+                  <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0">
+                    {openingPdf === exam.id ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
+                  </div>
+                  <div className="flex-1 text-left min-w-0">
+                    <div className="font-bold text-sm truncate">{exam.title || `Examen ${exam.track} ${exam.year}`}</div>
+                    <div className="text-[11px] opacity-80">Toucher pour ouvrir le PDF</div>
+                  </div>
+                  <Download size={18} className="opacity-80" />
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
         {!selectedSubject ? (
           <section>
             <h2 className="text-[10px] uppercase tracking-widest font-black text-slate-500 dark:text-slate-400 mb-3 px-1">

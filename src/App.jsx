@@ -24,6 +24,7 @@ const Profile       = lazy(() => import("./pages/Profile"));
 const Onboarding    = lazy(() => import("./pages/Onboarding"));
 const AdminDashboard= lazy(() => import("./pages/AdminDashboard"));
 const AdminConfig   = lazy(() => import("./pages/AdminConfig"));
+const AdminExams    = lazy(() => import("./pages/AdminExams"));
 const Paywall       = lazy(() => import("./pages/Paywall"));
 const Share         = lazy(() => import("./pages/Share"));
 
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="profile" element={<Profile />} />
           <Route path="admin" element={<AdminDashboard />} />
           <Route path="admin/config" element={<AdminConfig />} />
+          <Route path="admin/exams" element={<AdminExams />} />
 
           {/* Backward compat */}
           <Route path="quiz" element={<Navigate to="/reviser" replace />} />
