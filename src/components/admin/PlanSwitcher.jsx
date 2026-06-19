@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Crown, Eye, ChevronDown, User, Zap, BarChart3, Check, Settings, GraduationCap,
+  Crown, Eye, ChevronDown, User, Zap, BarChart3, Check, Settings, GraduationCap, FileText,
 } from "lucide-react";
 import { useAdminAccess } from "../../hooks/useAdminAccess";
 
@@ -68,7 +68,7 @@ export default function PlanSwitcher() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.96 }}
             transition={{ duration: 0.15 }}
-            className="absolute right-0 top-full mt-2 w-64 rounded-2xl bg-white dark:bg-slate-800 shadow-xl ring-1 ring-slate-200 dark:ring-slate-700 overflow-hidden z-50"
+            className="fixed left-3 right-3 top-16 max-h-[80vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-800 shadow-xl ring-1 ring-slate-200 dark:ring-slate-700 z-50 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-64 sm:max-h-none sm:overflow-hidden"
           >
             {/* Header strip */}
             <div className="px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white">
@@ -103,6 +103,20 @@ export default function PlanSwitcher() {
               <div className="flex-1 min-w-0">
                 <div className="font-bold text-sm text-slate-900 dark:text-white">Configuration</div>
                 <div className="text-[10px] text-slate-500 dark:text-slate-400">Prix, dates, fonctionnalités</div>
+              </div>
+            </button>
+
+            {/* Exams link */}
+            <button
+              onClick={() => { setOpen(false); navigate("/admin/exams"); }}
+              className="w-full p-3 flex items-center gap-3 text-left hover:bg-violet-50 dark:hover:bg-violet-950/30 border-b border-slate-100 dark:border-slate-700"
+            >
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-white shadow-sm">
+                <FileText size={16} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-sm text-slate-900 dark:text-white">Examens (PDF)</div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">Téléverser les examens passés</div>
               </div>
             </button>
 
