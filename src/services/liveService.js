@@ -409,18 +409,22 @@ export async function createLiveSession({
   const { data } = await tokenResponse.json();
   console.log("[Live] Got config. Models to try:", data.models);
 
-  // Try each model until one connects
+  // connect() resolves only after setupComplete, so if the `tools` field is
+  // rejected the socket closes and connect() throws — we then retry the SAME
+  // model WITHOUT tools so the call always works (boards just won't auto-draw).
   let lastErr = null;
   for (const model of data.models) {
-    const session = new GeminiLiveSession({ onTranscript, onStatus, onError, onTutorTurn, onToolCall });
-    try {
-      await session.connect(data.apiKey, model, data.voiceName, data.systemPrompt, BOARD_TOOL);
-      console.log("[Live] ✅ Connected with model:", model);
-      return session;
-    } catch (err) {
-      console.warn(`[Live] Model ${model} failed:`, err.message);
-      lastErr = err;
-      try { session.disconnect(); } catch {}
+    for (const tools of [BOARD_TOOL, null]) {
+      const session = new GeminiLiveSession({ onTranscript, onStatus, onError, onTutorTurn, onToolCall });
+      try {
+        await session.connect(data.apiKey, model, data.voiceName, data.systemPrompt, tools);
+        console.log(`[Live] ✅ Connected with model: ${model}${tools ? "" : " (no board tool)"}`);
+        return session;
+      } catch (err) {
+        console.warn(`[Live] Model ${model}${tools ? " +tools" : " -tools"} failed:`, err.message);
+        lastErr = err;
+        try { session.disconnect(); } catch {}
+      }
     }
   }
 
