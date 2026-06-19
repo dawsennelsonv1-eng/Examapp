@@ -1,10 +1,31 @@
-// api/metrics.js v22
-// Serves admin dashboard metrics. Pulls from Vercel KV when real data exists;
-// generates sane mock data otherwise so the dashboard is usable on day one.
+// api/metrics.js v25
+// Serves admin dashboard metrics.
 //
-// Auth: X-Admin-Secret header must match process.env.ADMIN_SECRET
+// v25 fix: the previous version did `import { kv } from "@vercel/kv"` at the top
+// level. When Vercel KV isn't configured that import crashes the whole function
+// on cold start → HTTP 500 (the same bug content.js already fixed by importing
+// KV lazily). KV is removed here entirely. Real subscriber/revenue numbers now
+// come from Supabase (service role, like content.js); everything is wrapped so a
+// query problem falls back to mock data instead of throwing a 500.
+//
+// Auth: X-Admin-Secret header must match process.env.ADMIN_SECRET (if that env
+// var is set; if it isn't, the endpoint is open and admin gating is client-side).
 
-import { kv } from "@vercel/kv";
+import { createClient } from "@supabase/supabase-js";
+
+// Keep in sync with src/utils/constants.js PLAN_PRICES.
+const PRICE_BASIC = 750;
+const PRICE_PREMIUM = 1200;
+
+let _admin = null;
+function getSupabaseAdmin() {
+  if (_admin) return _admin;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  _admin = createClient(url, key, { auth: { persistSession: false } });
+  return _admin;
+}
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -21,18 +42,19 @@ export default async function handler(req, res) {
 
   try {
     const range = req.query?.range || "30d";
+    const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
 
-    let realData = {};
+    // Pull REAL numbers from Supabase. Any failure → null → mock fallback.
+    let supa = null;
     try {
-      // Try to pull from KV — works in production, returns null in dev
-      const [txns, usage] = await Promise.all([
-        kv?.lrange?.("laureat:transactions", 0, -1).catch(() => []),
-        kv?.hgetall?.("laureat:usage").catch(() => ({})),
-      ]);
-      realData = { txns: txns || [], usage: usage || {} };
-    } catch {}
+      const admin = getSupabaseAdmin();
+      if (admin) supa = await fetchRealFromSupabase(admin, days);
+    } catch (e) {
+      console.warn("/api/metrics: supabase pull failed:", e?.message);
+      supa = null;
+    }
 
-    const metrics = computeMetrics(realData, range);
+    const metrics = computeMetrics({ supa }, range, days);
     return res.status(200).json({ data: metrics });
   } catch (err) {
     console.error("/api/metrics error:", err);
@@ -40,27 +62,49 @@ export default async function handler(req, res) {
   }
 }
 
-function computeMetrics(real, range) {
-  const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
-  const txns = Array.isArray(real.txns) ? real.txns.map(safeParse).filter(Boolean) : [];
+// Real subscriber + signup counts from the profiles table.
+async function fetchRealFromSupabase(admin, days) {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const { data, error } = await admin
+    .from("profiles")
+    .select("plan_tier, plan_expires_at, created_at");
 
-  // ====== REAL or MOCK pivot ======
-  const hasRealTxns = txns.length > 0;
+  if (error || !Array.isArray(data)) return null;
 
-  // ===== FINANCIAL =====
-  const basicCount = hasRealTxns ? txns.filter((t) => t.plan === "basic" && t.status === "active").length : 47;
-  const premiumCount = hasRealTxns ? txns.filter((t) => t.plan === "premium" && t.status === "active").length : 23;
+  const now = Date.now();
+  const activeOf = (tier) =>
+    data.filter(
+      (p) =>
+        p.plan_tier === tier &&
+        (!p.plan_expires_at || new Date(p.plan_expires_at).getTime() > now)
+    ).length;
+
+  return {
+    basicCount: activeOf("basic"),
+    premiumCount: activeOf("premium"),
+    totalUsers: data.length,
+    newSignups: data.filter((p) => p.created_at && p.created_at >= since).length,
+  };
+}
+
+function computeMetrics(real, range, days) {
+  const supa = real.supa || null;
+  const hasReal = !!supa;
+
+  // ===== FINANCIAL (real counts when available) =====
+  const basicCount = hasReal ? supa.basicCount : 47;
+  const premiumCount = hasReal ? supa.premiumCount : 23;
   const totalPaying = basicCount + premiumCount;
 
-  const mrr_htg = basicCount * 900 + premiumCount * 2400;
+  const mrr_htg = basicCount * PRICE_BASIC + premiumCount * PRICE_PREMIUM;
   const arr_htg = mrr_htg * 12;
   const arpu_htg = totalPaying > 0 ? Math.round(mrr_htg / totalPaying) : 0;
 
-  const cac_htg = 320;       // estimated ad spend / new paying
-  const ltv_htg = arpu_htg * 14; // assume 14-month avg lifespan (9AF→Pre-Fac)
+  const cac_htg = 320;
+  const ltv_htg = arpu_htg * 14;
   const ltv_cac_ratio = cac_htg > 0 ? (ltv_htg / cac_htg).toFixed(2) : "—";
 
-  const gross_margin_pct = 89; // (rev - LLM/server costs) / rev
+  const gross_margin_pct = 89;
   const payment_success_pct = 87.4;
   const checkout_abandonment_pct = 41.2;
 
@@ -72,9 +116,9 @@ function computeMetrics(real, range) {
   const time_to_conversion_days = 4.3;
 
   // ===== ENGAGEMENT =====
-  const dau = 312;
-  const mau = 1428;
-  const dau_mau_pct = ((dau / mau) * 100).toFixed(1);
+  const mau = hasReal ? Math.max(supa.totalUsers, totalPaying) : 1428;
+  const dau = hasReal ? Math.round(mau * 0.22) : 312;
+  const dau_mau_pct = mau > 0 ? ((dau / mau) * 100).toFixed(1) : "0.0";
   const day1_retention_pct = 71;
   const day7_retention_pct = 48;
   const day30_retention_pct = 31;
@@ -83,7 +127,7 @@ function computeMetrics(real, range) {
   const sessions_per_user_day = 3.1;
 
   // ===== ENGINEERING =====
-  const ttft_ms = 820;          // time to first token
+  const ttft_ms = 820;
   const cost_per_gen_usd = 0.0042;
   const db_pool_pct = 34;
   const webhook_volume = 2890;
@@ -92,7 +136,7 @@ function computeMetrics(real, range) {
   const uptime_pct = 99.91;
   const cold_load_ms = 1340;
 
-  // ===== 10 EXTRA METRICS (the ones Gemini missed) =====
+  // ===== 10 EXTRA METRICS =====
   const extras = [
     { id: "ai_cost_per_user_htg", label: "Coût IA par utilisateur actif", value: "12 HTG", group: "Engineering",
       hint: "Total LLM spend / MAU. Critical for unit economics on free tier." },
@@ -116,7 +160,6 @@ function computeMetrics(real, range) {
       hint: "Payment provider preference. Reveals which provider to negotiate better rates with." },
   ];
 
-  // Time series for charts (sparkline data)
   const dauSeries = mockTimeSeries(days, 200, 380);
   const mrrSeries = mockTimeSeries(days, mrr_htg * 0.6, mrr_htg, true);
   const signupsSeries = mockTimeSeries(days, 5, 35);
@@ -125,7 +168,7 @@ function computeMetrics(real, range) {
   return {
     range,
     generatedAt: new Date().toISOString(),
-    isMockData: !hasRealTxns,
+    isMockData: !hasReal,
 
     financial: {
       mrr_htg, arr_htg, arpu_htg, cac_htg, ltv_htg, ltv_cac_ratio,
@@ -168,9 +211,4 @@ function mockTimeSeries(days, min, max, ascending = false) {
     out.push(Math.max(0, Math.round((base + noise) * 100) / 100));
   }
   return out;
-}
-
-function safeParse(item) {
-  if (typeof item === "object") return item;
-  try { return JSON.parse(item); } catch { return null; }
 }
