@@ -32,7 +32,7 @@ function defaultBoards() {
   ];
 }
 
-export default function ClassroomSession({ session, onExit }) {
+export default function ClassroomSession({ session, onExit, autoCall = false }) {
   // GUARD: session must exist with an id
   if (!session || !session.id) {
     return (
@@ -67,6 +67,9 @@ export default function ClassroomSession({ session, onExit }) {
     : defaultBoards();
 
   const [boards, setBoards] = useState(initialBoards);
+  // Accumulates what's already drawn so each new diagram ADDS to the scene
+  // (e.g. one apple → two apples) instead of replacing it.
+  const visualHistoryRef = useRef([]);
   const [activeBoardId, setActiveBoardId] = useState(session.activeBoardId || initialBoards[0]?.id || "board_enonce");
   const [tutorWritingOn, setTutorWritingOn] = useState(null);
 
@@ -271,7 +274,7 @@ export default function ClassroomSession({ session, onExit }) {
       // The AI drives the boards. It can return boardActions telling us what to
       // write where: solution steps go to the solution board, and it can request
       // a visual diagram. We always ensure at least one visual gets drawn.
-      await applyBoardActions(data?.data?.boardActions);
+      await applyBoardActions(data?.data?.boardActions, combinedText);
 
       if (Array.isArray(data?.data?.suggestedQuestions)) {
         setSuggestedQuestions(data.data.suggestedQuestions);
@@ -324,7 +327,7 @@ export default function ClassroomSession({ session, onExit }) {
   //   }
   // Visuals are drawn ONLY when the AI asks (keeps it fast); solution steps render
   // instantly because they ride along in the same chat reply.
-  const applyBoardActions = async (actions) => {
+  const applyBoardActions = async (actions, contextText) => {
     const a = actions || {};
 
     // 1. Solution steps → solution board (objects: {type, content, boxed?}).
@@ -339,8 +342,19 @@ export default function ClassroomSession({ session, onExit }) {
       ));
     }
 
-    // 2. Visual diagram → only on explicit request from the AI.
-    if (a.visual) await requestDiagram(a.visual);
+    // 2. Visual diagram. Draw whenever the AI asks (a.visual). To keep visuals
+    //    frequent and automatic, if it didn't ask but we're working an exercise
+    //    and the visual board is still empty, draw one from context so every
+    //    exercise gets at least one illustration.
+    if (a.visual) {
+      await requestDiagram(a.visual);
+    } else if (Array.isArray(a.solution) && a.solution.length) {
+      const visualBoard = boards.find((b) => b.id === "board_visuel");
+      if (!visualBoard?.svg) {
+        const seed = contextText || session.exercise?.enonce || session.subject;
+        if (seed) await requestDiagram(`Illustre clairement: ${String(seed).slice(0, 140)}`);
+      }
+    }
 
     // 3. Focus the board the AI wants shown (default: solution while solving).
     const focusMap = { solution: "board_solution", visuel: "board_visuel", enonce: "board_enonce" };
@@ -351,17 +365,24 @@ export default function ClassroomSession({ session, onExit }) {
     }
   };
 
-  const requestDiagram = async (description) => {
+  const requestDiagram = async (description, { incremental = true } = {}) => {
     if (!description) return;
     setTutorWritingOn("board_visuel");
     setActiveBoardId("board_visuel");
+    // Incremental: redraw the whole evolving scene so new elements ADD to the
+    // previous ones instead of replacing them.
+    const history = visualHistoryRef.current;
+    const effective = incremental && history.length
+      ? `Schéma cumulatif. Déjà au tableau: ${history.join("; ")}. Ajoute maintenant: ${description}. Redessine la scène COMPLÈTE avec tous les éléments ensemble.`
+      : description;
+    visualHistoryRef.current = [...history, String(description)].slice(-6);
     try {
       const response = await fetch("/api/content?task=board", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           topic: String(description).substring(0, 80),
-          description,
+          description: effective,
           subject: session.subject,
           style: "diagram",
           exerciseContext: session.exercise,
@@ -441,7 +462,7 @@ export default function ClassroomSession({ session, onExit }) {
         </div>
 
         <CallTutorButton personaId={currentPersonaId} exerciseContext={session.exercise}
-          language={preferences?.language || "fr"} studentName={preferences?.name || ""} isPremium={isPremium} compact />
+          language={preferences?.language || "fr"} studentName={preferences?.name || ""} isPremium={isPremium} compact autoStart={autoCall} />
 
         <button onClick={() => setShowTutorSwitch(true)}
           className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">

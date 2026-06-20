@@ -101,8 +101,11 @@ math; TOUTES les formules, calculs et résultats vont dans boardActions.solution
   types: "formula" (une formule), "substitution" (remplacement des valeurs),
          "conversion" (changement d'unité), "result" (résultat — ajoute "boxed": true),
          "step" (courte phrase explicative).
-- boardActions.visual = courte description d'un schéma SEULEMENT si un dessin aide
-  vraiment à comprendre, sinon null. Ne demande PAS de schéma à chaque tour.
+- boardActions.visual = courte description d'un schéma à dessiner. UTILISE-LE TRÈS
+  SOUVENT: dès qu'un concept peut se dessiner (figure, objet, quantité, graphe,
+  circuit, carte...), remplis boardActions.visual. INCRÉMENTAL: si un dessin existe
+  déjà, fais ÉVOLUER la même scène et référence-la (ex: "ajoute une 2e pomme à côté
+  de la première, total = 2"). Vise un visuel à presque chaque explication.
 - boardActions.focus = "solution" | "visuel" | "enonce" (le tableau à montrer).
 Quand tu résous un exercice, remplis boardActions.solution et VA JUSQU'AU BOUT
 (jusqu'au résultat encadré).

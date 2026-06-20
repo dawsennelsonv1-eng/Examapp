@@ -49,6 +49,7 @@ export default function Classroom() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeSessionId = searchParams.get("session");
   const isNew = searchParams.get("new") === "1";
+  const wantsCall = searchParams.get("call") === "1";
   const sessionsHook = useClassroomSessions();
   const {
     sessions = [],
@@ -89,6 +90,22 @@ export default function Classroom() {
     }
   }, [isNew]); // eslint-disable-line
 
+  // ?call=1 from the header phone button: make sure a session is open so the
+  // call can auto-launch. Open the most recent one, or create a fresh one.
+  useEffect(() => {
+    if (!wantsCall || activeSessionId) return;
+    if (sessions.length > 0) {
+      setSearchParams({ session: sessions[0].id, call: "1" });
+    } else if (createSession) {
+      const s = createSession({
+        subject: "Général",
+        title: "Appel avec le prof",
+        personaId: preferences?.personality || "joseph",
+      });
+      setSearchParams({ session: s.id, call: "1" });
+    }
+  }, [wantsCall, activeSessionId]); // eslint-disable-line
+
   const startNewSession = (variant = "chat") => {
     if (!createSession) return;
     const s = createSession({
@@ -113,7 +130,7 @@ export default function Classroom() {
   if (activeSession) {
     return (
       <SessionBoundary onReset={exitSession}>
-        <ClassroomSession session={activeSession} onExit={exitSession} />
+        <ClassroomSession session={activeSession} onExit={exitSession} autoCall={wantsCall} />
       </SessionBoundary>
     );
   }

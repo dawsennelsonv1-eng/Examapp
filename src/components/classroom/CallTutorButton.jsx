@@ -2,7 +2,7 @@
 // v12: Premium gate REMOVED — available to everyone so you can test the call feature.
 // (Re-add the gate later once it works: just check isPremium before opening.)
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Phone } from "lucide-react";
 import CallTutorSession from "./CallTutorSession";
@@ -14,8 +14,13 @@ export default function CallTutorButton({
   studentName = "",
   isPremium = false, // kept in signature for compatibility, no longer gates
   compact = false,
+  autoStart = false, // when true (e.g. from the header call button), open the call immediately
 }) {
   const [callOpen, setCallOpen] = useState(false);
+
+  useEffect(() => {
+    if (autoStart) setCallOpen(true);
+  }, [autoStart]);
 
   const handleClick = () => {
     setCallOpen(true);

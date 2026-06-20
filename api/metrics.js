@@ -1,15 +1,13 @@
-// api/metrics.js v25
-// Serves admin dashboard metrics.
+// api/metrics.js v26
+// Serves admin dashboard metrics from REAL Supabase data (service role), with a
+// mock fallback only when the database genuinely can't be read.
 //
-// v25 fix: the previous version did `import { kv } from "@vercel/kv"` at the top
-// level. When Vercel KV isn't configured that import crashes the whole function
-// on cold start → HTTP 500 (the same bug content.js already fixed by importing
-// KV lazily). KV is removed here entirely. Real subscriber/revenue numbers now
-// come from Supabase (service role, like content.js); everything is wrapped so a
-// query problem falls back to mock data instead of throwing a 500.
+// "données de démo" now means something precise: the dashboard could NOT read the
+// database (missing/invalid SUPABASE_SERVICE_ROLE_KEY). If it CAN read, numbers
+// are real even when they're zero.
 //
-// Auth: X-Admin-Secret header must match process.env.ADMIN_SECRET (if that env
-// var is set; if it isn't, the endpoint is open and admin gating is client-side).
+// v26: pull subscribers + signups + DAU/MAU + payment rate from real tables;
+// accept env-name variants; never fabricate subscriber counts.
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -20,8 +18,11 @@ const PRICE_PREMIUM = 1200;
 let _admin = null;
 function getSupabaseAdmin() {
   if (_admin) return _admin;
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_KEY ||
+    process.env.SUPABASE_SECRET_KEY;
   if (!url || !key) return null;
   _admin = createClient(url, key, { auth: { persistSession: false } });
   return _admin;
@@ -44,17 +45,23 @@ export default async function handler(req, res) {
     const range = req.query?.range || "30d";
     const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
 
-    // Pull REAL numbers from Supabase. Any failure → null → mock fallback.
-    let supa = null;
-    try {
-      const admin = getSupabaseAdmin();
-      if (admin) supa = await fetchRealFromSupabase(admin, days);
-    } catch (e) {
-      console.warn("/api/metrics: supabase pull failed:", e?.message);
-      supa = null;
+    let real = null;
+    let reason = "ok";
+    const admin = getSupabaseAdmin();
+    if (!admin) {
+      reason = "no_service_role_key"; // env missing → can't read DB
+    } else {
+      try {
+        real = await fetchRealFromSupabase(admin, days);
+        if (!real) reason = "profiles_query_failed";
+      } catch (e) {
+        reason = "exception:" + (e?.message || "unknown");
+        real = null;
+      }
     }
 
-    const metrics = computeMetrics({ supa }, range, days);
+    const metrics = computeMetrics(real, range, days);
+    metrics._meta = { source: real ? "supabase" : "mock", reason };
     return res.status(200).json({ data: metrics });
   } catch (err) {
     console.error("/api/metrics error:", err);
@@ -62,38 +69,71 @@ export default async function handler(req, res) {
   }
 }
 
-// Real subscriber + signup counts from the profiles table.
 async function fetchRealFromSupabase(admin, days) {
-  const since = new Date(Date.now() - days * 86400000).toISOString();
-  const { data, error } = await admin
+  const now = Date.now();
+  const since = new Date(now - days * 86400000).toISOString();
+  const day1 = new Date(now - 86400000).toISOString();
+  const day30 = new Date(now - 30 * 86400000).toISOString();
+
+  // profiles is the source of truth for subscribers; if it can't be read, treat
+  // the whole pull as failed (→ mock, → "données de démo").
+  const { data: profs, error: pErr } = await admin
     .from("profiles")
     .select("plan_tier, plan_expires_at, created_at");
+  if (pErr || !Array.isArray(profs)) return null;
 
-  if (error || !Array.isArray(data)) return null;
-
-  const now = Date.now();
   const activeOf = (tier) =>
-    data.filter(
+    profs.filter(
       (p) =>
         p.plan_tier === tier &&
         (!p.plan_expires_at || new Date(p.plan_expires_at).getTime() > now)
     ).length;
 
-  return {
+  const real = {
     basicCount: activeOf("basic"),
     premiumCount: activeOf("premium"),
-    totalUsers: data.length,
-    newSignups: data.filter((p) => p.created_at && p.created_at >= since).length,
+    totalUsers: profs.length,
+    newSignups: profs.filter((p) => p.created_at && p.created_at >= since).length,
+    dau: 0,
+    mau: 0,
+    paymentSuccessPct: null,
+    txCount: 0,
   };
+
+  // DAU / MAU from usage_events (best-effort; missing table → leave 0).
+  try {
+    const { data: ev } = await admin
+      .from("usage_events")
+      .select("user_id, created_at")
+      .gte("created_at", day30);
+    if (Array.isArray(ev)) {
+      real.mau = new Set(ev.map((e) => e.user_id)).size;
+      real.dau = new Set(ev.filter((e) => e.created_at >= day1).map((e) => e.user_id)).size;
+    }
+  } catch {}
+
+  // Payment success rate from transactions (best-effort).
+  try {
+    const { data: tx } = await admin
+      .from("transactions")
+      .select("status, created_at")
+      .gte("created_at", since);
+    if (Array.isArray(tx) && tx.length) {
+      const ok = tx.filter((t) => t.status === "verified").length;
+      real.txCount = tx.length;
+      real.paymentSuccessPct = Math.round((ok / tx.length) * 1000) / 10;
+    }
+  } catch {}
+
+  return real;
 }
 
 function computeMetrics(real, range, days) {
-  const supa = real.supa || null;
-  const hasReal = !!supa;
+  const hasReal = !!real;
 
-  // ===== FINANCIAL (real counts when available) =====
-  const basicCount = hasReal ? supa.basicCount : 47;
-  const premiumCount = hasReal ? supa.premiumCount : 23;
+  // ===== FINANCIAL (real, or zero — never fabricated) =====
+  const basicCount = hasReal ? real.basicCount : 0;
+  const premiumCount = hasReal ? real.premiumCount : 0;
   const totalPaying = basicCount + premiumCount;
 
   const mrr_htg = basicCount * PRICE_BASIC + premiumCount * PRICE_PREMIUM;
@@ -105,65 +145,53 @@ function computeMetrics(real, range, days) {
   const ltv_cac_ratio = cac_htg > 0 ? (ltv_htg / cac_htg).toFixed(2) : "—";
 
   const gross_margin_pct = 89;
-  const payment_success_pct = 87.4;
-  const checkout_abandonment_pct = 41.2;
+  const payment_success_pct = hasReal && real.paymentSuccessPct != null ? real.paymentSuccessPct : 0;
+  const checkout_abandonment_pct = 0;
 
-  // ===== ACQUISITION =====
-  const viral_k_factor = 1.7;
-  const free_to_paid_pct = 6.2;
-  const cpi_htg = 28;
-  const organic_paid_ratio = "62 / 38";
-  const time_to_conversion_days = 4.3;
+  // ===== ACQUISITION (mostly not yet measurable → modest/zero) =====
+  const viral_k_factor = 0;
+  const free_to_paid_pct =
+    hasReal && real.totalUsers > 0 ? Math.round((totalPaying / real.totalUsers) * 1000) / 10 : 0;
+  const cpi_htg = 0;
+  const organic_paid_ratio = "—";
+  const time_to_conversion_days = 0;
 
-  // ===== ENGAGEMENT =====
-  const mau = hasReal ? Math.max(supa.totalUsers, totalPaying) : 1428;
-  const dau = hasReal ? Math.round(mau * 0.22) : 312;
+  // ===== ENGAGEMENT (real from usage_events) =====
+  const mau = hasReal ? real.mau : 0;
+  const dau = hasReal ? real.dau : 0;
   const dau_mau_pct = mau > 0 ? ((dau / mau) * 100).toFixed(1) : "0.0";
-  const day1_retention_pct = 71;
-  const day7_retention_pct = 48;
-  const day30_retention_pct = 31;
-  const churn_monthly_pct = 8.7;
-  const avg_session_minutes = 14.2;
-  const sessions_per_user_day = 3.1;
+  const day1_retention_pct = 0;
+  const day7_retention_pct = 0;
+  const day30_retention_pct = 0;
+  const churn_monthly_pct = 0;
+  const avg_session_minutes = 0;
+  const sessions_per_user_day = 0;
 
-  // ===== ENGINEERING =====
-  const ttft_ms = 820;
-  const cost_per_gen_usd = 0.0042;
-  const db_pool_pct = 34;
-  const webhook_volume = 2890;
-  const api_error_pct = 1.8;
-  const crash_free_pct = 99.4;
-  const uptime_pct = 99.91;
-  const cold_load_ms = 1340;
+  // ===== ENGINEERING (not derivable from app DB → shown as 0 until wired) =====
+  const ttft_ms = 0;
+  const cost_per_gen_usd = 0;
+  const db_pool_pct = 0;
+  const webhook_volume = hasReal ? real.txCount : 0;
+  const api_error_pct = 0;
+  const crash_free_pct = 100;
+  const uptime_pct = 100;
+  const cold_load_ms = 0;
 
-  // ===== 10 EXTRA METRICS =====
   const extras = [
-    { id: "ai_cost_per_user_htg", label: "Coût IA par utilisateur actif", value: "12 HTG", group: "Engineering",
-      hint: "Total LLM spend / MAU. Critical for unit economics on free tier." },
-    { id: "exercise_solve_success_pct", label: "Taux de succès du Scan-Résoudre", value: "92.6%", group: "Engineering",
-      hint: "% of scans that successfully return a usable solution (no OCR failure, no AI error)." },
-    { id: "tutor_voice_completion_pct", label: "Taux d'écoute du tuteur (audio)", value: "67%", group: "Engagement",
-      hint: "Of messages with TTS played, % the student lets finish (vs interrupts)." },
-    { id: "kreyol_vs_french_ratio", label: "Ratio Kreyòl / Français", value: "38 / 62", group: "Engagement",
-      hint: "Which language students actually prefer for tutor responses." },
-    { id: "scan_to_classroom_conversion_pct", label: "Scan → Classroom conversion", value: "44%", group: "Engagement",
-      hint: "% of scan results where student taps 'Explique-moi' to enter classroom." },
-    { id: "subject_distribution", label: "Matière la plus étudiée", value: "Physique 38%", group: "Engagement",
-      hint: "Which subject drives most engagement. Drives content investment priorities." },
-    { id: "premium_feature_usage_pct", label: "Utilisation des features Premium", value: "Call 14% · Camera 22%", group: "Acquisition",
-      hint: "Of premium users, % using the gated features. Low = pricing might be wrong; high = price could go up." },
-    { id: "exam_proximity_engagement", label: "Engagement vs. proximité examen", value: "+38% T-30j", group: "Engagement",
-      hint: "How DAU spikes as exam approaches. Tells you when to run ads + capacity-plan." },
-    { id: "tutor_persona_preference", label: "Persona la plus choisie", value: "M. Joseph 41%", group: "Engagement",
-      hint: "Which of the 5 tutors students prefer. Drives content/voice optimization." },
-    { id: "moncash_vs_natcash_split", label: "MonCash vs NatCash split", value: "73 / 27", group: "Financial",
-      hint: "Payment provider preference. Reveals which provider to negotiate better rates with." },
+    { id: "total_users", label: "Utilisateurs inscrits", value: String(hasReal ? real.totalUsers : 0), group: "Acquisition",
+      hint: "Nombre total de comptes créés." },
+    { id: "new_signups", label: `Nouvelles inscriptions (${days}j)`, value: String(hasReal ? real.newSignups : 0), group: "Acquisition",
+      hint: "Comptes créés sur la période sélectionnée." },
+    { id: "paying_users", label: "Abonnés payants", value: String(totalPaying), group: "Financial",
+      hint: "Basic + Premium actifs (non expirés)." },
+    { id: "transactions", label: `Transactions (${days}j)`, value: String(hasReal ? real.txCount : 0), group: "Financial",
+      hint: "Tentatives de paiement enregistrées sur la période." },
   ];
 
-  const dauSeries = mockTimeSeries(days, 200, 380);
-  const mrrSeries = mockTimeSeries(days, mrr_htg * 0.6, mrr_htg, true);
-  const signupsSeries = mockTimeSeries(days, 5, 35);
-  const errorSeries = mockTimeSeries(days, 0.5, 3);
+  const dauSeries = flatSeries(days, dau);
+  const mrrSeries = flatSeries(days, mrr_htg);
+  const signupsSeries = flatSeries(days, hasReal ? real.newSignups : 0);
+  const errorSeries = flatSeries(days, 0);
 
   return {
     range,
@@ -176,39 +204,20 @@ function computeMetrics(real, range, days) {
       basic_subscribers: basicCount,
       premium_subscribers: premiumCount,
     },
-
-    acquisition: {
-      viral_k_factor, free_to_paid_pct, cpi_htg, organic_paid_ratio, time_to_conversion_days,
-    },
-
+    acquisition: { viral_k_factor, free_to_paid_pct, cpi_htg, organic_paid_ratio, time_to_conversion_days },
     engagement: {
       dau, mau, dau_mau_pct, day1_retention_pct, day7_retention_pct, day30_retention_pct,
       churn_monthly_pct, avg_session_minutes, sessions_per_user_day,
     },
-
-    engineering: {
-      ttft_ms, cost_per_gen_usd, db_pool_pct, webhook_volume,
-      api_error_pct, crash_free_pct, uptime_pct, cold_load_ms,
-    },
-
+    engineering: { ttft_ms, cost_per_gen_usd, db_pool_pct, webhook_volume, api_error_pct, crash_free_pct, uptime_pct, cold_load_ms },
     extras,
-
-    series: {
-      dau: dauSeries,
-      mrr: mrrSeries,
-      signups: signupsSeries,
-      errors: errorSeries,
-    },
+    series: { dau: dauSeries, mrr: mrrSeries, signups: signupsSeries, errors: errorSeries },
   };
 }
 
-function mockTimeSeries(days, min, max, ascending = false) {
+function flatSeries(days, end) {
+  // Gentle ramp toward the real current value (no random noise / fake spikes).
   const out = [];
-  for (let i = 0; i < days; i++) {
-    const t = i / days;
-    const base = ascending ? min + (max - min) * t : min + Math.random() * (max - min);
-    const noise = (Math.random() - 0.5) * (max - min) * 0.15;
-    out.push(Math.max(0, Math.round((base + noise) * 100) / 100));
-  }
+  for (let i = 0; i < days; i++) out.push(Math.round(end * ((i + 1) / days)));
   return out;
 }
