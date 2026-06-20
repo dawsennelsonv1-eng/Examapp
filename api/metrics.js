@@ -24,8 +24,12 @@ function getSupabaseAdmin() {
     process.env.SUPABASE_SERVICE_KEY ||
     process.env.SUPABASE_SECRET_KEY;
   if (!url || !key) return null;
-  _admin = createClient(url, key, { auth: { persistSession: false } });
-  return _admin;
+  try {
+    _admin = createClient(url, key, { auth: { persistSession: false } });
+    return _admin;
+  } catch (e) {
+    throw new Error("supabase_client_init_failed: " + (e?.message || "unknown"));
+  }
 }
 
 export default async function handler(req, res) {
@@ -47,17 +51,17 @@ export default async function handler(req, res) {
 
     let real = null;
     let reason = "ok";
-    const admin = getSupabaseAdmin();
-    if (!admin) {
-      reason = "no_service_role_key"; // env missing → can't read DB
-    } else {
-      try {
+    try {
+      const admin = getSupabaseAdmin();
+      if (!admin) {
+        reason = "no_service_role_key"; // env missing/invalid → can't read DB
+      } else {
         real = await fetchRealFromSupabase(admin, days);
         if (!real) reason = "profiles_query_failed";
-      } catch (e) {
-        reason = "exception:" + (e?.message || "unknown");
-        real = null;
       }
+    } catch (e) {
+      reason = "exception:" + (e?.message || "unknown");
+      real = null;
     }
 
     const metrics = computeMetrics(real, range, days);
