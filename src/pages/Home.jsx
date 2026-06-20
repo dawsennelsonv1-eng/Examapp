@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
 import { EXAM_DATES, PERSONALITIES } from "../utils/constants";
+import { useAppConfig } from "../hooks/useAppConfig";
 import { useClassroomSessions } from "../hooks/useClassroom";
 import ScanHistoryCard from "../components/home/ScanHistoryCard";
 import ProgressCard from "../components/ProgressCard";
@@ -23,8 +24,18 @@ function daysUntil(date) {
 export default function Home() {
   const navigate = useNavigate();
   const { track, preferences } = useApp();
+  const { config } = useAppConfig();
   const { getLastSessionSummary } = useClassroomSessions();
-  const examInfo = EXAM_DATES[track] || EXAM_DATES.NS4;
+  // Exam date/range come from the admin config (live-editable), falling back to
+  // the constants defaults when config isn't loaded.
+  const fallbackExam = EXAM_DATES[track] || EXAM_DATES.NS4;
+  const cfgStart = track === "9AF" ? config?.exam_9af_start : config?.exam_ns4_start;
+  const cfgRange = track === "9AF" ? config?.exam_9af_range : config?.exam_ns4_range;
+  const examInfo = {
+    start: cfgStart ? new Date(cfgStart) : fallbackExam.start,
+    range: cfgRange || fallbackExam.range,
+    label: fallbackExam.label,
+  };
   const days = daysUntil(examInfo.start);
   const name = preferences?.name || "champion";
 
