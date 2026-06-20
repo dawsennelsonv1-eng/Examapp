@@ -84,15 +84,99 @@ export default async function handler(req, res) {
     if (task === "share") {
       return await handleShare(req, res);
     }
+    if (task === "gen_quiz") {
+      return await handleGenQuiz(req, res, KEY);
+    }
     // "brain" router (or any of the brain task names like "decision", "chat", "verify")
     if (task === "brain" || TASK_MODELS[task]) {
       return await handleBrain(req, res, KEY, task === "brain" ? (req.body?.brainTask || "chat") : task);
     }
-    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, brain, verify_payment` });
+    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, brain, verify_payment` });
   } catch (err) {
     console.error("/api/content error:", err);
     return res.status(500).json({ error: "Server error", message: err.message });
   }
+}
+
+// ============== GEN_QUIZ (AI quiz-bank generator, easy → hard) ==============
+async function handleGenQuiz(req, res, KEY) {
+  const {
+    track = "NS4",
+    subject = "mathematiques",
+    topic = "",
+    count = 10,
+    sourceExamId = null,
+    store = true,
+  } = req.body || {};
+
+  // Cap per call so the serverless function never times out. For a full bank
+  // (e.g. 100), the admin button calls this repeatedly in batches.
+  const n = Math.max(1, Math.min(Number(count) || 10, 15));
+
+  const prompt = `Tu es un concepteur d'examens haïtiens. Génère ${n} questions à choix multiple (QCM) pour l'examen national ${track}, matière "${subject}"${topic ? `, thème "${topic}"` : ""}.
+RÈGLES:
+- En français clair, adapté au niveau ${track}.
+- ORDONNE les questions de la PLUS FACILE à la PLUS DIFFICILE (progression douce, pour ne pas décourager l'élève).
+- Exactement 4 options par question, UNE seule correcte.
+- Donne une explication courte et claire de la bonne réponse.
+- Pas de doublons; questions variées et pertinentes pour l'examen.
+Réponds UNIQUEMENT en JSON valide:
+{"questions":[{"question":"...","options":["...","...","...","..."],"answer":0,"explanation":"...","difficulty":1}]}
+"answer" = index (0-3) de la bonne option. "difficulty" = entier 1 (très facile) à 5 (très difficile), croissant dans la liste.`;
+
+  let parsed = null;
+  for (const model of ["google/gemini-3.1-pro", "openai/gpt-5.5", "anthropic/claude-opus-4.7"]) {
+    parsed = await callJSON(model, KEY, prompt);
+    if (parsed?.questions?.length) break;
+  }
+
+  const rawList = Array.isArray(parsed?.questions) ? parsed.questions : [];
+  const questions = rawList
+    .map((q) => {
+      const options = Array.isArray(q.options) ? q.options.map((o) => String(o)).slice(0, 4) : [];
+      let answer = Number.isInteger(q.answer) ? q.answer : 0;
+      if (answer < 0 || answer > options.length - 1) answer = 0;
+      let difficulty = Number(q.difficulty);
+      if (!(difficulty >= 1 && difficulty <= 5)) difficulty = 1;
+      return {
+        question: String(q.question || "").trim(),
+        options,
+        answer,
+        explanation: String(q.explanation || "").trim(),
+        difficulty: Math.round(difficulty),
+      };
+    })
+    .filter((q) => q.question && q.options.length === 4)
+    .sort((a, b) => a.difficulty - b.difficulty); // easy → hard
+
+  if (questions.length === 0) {
+    return res.status(502).json({ error: "Generation failed", message: "Le modèle n'a pas renvoyé de questions valides." });
+  }
+
+  const batch = `q_${Date.now()}`;
+  let stored = 0;
+  if (store) {
+    try {
+      const admin = getSupabaseAdmin();
+      if (admin) {
+        const rows = questions.map((q) => ({
+          track, subject, topic: topic || null,
+          question: q.question, options: q.options, answer: q.answer,
+          explanation: q.explanation, difficulty: q.difficulty,
+          source_exam_id: sourceExamId, batch,
+        }));
+        const { error } = await admin.from("quizzes").insert(rows);
+        if (!error) stored = rows.length;
+        else console.warn("gen_quiz insert error:", error.message);
+      }
+    } catch (e) {
+      console.warn("gen_quiz store failed:", e?.message);
+    }
+  }
+
+  return res.status(200).json({
+    data: { generated: questions.length, stored, batch, track, subject, topic, questions },
+  });
 }
 
 // ============== BOARD (SVG diagram) ==============
