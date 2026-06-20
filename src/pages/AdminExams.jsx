@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Upload, Loader2, Trash2, FileText, Crown } from "lucide-react";
+import { ArrowLeft, Upload, Loader2, Trash2, FileText, Crown, Sparkles } from "lucide-react";
 import { useAdminAccess } from "../hooks/useAdminAccess";
 import { useExams } from "../hooks/useExams";
 import { supabase } from "../lib/supabase";
@@ -25,6 +25,47 @@ export default function AdminExams() {
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+
+  // ----- Quiz generation -----
+  const [qSubject, setQSubject] = useState("mathematiques");
+  const [qTopic, setQTopic] = useState("");
+  const [qCount, setQCount] = useState(30);
+  const [qBusy, setQBusy] = useState(false);
+  const [qProgress, setQProgress] = useState(0);
+  const [qMsg, setQMsg] = useState(null);
+
+  const generateQuizzes = async () => {
+    setQMsg(null);
+    setQBusy(true);
+    setQProgress(0);
+    const target = Math.max(1, Math.min(Number(qCount) || 30, 200));
+    let done = 0;
+    let stored = 0;
+    try {
+      // Generate in batches of 15 so the serverless function never times out.
+      while (done < target) {
+        const batchN = Math.min(15, target - done);
+        const r = await fetch("/api/content?task=gen_quiz", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ track, subject: qSubject, topic: qTopic, count: batchN }),
+        });
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}));
+          throw new Error(e.message || e.error || `HTTP ${r.status}`);
+        }
+        const { data } = await r.json();
+        stored += data?.stored || 0;
+        done += data?.generated || batchN;
+        setQProgress(Math.min(100, Math.round((done / target) * 100)));
+      }
+      setQMsg({ t: "ok", m: `${stored} question(s) générée(s) et enregistrée(s) ✓` });
+    } catch (err) {
+      setQMsg({ t: "err", m: err?.message || "Échec de la génération." });
+    } finally {
+      setQBusy(false);
+    }
+  };
 
   if (accessLoading) {
     return <div className="p-8 text-center"><Loader2 className="animate-spin mx-auto text-violet-500" /></div>;
@@ -160,6 +201,47 @@ export default function AdminExams() {
               ))}
             </div>
           )}
+        </section>
+
+        {/* ===== Generate quiz bank (easy → hard) ===== */}
+        <section className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm ring-1 ring-slate-100 dark:ring-slate-800 space-y-3">
+          <h3 className="text-[10px] uppercase tracking-widest font-black text-slate-500 flex items-center gap-1.5">
+            <Sparkles size={12} className="text-violet-500" /> Générer des quiz (facile → difficile)
+          </h3>
+
+          <label className="text-sm block">
+            <span className="text-[11px] text-slate-500 block mb-1">Matière</span>
+            <select value={qSubject} onChange={(e) => setQSubject(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500">
+              {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+
+          <label className="text-sm block">
+            <span className="text-[11px] text-slate-500 block mb-1">Thème / chapitre (optionnel)</span>
+            <input value={qTopic} onChange={(e) => setQTopic(e.target.value)} placeholder="ex: Trigonométrie, Lois de Newton..."
+              className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500" />
+          </label>
+
+          <label className="text-sm block">
+            <span className="text-[11px] text-slate-500 block mb-1">Nombre de questions (niveau {track})</span>
+            <input type="number" min="1" max="200" value={qCount} onChange={(e) => setQCount(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500" />
+          </label>
+
+          {qBusy && (
+            <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-violet-500 to-indigo-600 transition-all" style={{ width: `${qProgress}%` }} />
+            </div>
+          )}
+
+          {qMsg && <p className={`text-xs ${qMsg.t === "ok" ? "text-emerald-500" : "text-red-500"}`}>{qMsg.m}</p>}
+
+          <motion.button whileTap={{ scale: 0.97 }} onClick={generateQuizzes} disabled={qBusy}
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
+            {qBusy ? <><Loader2 size={16} className="animate-spin" /> Génération... {qProgress}%</> : <><Sparkles size={16} /> Générer le bloc de quiz</>}
+          </motion.button>
+          <p className="text-[10px] text-slate-400 text-center">Généré par lots de 15 et enregistré dans la base. Réutilisable dans Réviser.</p>
         </section>
       </main>
     </div>
