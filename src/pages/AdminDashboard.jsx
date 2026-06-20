@@ -228,12 +228,12 @@ function Overview({ metrics }) {
           <div className="flex-1 space-y-2">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-blue-500" />
-              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Basic (900)</span>
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Basic (750)</span>
               <span className="ml-auto font-black text-sm text-slate-900 dark:text-white">{financial.basic_subscribers}</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-amber-500" />
-              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Premium (2400)</span>
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Premium (1200)</span>
               <span className="ml-auto font-black text-sm text-slate-900 dark:text-white">{financial.premium_subscribers}</span>
             </div>
           </div>

@@ -63,7 +63,10 @@ export default function AdminExams() {
       setFile(null);
       reload();
     } catch (err) {
-      setMsg({ t: "err", m: err?.message || "Échec du téléversement." });
+      const detail = [err?.message, err?.details, err?.hint, err?.code]
+        .filter(Boolean).join(" · ");
+      setMsg({ t: "err", m: detail || "Échec du téléversement." });
+      console.error("Exam upload failed:", err);
     } finally {
       setBusy(false);
     }

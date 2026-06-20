@@ -13,8 +13,8 @@ const DEFAULTS = {
   exam_9af_range: TRACK_CONFIG["9AF"].examRange,
   exam_ns4_start: TRACK_CONFIG.NS4.examStart,
   exam_ns4_range: TRACK_CONFIG.NS4.examRange,
-  price_basic: 900,
-  price_premium: 2400,
+  price_basic: 750,
+  price_premium: 1200,
   caps: null,
   flags: { payments_on: true, calls_on: true, new_signups: true },
 };

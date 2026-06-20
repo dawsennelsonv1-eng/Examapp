@@ -23,6 +23,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
 import { logEvent } from "../services/analytics";
 import { PLAN_PRICES, PLAN_FEATURES } from "../utils/constants";
+import { useAppConfig } from "../hooks/useAppConfig";
 
 // Prices and features come from constants.js (single source of truth) so they
 // can never drift from the rest of the app again. Icons stay local (components).
@@ -49,6 +50,8 @@ export default function Paywall() {
   const navigate = useNavigate();
   const { updateProfile } = useAuth();
 
+  const { config } = useAppConfig();
+
   const [planId, setPlanId] = useState("premium");
   const [methodId, setMethodId] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -60,7 +63,8 @@ export default function Paywall() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null); // {status, message}
 
-  const plan = PLANS[planId];
+  const livePrice = { basic: config?.price_basic ?? PLAN_PRICES.basic, premium: config?.price_premium ?? PLAN_PRICES.premium };
+  const plan = { ...PLANS[planId], price: livePrice[planId] ?? PLANS[planId].price };
   const method = methodId ? METHODS[methodId] : null;
 
   const copyNumber = () => {
