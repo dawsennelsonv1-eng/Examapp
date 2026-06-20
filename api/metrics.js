@@ -16,13 +16,38 @@ const PRICE_BASIC = 750;
 const PRICE_PREMIUM = 1200;
 
 let _admin = null;
+function cleanEnv(v) {
+  return v ? String(v).trim().replace(/^["']+|["']+$/g, "").trim() : "";
+}
+
+// Accepts: full https url, http url, bare host, trailing slash/space/quotes,
+// or a bare project ref — and returns a clean https origin, or null.
+function normalizeSupabaseUrl(raw) {
+  let s = cleanEnv(raw);
+  if (!s) return null;
+  if (/^[a-z0-9]{16,40}$/i.test(s)) return `https://${s}.supabase.co`; // bare ref
+  if (!/^https?:\/\//i.test(s)) s = "https://" + s;                    // add scheme
+  try {
+    const u = new URL(s);
+    u.protocol = "https:";
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
 function getSupabaseAdmin() {
   if (_admin) return _admin;
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const key =
+  let url = null;
+  for (const raw of [process.env.SUPABASE_URL, process.env.VITE_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_URL]) {
+    url = normalizeSupabaseUrl(raw);
+    if (url) break;
+  }
+  const key = cleanEnv(
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
     process.env.SUPABASE_SERVICE_KEY ||
-    process.env.SUPABASE_SECRET_KEY;
+    process.env.SUPABASE_SECRET_KEY
+  );
   if (!url || !key) return null;
   try {
     _admin = createClient(url, key, { auth: { persistSession: false } });
