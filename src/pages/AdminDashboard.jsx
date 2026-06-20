@@ -99,7 +99,6 @@ export default function AdminDashboard() {
           </div>
           <div className="text-[10px] text-slate-500 dark:text-slate-400">
             {metrics?.generatedAt && new Date(metrics.generatedAt).toLocaleTimeString("fr-FR")}
-            {metrics?.isMockData && <span className="ml-1.5 text-amber-600 dark:text-amber-400">· données de démo</span>}
           </div>
         </div>
 
@@ -154,6 +153,17 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        {metrics?._meta?.source === "mock" && (
+          <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 p-4 ring-1 ring-amber-300 dark:ring-amber-700/40 flex gap-3">
+            <AlertCircle size={18} className="text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-sm text-amber-900 dark:text-amber-200">Données réelles indisponibles</div>
+              <p className="text-xs text-amber-800 dark:text-amber-300 mt-1 leading-relaxed">{diagnoseReason(metrics._meta.reason)}</p>
+              <p className="text-[10px] text-amber-700/70 dark:text-amber-400/60 mt-1.5 font-mono break-all">code: {metrics._meta.reason}</p>
+            </div>
+          </div>
+        )}
+
         {loading && !metrics && (
           <div className="text-center py-12">
             <Loader2 size={32} className="animate-spin mx-auto text-violet-500" />
@@ -172,6 +182,16 @@ export default function AdminDashboard() {
 }
 
 // ======================== TABS ========================
+
+function diagnoseReason(reason) {
+  if (reason === "no_service_role_key")
+    return "Le serveur ne trouve pas la clé SUPABASE_SERVICE_ROLE_KEY. Ajoute-la dans Vercel → Settings → Environment Variables (sa valeur est dans Supabase → Settings → API → service_role), puis redéploie. Sans elle, le dashboard ne peut pas lire la base.";
+  if (reason === "profiles_query_failed")
+    return "La clé existe mais la lecture de la table « profiles » a échoué (table manquante ou RLS). Vérifie que la table profiles existe et lance FIX.sql.";
+  if (typeof reason === "string" && reason.startsWith("exception:"))
+    return "Erreur serveur en lisant la base : " + reason.slice("exception:".length);
+  return "Impossible de lire la base de données pour le moment.";
+}
 
 function Overview({ metrics }) {
   const { financial, engagement, engineering, series } = metrics;
