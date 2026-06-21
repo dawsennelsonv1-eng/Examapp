@@ -84,30 +84,45 @@ export default function AdminExams() {
     setMsg(null);
     if (!file) { setMsg({ t: "err", m: "Choisis un fichier PDF." }); return; }
     if (file.type !== "application/pdf") { setMsg({ t: "err", m: "Le fichier doit être un PDF." }); return; }
-    if (!supabase) { setMsg({ t: "err", m: "Supabase non configuré." }); return; }
+    if (!supabase) { setMsg({ t: "err", m: "Supabase non configuré (client manquant)." }); return; }
     setBusy(true);
+    let step = "init";
     try {
       const safeSubject = subject || "complet";
       const path = `${track}/${year}/${safeSubject}-${Date.now()}.pdf`;
-      const { error: upErr } = await supabase.storage.from("exams").upload(path, file, {
+
+      // Step 1: confirm we have a logged-in session (RLS needs auth.uid()).
+      step = "auth";
+      const { data: { user }, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+      if (!user) throw new Error("Aucune session — déconnecte-toi et reconnecte-toi.");
+
+      // Step 2: upload the PDF to the 'exams' storage bucket.
+      step = "storage.upload";
+      const up = await supabase.storage.from("exams").upload(path, file, {
         contentType: "application/pdf", upsert: false,
       });
-      if (upErr) throw upErr;
+      if (up.error) throw up.error;
 
+      // Step 3: insert the metadata row.
+      step = "db.insert";
       const title = `${subject ? subject.charAt(0).toUpperCase() + subject.slice(1) + " " : ""}${track} ${year}`;
-      const { error: insErr } = await supabase.from("exams").insert({
-        year: Number(year), track, subject: subject || null, title, pdf_path: path, premium,
+      const ins = await supabase.from("exams").insert({
+        year: Number(year), track, subject: subject || null, title,
+        pdf_path: path, premium, uploaded_by: user.id,
       });
-      if (insErr) throw insErr;
+      if (ins.error) throw ins.error;
 
       setMsg({ t: "ok", m: "Examen téléversé ✓" });
       setFile(null);
       reload();
     } catch (err) {
-      const detail = [err?.message, err?.details, err?.hint, err?.code]
-        .filter(Boolean).join(" · ");
-      setMsg({ t: "err", m: detail || "Échec du téléversement." });
-      console.error("Exam upload failed:", err);
+      // Serialize EVERYTHING about the error (message, code, status, hint, name...).
+      let full;
+      try { full = JSON.stringify(err, Object.getOwnPropertyNames(err || {})); }
+      catch { full = String(err); }
+      setMsg({ t: "err", m: `[${step}] ${err?.message || "erreur"} — ${full}` });
+      console.error("Exam upload failed at step:", step, err);
     } finally {
       setBusy(false);
     }
