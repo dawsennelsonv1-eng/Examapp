@@ -2,14 +2,14 @@
 // Admin-only: upload past-exam PDFs to the private 'exams' Supabase Storage
 // bucket + an 'exams' metadata row. Lists uploaded exams and allows delete.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, Upload, Loader2, Trash2, FileText, Crown, Sparkles, GraduationCap, BookOpen, Send } from "lucide-react";
 import { useAdminAccess } from "../hooks/useAdminAccess";
 import { useExams } from "../hooks/useExams";
 import { supabase } from "../lib/supabase";
-import { SUBJECTS as COURS_SUBJECTS, CHAPTERS } from "../utils/coursData";
+import { SUBJECTS as COURS_SUBJECTS } from "../utils/coursData";
 
 const TRACKS = ["9AF", "NS4"];
 const SUBJECTS = ["mathematiques", "physique", "chimie", "biologie", "francais", "sciences_sociales", "philosophie", "creole"];
@@ -27,7 +27,7 @@ export default function AdminExams() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
-  // ----- Quiz generation (curriculum-driven: class → subject → chapter) -----
+  // ----- Quiz generation (driven by the PUBLISHED course_tree) -----
   const [qTrack, setQTrack] = useState("NS4");
   const [qSubjectId, setQSubjectId] = useState("");
   const [qChapterId, setQChapterId] = useState("");
@@ -35,23 +35,69 @@ export default function AdminExams() {
   const [qBusy, setQBusy] = useState(false);
   const [qProgress, setQProgress] = useState(0);
   const [qMsg, setQMsg] = useState(null);
+  const [qPubSubjects, setQPubSubjects] = useState([]); // subjects with a published course
+  const [qChapters, setQChapters] = useState([]);        // chapters from the published tree
+  const [qChLoading, setQChLoading] = useState(false);
 
-  // Subjects available for the chosen class, and chapters for the chosen subject.
-  const qSubjects = COURS_SUBJECTS.filter((s) => !s.tracks || s.tracks.includes(qTrack));
-  const qChapters = qSubjectId ? (CHAPTERS[qSubjectId] || []) : [];
-  const qSubject = COURS_SUBJECTS.find((s) => s.id === qSubjectId) || null;
+  // Subjects that actually have a PUBLISHED course for the chosen class.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/content?task=course_list", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ track: qTrack }),
+        });
+        const j = await r.json();
+        const pub = (j.data?.courses || [])
+          .filter((c) => c.status === "published")
+          .map((c) => ({ id: c.subject, name: c.subject_name || c.subject }));
+        if (!cancelled) setQPubSubjects(pub);
+      } catch { if (!cancelled) setQPubSubjects([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [qTrack]);
+
+  // Chapters of the selected subject, pulled from its published tree.
+  useEffect(() => {
+    let cancelled = false;
+    setQChapters([]); setQChapterId("");
+    if (!qSubjectId) return;
+    (async () => {
+      setQChLoading(true);
+      try {
+        const r = await fetch("/api/content?task=course_get", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ track: qTrack, subjectId: qSubjectId }),
+        });
+        const j = await r.json();
+        const chapters = (j.data?.tree?.chapters || []).map((ch, ci) => ({
+          id: `${qSubjectId}__c${ci}`,
+          title: ch.title,
+          // points = every page (title + summary) across the chapter's parts
+          points: (ch.parts || []).flatMap((p) =>
+            (p.pages || []).map((pg) => `${pg.title}${pg.summary ? ` — ${pg.summary}` : ""}`)
+          ),
+        }));
+        if (!cancelled) setQChapters(chapters);
+      } catch { if (!cancelled) setQChapters([]); }
+      finally { if (!cancelled) setQChLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [qSubjectId, qTrack]);
+
+  const qSubjects = qPubSubjects;
+  const qSubject = qPubSubjects.find((s) => s.id === qSubjectId) || null;
   const qChapter = qChapters.find((c) => c.id === qChapterId) || null;
 
   const generateQuizzes = async () => {
     setQMsg(null);
-    if (!qSubjectId) { setQMsg({ t: "err", m: "Choisis une matière." }); return; }
+    if (!qSubjectId) { setQMsg({ t: "err", m: "Choisis une matière (cours publié)." }); return; }
     if (!qChapterId) { setQMsg({ t: "err", m: "Choisis un chapitre." }); return; }
     setQBusy(true);
     setQProgress(0);
     const target = Math.max(1, Math.min(Number(qCount) || 30, 200));
-    const points = (qChapter?.events || [])
-      .filter((e) => e.type !== "quiz")
-      .map((e) => `${e.title}${e.summary ? ` — ${e.summary}` : ""}`);
+    const points = qChapter?.points || [];
     let done = 0;
     let stored = 0;
     try {
@@ -151,6 +197,7 @@ export default function AdminExams() {
     } finally {
       setCcBusy(false);
       setCcStage("");
+      loadCourseList();
     }
   };
 
@@ -164,9 +211,76 @@ export default function AdminExams() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
       setCcMsg({ t: "ok", m: "Cours publié ✓ — visible par les élèves." });
+      loadCourseList();
     } catch (err) {
       setCcMsg({ t: "err", m: err?.message || "Échec de la publication." });
     } finally { setCcBusy(false); }
+  };
+
+  // ----- Course history (status + exam count + actions per subject) -----
+  const [ccList, setCcList] = useState(null);
+  const [ccListBusy, setCcListBusy] = useState(false);
+
+  const loadCourseList = async () => {
+    setCcListBusy(true);
+    try {
+      const r = await fetch("/api/content?task=course_list", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track: ccTrack }),
+      });
+      const j = await r.json();
+      setCcList(j.data || null);
+    } catch { setCcList(null); }
+    finally { setCcListBusy(false); }
+  };
+
+  useEffect(() => { loadCourseList(); /* on mount + track change */ }, [ccTrack]); // eslint-disable-line
+
+  const courseFor = (subjectId) =>
+    (ccList?.courses || []).find((c) => c.subject === subjectId) || null;
+  const examCountFor = (subjectId) =>
+    (ccList?.examBySubject?.[subjectId] || 0) + (ccList?.completeCount || 0);
+
+  const reloadDraft = async (subjectId, subjectName) => {
+    setCcMsg(null); setCcBusy(true); setCcTree(null); setCcCounts(null);
+    setCcSubjectId(subjectId);
+    setCcStage("Chargement du cours enregistré…");
+    try {
+      const r = await fetch("/api/content?task=course_get", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track: ccTrack, subjectId }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+      if (!j.data?.tree) { setCcMsg({ t: "err", m: "Aucun cours enregistré pour cette matière." }); return; }
+      setCcTree(j.data.tree);
+      setCcCounts(j.data.counts);
+      setCcMsg({ t: "ok", m: `Chargé : « ${subjectName} » (${j.data.status}, v${j.data.version}).` });
+    } catch (err) {
+      setCcMsg({ t: "err", m: err?.message || "Échec du chargement." });
+    } finally { setCcBusy(false); setCcStage(""); }
+  };
+
+  const togglePublish = async (subjectId, currentStatus) => {
+    setCcBusy(true); setCcMsg(null);
+    const task = currentStatus === "published" ? "course_unpublish" : "course_publish";
+    try {
+      const r = await fetch(`/api/content?task=${task}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track: ccTrack, subjectId }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+      setCcMsg({ t: "ok", m: currentStatus === "published" ? "Cours dépublié (caché aux élèves)." : "Cours publié ✓" });
+      loadCourseList();
+    } catch (err) {
+      setCcMsg({ t: "err", m: err?.message || "Échec." });
+    } finally { setCcBusy(false); }
+  };
+
+  const rebuildSubject = (subjectId) => {
+    setCcSubjectId(subjectId);
+    setTimeout(buildCourse, 0); // build with the selected subject
   };
 
   if (accessLoading) {
@@ -344,22 +458,22 @@ export default function AdminExams() {
           </label>
 
           <label className="text-sm block">
-            <span className="text-[11px] text-slate-500 block mb-1">Matière</span>
+            <span className="text-[11px] text-slate-500 block mb-1">Matière (cours publié)</span>
             <select value={qSubjectId} onChange={(e) => { setQSubjectId(e.target.value); setQChapterId(""); }}
               className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500">
-              <option value="">— Choisir une matière —</option>
+              <option value="">{qSubjects.length ? "— Choisir une matière —" : "Aucun cours publié pour cette classe"}</option>
               {qSubjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </label>
 
           <label className="text-sm block">
             <span className="text-[11px] text-slate-500 block mb-1">Chapitre</span>
-            <select value={qChapterId} onChange={(e) => setQChapterId(e.target.value)} disabled={!qSubjectId}
+            <select value={qChapterId} onChange={(e) => setQChapterId(e.target.value)} disabled={!qSubjectId || qChLoading}
               className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50">
-              <option value="">{qSubjectId ? "— Choisir un chapitre —" : "Choisis d'abord une matière"}</option>
+              <option value="">{!qSubjectId ? "Choisis d'abord une matière" : qChLoading ? "Chargement des chapitres…" : qChapters.length ? "— Choisir un chapitre —" : "Aucun chapitre dans ce cours"}</option>
               {qChapters.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
             </select>
-            {qChapter?.subtitle && <span className="text-[10px] text-slate-400 mt-1 block">{qChapter.subtitle} · {qChapter.events?.filter((e) => e.type !== "quiz").length || 0} points</span>}
+            {qChapter && <span className="text-[10px] text-slate-400 mt-1 block">{qChapter.points?.length || 0} pages couvertes</span>}
           </label>
 
           <label className="text-sm block">
@@ -423,6 +537,58 @@ export default function AdminExams() {
             className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
             {ccBusy ? <><Loader2 size={16} className="animate-spin" /> Construction…</> : <><BookOpen size={16} /> Construire le cours</>}
           </motion.button>
+
+          {/* Per-subject history: status + exam count + actions */}
+          <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <div className="text-[10px] uppercase tracking-widest font-black text-slate-500">État des cours · {ccTrack}</div>
+              <button onClick={loadCourseList} disabled={ccListBusy} className="text-[10px] text-violet-500 font-bold disabled:opacity-50">
+                {ccListBusy ? "…" : "↻ Actualiser"}
+              </button>
+            </div>
+            {ccSubjects.map((s) => {
+              const c = courseFor(s.id);
+              const exCount = examCountFor(s.id);
+              const status = c?.status;
+              return (
+                <div key={s.id} className="rounded-xl bg-slate-50 dark:bg-slate-800/60 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-slate-900 dark:text-white truncate">{s.name}</div>
+                      <div className="text-[10px] text-slate-400 flex items-center gap-1.5 mt-0.5">
+                        {status === "published" ? (
+                          <span className="text-emerald-500 font-bold">● Publié v{c.version}</span>
+                        ) : status === "draft" ? (
+                          <span className="text-amber-500 font-bold">● Brouillon v{c.version}</span>
+                        ) : (
+                          <span className="text-slate-400">— Aucun cours</span>
+                        )}
+                        <span>· {exCount} examen{exCount > 1 ? "s" : ""}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {c && (
+                      <button onClick={() => reloadDraft(s.id, s.name)} disabled={ccBusy}
+                        className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold disabled:opacity-50">
+                        Revoir
+                      </button>
+                    )}
+                    <button onClick={() => rebuildSubject(s.id)} disabled={ccBusy}
+                      className="text-[11px] px-2.5 py-1 rounded-lg bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 font-bold disabled:opacity-50">
+                      {c ? "Reconstruire" : "Construire"}
+                    </button>
+                    {c && (
+                      <button onClick={() => togglePublish(s.id, status)} disabled={ccBusy}
+                        className={`text-[11px] px-2.5 py-1 rounded-lg font-bold disabled:opacity-50 ${status === "published" ? "bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300" : "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"}`}>
+                        {status === "published" ? "Dépublier" : "Publier"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
 
           {/* Draft tree preview */}
           {ccTree?.chapters?.length > 0 && (

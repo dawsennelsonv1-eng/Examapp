@@ -99,11 +99,20 @@ export default async function handler(req, res) {
     if (task === "course_publish") {
       return await handleCoursePublish(req, res);
     }
+    if (task === "course_unpublish") {
+      return await handleCourseUnpublish(req, res);
+    }
+    if (task === "course_get") {
+      return await handleCourseGet(req, res);
+    }
+    if (task === "course_list") {
+      return await handleCourseList(req, res);
+    }
     // "brain" router (or any of the brain task names like "decision", "chat", "verify")
     if (task === "brain" || TASK_MODELS[task]) {
       return await handleBrain(req, res, KEY, task === "brain" ? (req.body?.brainTask || "chat") : task);
     }
-    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, exam_sign, course_ocr, build_course, course_publish, brain, verify_payment` });
+    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, exam_sign, course_ocr, build_course, course_publish, course_unpublish, course_get, course_list, brain, verify_payment` });
   } catch (err) {
     console.error("/api/content error:", err);
     return res.status(500).json({ error: "Server error", message: err.message });
@@ -273,6 +282,78 @@ async function handleCoursePublish(req, res) {
       .eq("subject", subjectId).eq("track", track);
     if (error) return res.status(502).json({ error: "publish_failed", message: error.message });
     return res.status(200).json({ data: { ok: true } });
+  } catch (e) {
+    return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
+  }
+}
+
+async function handleCourseUnpublish(req, res) {
+  try {
+    const { track = "NS4", subjectId } = req.body || {};
+    if (!subjectId) return res.status(400).json({ error: "missing_subject" });
+    const admin = getSupabaseAdmin();
+    if (!admin) return res.status(500).json({ error: "server_misconfig" });
+    const { error } = await admin.from("course_tree")
+      .update({ status: "draft", updated_at: new Date().toISOString() })
+      .eq("subject", subjectId).eq("track", track);
+    if (error) return res.status(502).json({ error: "unpublish_failed", message: error.message });
+    return res.status(200).json({ data: { ok: true } });
+  } catch (e) {
+    return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
+  }
+}
+
+// Fetch ONE saved tree (draft OR published) for editing/review.
+async function handleCourseGet(req, res) {
+  try {
+    const { track = "NS4", subjectId } = req.body || {};
+    if (!subjectId) return res.status(400).json({ error: "missing_subject" });
+    const admin = getSupabaseAdmin();
+    if (!admin) return res.status(500).json({ error: "server_misconfig" });
+    const { data, error } = await admin.from("course_tree")
+      .select("subject, subject_name, track, tree, status, version, updated_at")
+      .eq("subject", subjectId).eq("track", track).single();
+    if (error) return res.status(200).json({ data: null });
+    const tree = data?.tree || { chapters: [] };
+    const counts = {
+      chapters: tree.chapters.length,
+      parts: tree.chapters.reduce((a, c) => a + (c.parts?.length || 0), 0),
+      pages: tree.chapters.reduce((a, c) => a + (c.parts?.reduce((b, p) => b + (p.pages?.length || 0), 0) || 0), 0),
+    };
+    return res.status(200).json({ data: { ...data, counts } });
+  } catch (e) {
+    return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
+  }
+}
+
+// List every saved course (status + version) + exam counts per subject, for one track.
+async function handleCourseList(req, res) {
+  try {
+    const { track = "NS4" } = req.body || {};
+    const admin = getSupabaseAdmin();
+    if (!admin) return res.status(500).json({ error: "server_misconfig" });
+
+    const { data: courses } = await admin.from("course_tree")
+      .select("subject, subject_name, status, version, updated_at").eq("track", track);
+
+    const { data: exams } = await admin.from("exams")
+      .select("subject").eq("track", track);
+
+    // Count exams per subject (null subject = "examen complet", counts for all).
+    const examBySubject = {};
+    let completeCount = 0;
+    for (const e of exams || []) {
+      if (!e.subject) completeCount++;
+      else examBySubject[e.subject] = (examBySubject[e.subject] || 0) + 1;
+    }
+
+    return res.status(200).json({
+      data: {
+        courses: courses || [],
+        examBySubject,
+        completeCount, // exams with no subject apply to every subject
+      },
+    });
   } catch (e) {
     return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
   }
