@@ -24,6 +24,35 @@ function getSupabaseAdmin() {
   return _admin;
 }
 
+// Admin allowlist (founder emails), mirrors the client's useAdminAccess.
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "laureataihaiti@gmail.com")
+  .split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+
+// Verify the caller is a signed-in admin. Reads the Supabase access token from
+// the request (body.accessToken or Authorization: Bearer <token>), resolves the
+// user, and requires statut='admin' (or the founder email allowlist).
+// Returns { ok:true, user } or { ok:false, status, error }.
+async function requireAdmin(req) {
+  const admin = getSupabaseAdmin();
+  if (!admin) return { ok: false, status: 500, error: "server_misconfig" };
+
+  const headerToken = (req.headers?.authorization || "").replace(/^Bearer\s+/i, "");
+  const token = req.body?.accessToken || headerToken || null;
+  if (!token) return { ok: false, status: 401, error: "not signed in" };
+
+  const { data: userData, error: userErr } = await admin.auth.getUser(token);
+  if (userErr || !userData?.user) return { ok: false, status: 401, error: "invalid session" };
+  const user = userData.user;
+
+  // Founder email allowlist (covers Google/email dupes + RLS edge cases).
+  if (ADMIN_EMAILS.includes((user.email || "").toLowerCase())) return { ok: true, user };
+
+  const { data: prof } = await admin.from("profiles").select("statut").eq("id", user.id).single();
+  if (prof?.statut === "admin") return { ok: true, user };
+
+  return { ok: false, status: 403, error: "forbidden — admin only" };
+}
+
 const TASK_MODELS = {
   decision: ["anthropic/claude-opus-4.7", "google/gemini-3-pro-preview"],
   chat:     ["google/gemini-3-pro-preview", "anthropic/claude-opus-4.7", "openai/gpt-5.5"],
@@ -125,6 +154,8 @@ export default async function handler(req, res) {
 // the client uploads to it directly, bypassing that broken path entirely.
 async function handleExamSign(req, res) {
   try {
+    const _a = await requireAdmin(req);
+    if (!_a.ok) return res.status(_a.status).json({ error: _a.error });
     const { track = "NS4", year, subject } = req.body || {};
     const admin = getSupabaseAdmin();
     if (!admin) {
@@ -183,6 +214,8 @@ async function geminiOcrPdf(base64Pdf, apiKey) {
 
 async function handleCourseOcr(req, res) {
   try {
+    const _a = await requireAdmin(req);
+    if (!_a.ok) return res.status(_a.status).json({ error: _a.error });
     const { examId, pdfPath } = req.body || {};
     const admin = getSupabaseAdmin();
     if (!admin) return res.status(500).json({ error: "server_misconfig", message: "Service role indisponible." });
@@ -213,6 +246,8 @@ async function handleCourseOcr(req, res) {
 
 async function handleBuildCourse(req, res, KEY) {
   try {
+    const _a = await requireAdmin(req);
+    if (!_a.ok) return res.status(_a.status).json({ error: _a.error });
     const { track = "NS4", subjectId, subjectName, examText = "", store = true } = req.body || {};
     if (!subjectId) return res.status(400).json({ error: "missing_subject" });
 
@@ -273,6 +308,8 @@ Réponds UNIQUEMENT en JSON valide :
 
 async function handleCoursePublish(req, res) {
   try {
+    const _a = await requireAdmin(req);
+    if (!_a.ok) return res.status(_a.status).json({ error: _a.error });
     const { track = "NS4", subjectId } = req.body || {};
     if (!subjectId) return res.status(400).json({ error: "missing_subject" });
     const admin = getSupabaseAdmin();
@@ -289,6 +326,8 @@ async function handleCoursePublish(req, res) {
 
 async function handleCourseUnpublish(req, res) {
   try {
+    const _a = await requireAdmin(req);
+    if (!_a.ok) return res.status(_a.status).json({ error: _a.error });
     const { track = "NS4", subjectId } = req.body || {};
     if (!subjectId) return res.status(400).json({ error: "missing_subject" });
     const admin = getSupabaseAdmin();
@@ -306,6 +345,8 @@ async function handleCourseUnpublish(req, res) {
 // Fetch ONE saved tree (draft OR published) for editing/review.
 async function handleCourseGet(req, res) {
   try {
+    const _a = await requireAdmin(req);
+    if (!_a.ok) return res.status(_a.status).json({ error: _a.error });
     const { track = "NS4", subjectId } = req.body || {};
     if (!subjectId) return res.status(400).json({ error: "missing_subject" });
     const admin = getSupabaseAdmin();
@@ -329,6 +370,8 @@ async function handleCourseGet(req, res) {
 // List every saved course (status + version) + exam counts per subject, for one track.
 async function handleCourseList(req, res) {
   try {
+    const _a = await requireAdmin(req);
+    if (!_a.ok) return res.status(_a.status).json({ error: _a.error });
     const { track = "NS4" } = req.body || {};
     const admin = getSupabaseAdmin();
     if (!admin) return res.status(500).json({ error: "server_misconfig" });
@@ -361,6 +404,8 @@ async function handleCourseList(req, res) {
 
 // ============== GEN_QUIZ (AI quiz-bank generator, easy → hard) ==============
 async function handleGenQuiz(req, res, KEY) {
+  const _a = await requireAdmin(req);
+  if (!_a.ok) return res.status(_a.status).json({ error: _a.error });
   const {
     track = "NS4",
     subject = "mathematiques",

@@ -15,6 +15,16 @@ const TRACKS = ["9AF", "NS4"];
 const SUBJECTS = ["mathematiques", "physique", "chimie", "biologie", "francais", "sciences_sociales", "philosophie", "creole"];
 
 export default function AdminExams() {
+  // Attaches the signed-in admin's Supabase token to every admin API call.
+  const postAdmin = async (task, body) => {
+    let token = null;
+    try { const { data } = await supabase.auth.getSession(); token = data?.session?.access_token || null; } catch {}
+    return fetch(`/api/content?task=${task}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(body || {}),
+    });
+  };
   const navigate = useNavigate();
   const { isAdmin, loading: accessLoading } = useAdminAccess();
   const { exams, loading, reload } = useExams();
@@ -44,10 +54,7 @@ export default function AdminExams() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch("/api/content?task=course_list", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ track: qTrack }),
-        });
+        const r = await postAdmin("course_list", { track: qTrack });
         const j = await r.json();
         const pub = (j.data?.courses || [])
           .filter((c) => c.status === "published")
@@ -66,10 +73,7 @@ export default function AdminExams() {
     (async () => {
       setQChLoading(true);
       try {
-        const r = await fetch("/api/content?task=course_get", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ track: qTrack, subjectId: qSubjectId }),
-        });
+        const r = await postAdmin("course_get", { track: qTrack, subjectId: qSubjectId });
         const j = await r.json();
         const chapters = (j.data?.tree?.chapters || []).map((ch, ci) => ({
           id: `${qSubjectId}__c${ci}`,
@@ -104,10 +108,7 @@ export default function AdminExams() {
       // Generate in batches of 15 so the serverless function never times out.
       while (done < target) {
         const batchN = Math.min(15, target - done);
-        const r = await fetch("/api/content?task=gen_quiz", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        const r = await postAdmin("gen_quiz", {
             track: qTrack,
             subject: qSubjectId,
             subjectName: qSubject?.name || qSubjectId,
@@ -115,8 +116,7 @@ export default function AdminExams() {
             chapterId: qChapterId,
             points,
             count: batchN,
-          }),
-        });
+          });
         if (!r.ok) {
           const e = await r.json().catch(() => ({}));
           throw new Error(e.message || e.error || `HTTP ${r.status}`);
@@ -166,10 +166,7 @@ export default function AdminExams() {
       for (let i = 0; i < exams.length; i++) {
         setCcStage(`Lecture de l'examen ${i + 1}/${exams.length}…`);
         try {
-          const r = await fetch("/api/content?task=course_ocr", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ examId: exams[i].id }),
-          });
+          const r = await postAdmin("course_ocr", { examId: exams[i].id });
           const j = await r.json();
           if (r.ok && j.data?.text) examText += `\n\n--- Examen ${i + 1} ---\n${j.data.text}`;
         } catch {}
@@ -177,13 +174,10 @@ export default function AdminExams() {
 
       // 3. Build the tree (syllabus + exam text).
       setCcStage(exams.length ? "Construction du cours (examens + programme)…" : "Construction du cours (programme MENFP)…");
-      const r = await fetch("/api/content?task=build_course", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const r = await postAdmin("build_course", {
           track: ccTrack, subjectId: ccSubjectId,
           subjectName: ccSubject?.name || ccSubjectId, examText,
-        }),
-      });
+        });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
       setCcTree(j.data?.tree || null);
@@ -204,10 +198,7 @@ export default function AdminExams() {
   const publishCourse = async () => {
     setCcMsg(null); setCcBusy(true);
     try {
-      const r = await fetch("/api/content?task=course_publish", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ track: ccTrack, subjectId: ccSubjectId }),
-      });
+      const r = await postAdmin("course_publish", { track: ccTrack, subjectId: ccSubjectId });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
       setCcMsg({ t: "ok", m: "Cours publié ✓ — visible par les élèves." });
@@ -224,10 +215,7 @@ export default function AdminExams() {
   const loadCourseList = async () => {
     setCcListBusy(true);
     try {
-      const r = await fetch("/api/content?task=course_list", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ track: ccTrack }),
-      });
+      const r = await postAdmin("course_list", { track: ccTrack });
       const j = await r.json();
       setCcList(j.data || null);
     } catch { setCcList(null); }
@@ -246,10 +234,7 @@ export default function AdminExams() {
     setCcSubjectId(subjectId);
     setCcStage("Chargement du cours enregistré…");
     try {
-      const r = await fetch("/api/content?task=course_get", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ track: ccTrack, subjectId }),
-      });
+      const r = await postAdmin("course_get", { track: ccTrack, subjectId });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
       if (!j.data?.tree) { setCcMsg({ t: "err", m: "Aucun cours enregistré pour cette matière." }); return; }
@@ -306,11 +291,7 @@ export default function AdminExams() {
     try {
       // Step 1: ask the server (service-role) for a one-time signed upload URL.
       step = "sign";
-      const signResp = await fetch("/api/content?task=exam_sign", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ track, year: Number(year), subject: subject || "" }),
-      });
+      const signResp = await postAdmin("exam_sign", { track, year: Number(year), subject: subject || "" });
       const signJson = await signResp.json();
       if (!signResp.ok) {
         throw new Error(`${signJson.message || signJson.error || "sign error"} ${signJson.raw ? JSON.stringify(signJson.raw) : ""}`);
