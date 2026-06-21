@@ -8,6 +8,7 @@ import {
   Scan, Sparkles, Target, X, CalendarDays,
 } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
+import { useEffectiveTrack } from "../hooks/useAdminAccess";
 import { EXAM_DATES, PERSONALITIES } from "../utils/constants";
 import { useAppConfig } from "../hooks/useAppConfig";
 import { useClassroomSessions } from "../hooks/useClassroom";
@@ -23,7 +24,8 @@ function daysUntil(date) {
 
 export default function Home() {
   const navigate = useNavigate();
-  const { track, preferences } = useApp();
+  const { preferences } = useApp();
+  const track = useEffectiveTrack(); // admin class preview-aware
   const { config } = useAppConfig();
   const { getLastSessionSummary } = useClassroomSessions();
   // Exam date/range come from the admin config (live-editable), falling back to

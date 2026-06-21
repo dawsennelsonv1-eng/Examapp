@@ -3,7 +3,7 @@
 // caches it locally. Shows sections, formulas, examples, key takeaways, then
 // the "Quiz" button launches the Duolingo-style player.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -14,26 +14,49 @@ import {
 import { getSubject, getChapter, getEvent } from "../utils/coursData";
 import { fetchLesson, getCachedLesson } from "../hooks/useLessonCache";
 import { useApp } from "../contexts/AppContext";
+import { useEffectiveTrack } from "../hooks/useAdminAccess";
+import { useCourseTree } from "../hooks/useCourseTree";
 import { useProgress } from "../hooks/useProgress";
 import QuizPlayer from "../components/quiz/QuizPlayer";
 
 export default function CoursEvent() {
   const { subjectId, chapterId, eventId } = useParams();
   const navigate = useNavigate();
-  const { track, preferences } = useApp();
+  const { preferences } = useApp();
+  const track = useEffectiveTrack();
   const { markEventComplete, recordQuizScore } = useProgress();
 
-  const subject = getSubject(subjectId);
-  const chapter = getChapter(subjectId, chapterId);
-  const event = getEvent(subjectId, chapterId, eventId);
+  // Pull the published tree for this subject (preferred source).
+  const { tree, meta, loading: treeLoading } = useCourseTree(subjectId, track || "NS4");
+
+  // eventId shape from the DB tree: `${subjectId}__c{ci}_p{pi}_g{gi}`
+  const fromTree = useMemo(() => {
+    if (!tree?.chapters) return null;
+    const m = /__c(\d+)_p(\d+)_g(\d+)$/.exec(eventId || "");
+    if (!m) return null;
+    const ci = +m[1], pi = +m[2], gi = +m[3];
+    const ch = tree.chapters[ci];
+    const pg = ch?.parts?.[pi]?.pages?.[gi];
+    if (!ch || !pg) return null;
+    return {
+      subject: { id: subjectId, name: meta?.subjectName || subjectId, banner: "linear-gradient(135deg,#6366f1,#4338ca)" },
+      chapter: { id: chapterId, title: ch.title },
+      event: { id: eventId, title: pg.title, summary: pg.summary || "", type: "point", examTopics: pg.examTopics || [] },
+    };
+  }, [tree, meta, eventId, subjectId, chapterId]);
+
+  // Fallback to the hardcoded curriculum if there's no DB tree (legacy/demo).
+  const subject = fromTree?.subject || getSubject(subjectId);
+  const chapter = fromTree?.chapter || getChapter(subjectId, chapterId);
+  const event = fromTree?.event || getEvent(subjectId, chapterId, eventId);
 
   const [lesson, setLesson] = useState(() => getCachedLesson(eventId));
-  const [loading, setLoading] = useState(!lesson);
+  const [loading, setLoading] = useState(!getCachedLesson(eventId));
   const [error, setError] = useState(null);
   const [quizOpen, setQuizOpen] = useState(false);
 
   useEffect(() => {
-    if (lesson || !event) return;
+    if (lesson || !event || treeLoading) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -55,7 +78,7 @@ export default function CoursEvent() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line
-  }, [eventId]);
+  }, [eventId, treeLoading]);
 
   const handleAskTutor = () => {
     const exerciseData = {
@@ -93,6 +116,15 @@ export default function CoursEvent() {
       setLoading(false);
     }
   };
+
+  if (treeLoading && !event) {
+    return (
+      <div className="pt-24 flex flex-col items-center text-center">
+        <Loader2 size={28} className="animate-spin text-violet-600 dark:text-violet-400 mb-2" />
+        <div className="text-sm text-slate-500 dark:text-slate-400">Chargement…</div>
+      </div>
+    );
+  }
 
   if (!event) {
     return (
