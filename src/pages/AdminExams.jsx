@@ -9,6 +9,7 @@ import { ArrowLeft, Upload, Loader2, Trash2, FileText, Crown, Sparkles } from "l
 import { useAdminAccess } from "../hooks/useAdminAccess";
 import { useExams } from "../hooks/useExams";
 import { supabase } from "../lib/supabase";
+import { SUBJECTS as COURS_SUBJECTS, CHAPTERS } from "../utils/coursData";
 
 const TRACKS = ["9AF", "NS4"];
 const SUBJECTS = ["mathematiques", "physique", "chimie", "biologie", "francais", "sciences_sociales", "philosophie", "creole"];
@@ -26,19 +27,31 @@ export default function AdminExams() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
-  // ----- Quiz generation -----
-  const [qSubject, setQSubject] = useState("mathematiques");
-  const [qTopic, setQTopic] = useState("");
+  // ----- Quiz generation (curriculum-driven: class → subject → chapter) -----
+  const [qTrack, setQTrack] = useState("NS4");
+  const [qSubjectId, setQSubjectId] = useState("");
+  const [qChapterId, setQChapterId] = useState("");
   const [qCount, setQCount] = useState(30);
   const [qBusy, setQBusy] = useState(false);
   const [qProgress, setQProgress] = useState(0);
   const [qMsg, setQMsg] = useState(null);
 
+  // Subjects available for the chosen class, and chapters for the chosen subject.
+  const qSubjects = COURS_SUBJECTS.filter((s) => !s.tracks || s.tracks.includes(qTrack));
+  const qChapters = qSubjectId ? (CHAPTERS[qSubjectId] || []) : [];
+  const qSubject = COURS_SUBJECTS.find((s) => s.id === qSubjectId) || null;
+  const qChapter = qChapters.find((c) => c.id === qChapterId) || null;
+
   const generateQuizzes = async () => {
     setQMsg(null);
+    if (!qSubjectId) { setQMsg({ t: "err", m: "Choisis une matière." }); return; }
+    if (!qChapterId) { setQMsg({ t: "err", m: "Choisis un chapitre." }); return; }
     setQBusy(true);
     setQProgress(0);
     const target = Math.max(1, Math.min(Number(qCount) || 30, 200));
+    const points = (qChapter?.events || [])
+      .filter((e) => e.type !== "quiz")
+      .map((e) => `${e.title}${e.summary ? ` — ${e.summary}` : ""}`);
     let done = 0;
     let stored = 0;
     try {
@@ -48,7 +61,15 @@ export default function AdminExams() {
         const r = await fetch("/api/content?task=gen_quiz", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ track, subject: qSubject, topic: qTopic, count: batchN }),
+          body: JSON.stringify({
+            track: qTrack,
+            subject: qSubjectId,
+            subjectName: qSubject?.name || qSubjectId,
+            topic: qChapter?.title || "",
+            chapterId: qChapterId,
+            points,
+            count: batchN,
+          }),
         });
         if (!r.ok) {
           const e = await r.json().catch(() => ({}));
@@ -59,7 +80,7 @@ export default function AdminExams() {
         done += data?.generated || batchN;
         setQProgress(Math.min(100, Math.round((done / target) * 100)));
       }
-      setQMsg({ t: "ok", m: `${stored} question(s) générée(s) et enregistrée(s) ✓` });
+      setQMsg({ t: "ok", m: `${stored} question(s) générée(s) pour « ${qChapter?.title} » ✓` });
     } catch (err) {
       setQMsg({ t: "err", m: err?.message || "Échec de la génération." });
     } finally {
@@ -233,21 +254,35 @@ export default function AdminExams() {
           </h3>
 
           <label className="text-sm block">
-            <span className="text-[11px] text-slate-500 block mb-1">Matière</span>
-            <select value={qSubject} onChange={(e) => setQSubject(e.target.value)}
+            <span className="text-[11px] text-slate-500 block mb-1">Classe</span>
+            <select value={qTrack} onChange={(e) => { setQTrack(e.target.value); setQSubjectId(""); setQChapterId(""); }}
               className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500">
-              {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
+              <option value="9AF">9ème AF</option>
+              <option value="NS4">NS4</option>
             </select>
           </label>
 
           <label className="text-sm block">
-            <span className="text-[11px] text-slate-500 block mb-1">Thème / chapitre (optionnel)</span>
-            <input value={qTopic} onChange={(e) => setQTopic(e.target.value)} placeholder="ex: Trigonométrie, Lois de Newton..."
-              className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500" />
+            <span className="text-[11px] text-slate-500 block mb-1">Matière</span>
+            <select value={qSubjectId} onChange={(e) => { setQSubjectId(e.target.value); setQChapterId(""); }}
+              className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500">
+              <option value="">— Choisir une matière —</option>
+              {qSubjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
           </label>
 
           <label className="text-sm block">
-            <span className="text-[11px] text-slate-500 block mb-1">Nombre de questions (niveau {track})</span>
+            <span className="text-[11px] text-slate-500 block mb-1">Chapitre</span>
+            <select value={qChapterId} onChange={(e) => setQChapterId(e.target.value)} disabled={!qSubjectId}
+              className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50">
+              <option value="">{qSubjectId ? "— Choisir un chapitre —" : "Choisis d'abord une matière"}</option>
+              {qChapters.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+            </select>
+            {qChapter?.subtitle && <span className="text-[10px] text-slate-400 mt-1 block">{qChapter.subtitle} · {qChapter.events?.filter((e) => e.type !== "quiz").length || 0} points</span>}
+          </label>
+
+          <label className="text-sm block">
+            <span className="text-[11px] text-slate-500 block mb-1">Nombre de questions (niveau {qTrack})</span>
             <input type="number" min="1" max="200" value={qCount} onChange={(e) => setQCount(e.target.value)}
               className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500" />
           </label>
@@ -260,11 +295,11 @@ export default function AdminExams() {
 
           {qMsg && <p className={`text-xs ${qMsg.t === "ok" ? "text-emerald-500" : "text-red-500"}`}>{qMsg.m}</p>}
 
-          <motion.button whileTap={{ scale: 0.97 }} onClick={generateQuizzes} disabled={qBusy}
+          <motion.button whileTap={{ scale: 0.97 }} onClick={generateQuizzes} disabled={qBusy || !qChapterId}
             className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
             {qBusy ? <><Loader2 size={16} className="animate-spin" /> Génération... {qProgress}%</> : <><Sparkles size={16} /> Générer le bloc de quiz</>}
           </motion.button>
-          <p className="text-[10px] text-slate-400 text-center">Généré par lots de 15 et enregistré dans la base. Réutilisable dans Réviser.</p>
+          <p className="text-[10px] text-slate-400 text-center">L'IA génère pour le chapitre choisi, par lots de 15, et enregistre dans la base.</p>
         </section>
       </main>
     </div>

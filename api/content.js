@@ -131,7 +131,10 @@ async function handleGenQuiz(req, res, KEY) {
   const {
     track = "NS4",
     subject = "mathematiques",
-    topic = "",
+    subjectName = "",
+    topic = "",            // chapter title
+    chapterId = null,
+    points = [],           // list of the chapter's lesson points (titles/summaries)
     count = 10,
     sourceExamId = null,
     store = true,
@@ -141,13 +144,19 @@ async function handleGenQuiz(req, res, KEY) {
   // (e.g. 100), the admin button calls this repeatedly in batches.
   const n = Math.max(1, Math.min(Number(count) || 10, 15));
 
-  const prompt = `Tu es un concepteur d'examens haïtiens. Génère ${n} questions à choix multiple (QCM) pour l'examen national ${track}, matière "${subject}"${topic ? `, thème "${topic}"` : ""}.
+  const subjLabel = subjectName || subject;
+  const pointsBlock = Array.isArray(points) && points.length
+    ? `\nLe chapitre couvre précisément ces points (couvre-les) :\n- ${points.slice(0, 12).join("\n- ")}`
+    : "";
+
+  const prompt = `Tu es un concepteur d'examens nationaux haïtiens (MENFP). Génère ${n} questions à choix multiple (QCM) pour l'examen ${track}, matière "${subjLabel}"${topic ? `, chapitre "${topic}"` : ""}.${pointsBlock}
 RÈGLES:
-- En français clair, adapté au niveau ${track}.
+- En français clair, niveau ${track}, style et difficulté des vrais examens MENFP.
 - ORDONNE les questions de la PLUS FACILE à la PLUS DIFFICILE (progression douce, pour ne pas décourager l'élève).
 - Exactement 4 options par question, UNE seule correcte.
-- Donne une explication courte et claire de la bonne réponse.
-- Pas de doublons; questions variées et pertinentes pour l'examen.
+- Explication courte et claire de la bonne réponse.
+- Décimales avec virgule (9,8 pas 9.8). Unités SI. Pas de doublons.
+- Reste STRICTEMENT dans le chapitre indiqué.
 Réponds UNIQUEMENT en JSON valide:
 {"questions":[{"question":"...","options":["...","...","...","..."],"answer":0,"explanation":"...","difficulty":1}]}
 "answer" = index (0-3) de la bonne option. "difficulty" = entier 1 (très facile) à 5 (très difficile), croissant dans la liste.`;
@@ -188,7 +197,7 @@ Réponds UNIQUEMENT en JSON valide:
       const admin = getSupabaseAdmin();
       if (admin) {
         const rows = questions.map((q) => ({
-          track, subject, topic: topic || null,
+          track, subject, topic: topic || null, chapter_id: chapterId,
           question: q.question, options: q.options, answer: q.answer,
           explanation: q.explanation, difficulty: q.difficulty,
           source_exam_id: sourceExamId, batch,
