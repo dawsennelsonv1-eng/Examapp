@@ -12,13 +12,12 @@ import {
   Check, Lock, Crown, Star, Calendar, FileText,
   ChevronRight, Sparkles, Zap,
 } from "lucide-react";
-import { useApp } from "../contexts/AppContext";
-import { useUsage } from "../hooks/useUsage";
+import { useEffectivePlan, useEffectiveTrack } from "../hooks/useAdminAccess";
 import { WEEKLY_QUIZZES, getExamsByYear, isExamLocked, QUIZ_FORMATS } from "../utils/reviserData";
 
 export default function Reviser() {
   const [mode, setMode] = useState("quiz"); // quiz | examens
-  const { planTier } = useUsage();
+  const planTier = useEffectivePlan(); // admin preview-aware: real plan when not previewing
 
   return (
     <div className="pb-28 pt-3 min-h-screen bg-slate-950">
@@ -207,7 +206,7 @@ function QuizNode({ quiz, format, isDone, isLocked, offset, delay, onTap }) {
 // ===================== EXAMS VIEW =====================
 function ExamsView({ planTier }) {
   const navigate = useNavigate();
-  const { track } = useApp();
+  const track = useEffectiveTrack();
   const examsByYear = getExamsByYear();
 
   return (
