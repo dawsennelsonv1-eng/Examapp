@@ -53,25 +53,32 @@ async function requireAdmin(req) {
   return { ok: false, status: 403, error: "forbidden — admin only" };
 }
 
+// Cost routing: Gemini Flash does the heavy lifting (cheap, fast, strong enough
+// for high-school exam content). A stronger model is kept only as a rare final
+// fallback if Flash is unavailable — it almost never gets hit.
+//   gemini-3-flash-preview  $0.50/$3   per M tokens  (workhorse)
+//   gemini-3.1-flash-lite   $0.25/$1.50              (cheapest; OCR/simple)
+//   gemini-3.5-flash        $1.50/$9                 (near-Pro; mid fallback)
+//   gpt-5.5                                          (final safety net only)
 const TASK_MODELS = {
-  decision: ["anthropic/claude-opus-4.7", "google/gemini-3-pro-preview"],
-  chat:     ["google/gemini-3-pro-preview", "anthropic/claude-opus-4.7", "openai/gpt-5.5"],
-  board:    ["anthropic/claude-opus-4.7", "openai/gpt-5.5"],
-  ocr:      ["google/gemini-3.5-flash-lite", "google/gemini-3-flash-preview"],
-  solve:    ["openai/gpt-5.5", "anthropic/claude-opus-4.7", "google/gemini-3.1-pro"],
-  verify:   ["anthropic/claude-opus-4.7", "openai/gpt-5.5"],
+  decision: ["google/gemini-3.1-flash-lite", "google/gemini-3-flash-preview"],
+  chat:     ["google/gemini-3-flash-preview", "google/gemini-3.5-flash", "openai/gpt-5.5"],
+  board:    ["google/gemini-3-flash-preview", "google/gemini-3.5-flash", "openai/gpt-5.5"],
+  ocr:      ["google/gemini-3.1-flash-lite", "google/gemini-3-flash-preview"],
+  solve:    ["google/gemini-3-flash-preview", "google/gemini-3.5-flash", "openai/gpt-5.5"],
+  verify:   ["google/gemini-3.1-flash-lite", "google/gemini-3-flash-preview"],
 };
 
 const LESSON_MODELS = [
-  "anthropic/claude-opus-4.7",
-  "google/gemini-3-pro-preview",
+  "google/gemini-3-flash-preview",
+  "google/gemini-3.5-flash",
   "openai/gpt-5.5",
 ];
 
 const BOARD_MODELS = [
-  "google/gemini-3.1-pro",
+  "google/gemini-3-flash-preview",
+  "google/gemini-3.5-flash",
   "openai/gpt-5.5",
-  "anthropic/claude-opus-4.7",
 ];
 
 export default async function handler(req, res) {
@@ -268,7 +275,7 @@ Réponds UNIQUEMENT en JSON valide :
 {"chapters":[{"title":"...","subtitle":"...","parts":[{"title":"...","pages":[{"title":"...","summary":"...","examTopics":["..."]}]}]}]}`;
 
     let parsed = null;
-    for (const model of ["google/gemini-3-pro-preview", "anthropic/claude-opus-4.7", "openai/gpt-5.5"]) {
+    for (const model of ["google/gemini-3-flash-preview", "google/gemini-3.5-flash", "openai/gpt-5.5"]) {
       const r = await callOpenRouter(KEY, model, prompt, { jsonMode: true, maxTokens: 8000, temperature: 0.4 });
       if (r?.json?.chapters?.length) { parsed = r.json; break; }
     }
@@ -440,7 +447,7 @@ Réponds UNIQUEMENT en JSON valide:
 "answer" = index (0-3) de la bonne option. "difficulty" = entier 1 (très facile) à 5 (très difficile), croissant dans la liste.`;
 
   let parsed = null;
-  for (const model of ["google/gemini-3.1-pro", "openai/gpt-5.5", "anthropic/claude-opus-4.7"]) {
+  for (const model of ["google/gemini-3-flash-preview", "google/gemini-3.5-flash", "openai/gpt-5.5"]) {
     parsed = await callJSON(model, KEY, prompt);
     if (parsed?.questions?.length) break;
   }
@@ -808,15 +815,15 @@ async function extractPaymentId(imageData) {
 // All AI output in French. Decimals with comma. No markdown/LaTeX in strings.
 
 const OCR_MODELS = [
-  "google/gemini-3.5-flash-lite",
+  "google/gemini-3.1-flash-lite",
   "google/gemini-3-flash-preview",
-  "google/gemini-3.1-pro",
+  "google/gemini-3.5-flash",
 ];
 
 const SOLVE_MODELS = [
+  "google/gemini-3-flash-preview",
+  "google/gemini-3.5-flash",
   "openai/gpt-5.5",
-  "anthropic/claude-opus-4.7",
-  "google/gemini-3.1-pro",
 ];
 
 // Map a detected subject string to a solving family.
