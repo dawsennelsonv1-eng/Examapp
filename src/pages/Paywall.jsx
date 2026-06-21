@@ -11,12 +11,12 @@
 // Logos: drop official SVGs at /public/logos/moncash.svg and /public/logos/natcash.svg.
 // Until then a clean branded tile shows (no copyrighted asset embedded).
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Copy, Check, Upload, Hash, Loader2, ShieldCheck,
-  Crown, Zap, X,
+  Crown, Zap, X, ChevronDown, Clock,
 } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
 import { useAuth } from "../contexts/AuthContext";
@@ -24,6 +24,8 @@ import { supabase } from "../lib/supabase";
 import { logEvent } from "../services/analytics";
 import { PLAN_PRICES, PLAN_FEATURES } from "../utils/constants";
 import { useAppConfig } from "../hooks/useAppConfig";
+import WhatsAppPayButton from "../components/WhatsAppPayButton";
+import { getPlanPricing, promoEndsAt, formatCountdown } from "../utils/promo";
 
 // Prices and features come from constants.js (single source of truth) so they
 // can never drift from the rest of the app again. Icons stay local (components).
@@ -62,9 +64,20 @@ export default function Paywall() {
   const [shot, setShot] = useState(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null); // {status, message}
+  const [showOther, setShowOther] = useState(false); // MonCash/NatCash collapsible
+
+  // Live countdown for the launch discount window.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const endsAt = promoEndsAt();
+  const countdown = formatCountdown(endsAt - now);
 
   const livePrice = { basic: config?.price_basic ?? PLAN_PRICES.basic, premium: config?.price_premium ?? PLAN_PRICES.premium };
-  const plan = { ...PLANS[planId], price: livePrice[planId] ?? PLANS[planId].price };
+  const pricing = getPlanPricing(planId, livePrice[planId]);
+  const plan = { ...PLANS[planId], price: pricing.price };
   const method = methodId ? METHODS[methodId] : null;
 
   const copyNumber = () => {
@@ -140,21 +153,60 @@ export default function Paywall() {
           {Object.values(PLANS).map((p) => {
             const Icon = p.icon;
             const active = planId === p.id;
+            const pr = getPlanPricing(p.id, livePrice[p.id]);
             return (
               <button key={p.id} onClick={() => setPlanId(p.id)}
                 className={`text-left p-4 rounded-2xl ring-1 transition ${active ? "bg-gradient-to-br from-violet-600/30 to-indigo-700/20 ring-violet-500" : "bg-white/5 ring-white/10"}`}>
                 <Icon size={20} className={active ? "text-violet-300" : "text-white/50"} />
                 <div className="mt-2 font-black">{p.name}</div>
-                <div className="text-sm text-white/70">{p.price} HTG<span className="text-[11px] text-white/40">/mois</span></div>
+                <div className="text-sm text-white/80 mt-0.5">
+                  <span className="font-black">{pr.price} HTG</span>
+                  <span className="text-[11px] text-white/40"> {"jiska egzamen"}</span>
+                </div>
+                {pr.active && pr.savings > 0 && (
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <span className="text-[11px] text-white/35 line-through">{pr.anchor} HTG</span>
+                    <span className="text-[10px] font-black text-emerald-300 bg-emerald-500/15 px-1.5 py-0.5 rounded-full">−{pr.savings}</span>
+                  </div>
+                )}
               </button>
             );
           })}
         </div>
+
+        {/* Discount urgency banner */}
+        {pricing.active && countdown && (
+          <div className="rounded-2xl px-4 py-3 bg-emerald-500/10 ring-1 ring-emerald-500/30 flex items-center gap-2.5">
+            <Clock size={16} className="text-emerald-300 shrink-0" />
+            <div className="text-[12px] text-emerald-100">
+              <span className="font-black">Òf espesyal</span> — ekonomize <span className="font-black">{pricing.savings} HTG</span>. Fini nan <span className="font-black tabular-nums">{countdown}</span>.
+            </div>
+          </div>
+        )}
+
+        {/* PRIMARY: pay on WhatsApp */}
+        <div className="space-y-2">
+          <WhatsAppPayButton planId={planId} livePrice={livePrice[planId]} />
+          <p className="text-center text-[11px] text-white/45 px-2">
+            Klike, voye mesaj la, epi nou ap aktive kont ou apre peman an. Pi fasil la.
+          </p>
+        </div>
+
         <ul className="space-y-1.5">
           {plan.features.map((f, i) => (
             <li key={i} className="flex items-center gap-2 text-sm text-white/70"><Check size={14} className="text-emerald-400" />{f}</li>
           ))}
         </ul>
+
+        {/* Other payment methods (collapsed by default) */}
+        <button onClick={() => setShowOther((v) => !v)}
+          className="w-full flex items-center justify-center gap-1.5 text-[12px] text-white/45 py-1">
+          Lòt fason pou peye (MonCash / NatCash)
+          <ChevronDown size={14} className={`transition ${showOther ? "rotate-180" : ""}`} />
+        </button>
+
+        {showOther && (
+        <div className="space-y-6">
 
         {/* Method picker */}
         <div>
@@ -258,6 +310,8 @@ export default function Paywall() {
             className="w-full py-4 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-700 font-black flex items-center justify-center gap-2 disabled:opacity-40">
             {busy ? <Loader2 size={18} className="animate-spin" /> : <>Vérifier mon paiement</>}
           </motion.button>
+        )}
+        </div>
         )}
 
         <p className="text-center text-[11px] text-white/35 flex items-center justify-center gap-1.5">

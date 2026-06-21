@@ -44,6 +44,25 @@ export const PLAN_PRICES = {
 
 export const PLAN_PRICES_HTG = PLAN_PRICES; // alias
 
+// "Regular" anchor prices shown struck-through to signal the discount value.
+// Real price (PLAN_PRICES) is what they actually pay during the promo window.
+export const PLAN_ANCHOR_PRICES = {
+  basic: 900,   // 900 -> 750  = save 150
+  premium: 1450, // 1450 -> 1200 = save 250
+};
+
+// The discount is valid for this many days after the student first opens the app.
+// After the window, the anchor price applies (creates real urgency to pay fast).
+export const DISCOUNT_WINDOW_DAYS = 5;
+
+// One-time access that ends with the exams (not a recurring subscription).
+export const PRICE_SUFFIX = "jiska egzamen";
+
+// WhatsApp number that receives payment messages. Prefer the Vercel env var
+// VITE_WHATSAPP_NUMBER; this constant is the fallback. Digits only, with country
+// code, no "+" (e.g. "50937000000").
+export const WHATSAPP_NUMBER = "";
+
 // ===== PLAN FEATURES (for the tier comparison / checker UI) =====
 // `included` drives the checkmark list; premium includes everything.
 export const PLAN_FEATURES = {
@@ -176,6 +195,7 @@ export const STORAGE_KEYS = {
   CLASSROOM_SESSIONS:     "laureat.classroom.sessions",
   LAST_SESSION_SUMMARY:   "laureat.lastSessionSummary",
   TUTORIAL_SEEN:          "laureat.tutorialSeen",
+  FIRST_SEEN:             "laureat.firstSeen",   // timestamp of first app open (promo window)
   ADMIN_OVERRIDE:         "laureat.admin",
   VIEW_AS_PLAN:           "laureat.viewAsPlan",
   LESSON_CACHE:           "laureat.lessonCache.v1",
