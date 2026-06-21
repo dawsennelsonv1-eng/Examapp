@@ -88,28 +88,37 @@ export default function AdminExams() {
     setBusy(true);
     let step = "init";
     try {
-      const safeSubject = subject || "complet";
-      const path = `${track}/${year}/${safeSubject}-${Date.now()}.pdf`;
+      // Step 1: ask the server (service-role) for a one-time signed upload URL.
+      step = "sign";
+      const signResp = await fetch("/api/content?task=exam_sign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track, year: Number(year), subject: subject || "" }),
+      });
+      const signJson = await signResp.json();
+      if (!signResp.ok) {
+        throw new Error(`${signJson.message || signJson.error || "sign error"} ${signJson.raw ? JSON.stringify(signJson.raw) : ""}`);
+      }
+      const { path, token } = signJson.data || {};
+      if (!path || !token) throw new Error("Réponse de signature invalide.");
 
-      // Step 1: confirm we have a logged-in session (RLS needs auth.uid()).
-      step = "auth";
-      const { data: { user }, error: authErr } = await supabase.auth.getUser();
-      if (authErr) throw authErr;
-      if (!user) throw new Error("Aucune session — déconnecte-toi et reconnecte-toi.");
-
-      // Step 2: upload the PDF to the 'exams' storage bucket.
-      step = "storage.upload";
-      const up = await supabase.storage.from("exams").upload(path, file, {
-        contentType: "application/pdf", upsert: false,
+      // Step 2: upload straight to the signed URL (token-authorized — skips the
+      // anon RLS/JWT path that was 503-ing).
+      step = "upload";
+      const up = await supabase.storage.from("exams").uploadToSignedUrl(path, token, file, {
+        contentType: "application/pdf",
       });
       if (up.error) throw up.error;
 
-      // Step 3: insert the metadata row.
+      // Step 3: record the row.
+      step = "auth";
+      const { data: { user } } = await supabase.auth.getUser();
+
       step = "db.insert";
       const title = `${subject ? subject.charAt(0).toUpperCase() + subject.slice(1) + " " : ""}${track} ${year}`;
       const ins = await supabase.from("exams").insert({
         year: Number(year), track, subject: subject || null, title,
-        pdf_path: path, premium, uploaded_by: user.id,
+        pdf_path: path, premium, uploaded_by: user?.id || null,
       });
       if (ins.error) throw ins.error;
 
@@ -117,7 +126,6 @@ export default function AdminExams() {
       setFile(null);
       reload();
     } catch (err) {
-      // Serialize EVERYTHING about the error (message, code, status, hint, name...).
       let full;
       try { full = JSON.stringify(err, Object.getOwnPropertyNames(err || {})); }
       catch { full = String(err); }

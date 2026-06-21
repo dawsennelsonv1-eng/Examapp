@@ -87,6 +87,9 @@ export default async function handler(req, res) {
     if (task === "gen_quiz") {
       return await handleGenQuiz(req, res, KEY);
     }
+    if (task === "exam_sign") {
+      return await handleExamSign(req, res);
+    }
     // "brain" router (or any of the brain task names like "decision", "chat", "verify")
     if (task === "brain" || TASK_MODELS[task]) {
       return await handleBrain(req, res, KEY, task === "brain" ? (req.body?.brainTask || "chat") : task);
@@ -95,6 +98,31 @@ export default async function handler(req, res) {
   } catch (err) {
     console.error("/api/content error:", err);
     return res.status(500).json({ error: "Server error", message: err.message });
+  }
+}
+
+// ============== EXAM_SIGN (service-role signed upload URL) ==============
+// The browser's anon upload() hits a Storage RLS/JWT path that 503s on this
+// project. Here the SERVER (service-role) mints a one-time signed upload URL;
+// the client uploads to it directly, bypassing that broken path entirely.
+async function handleExamSign(req, res) {
+  try {
+    const { track = "NS4", year, subject } = req.body || {};
+    const admin = getSupabaseAdmin();
+    if (!admin) {
+      return res.status(500).json({ error: "server_misconfig", message: "Service role indisponible côté serveur." });
+    }
+    const safeSubject = subject || "complet";
+    const path = `${track}/${year || "x"}/${safeSubject}-${Date.now()}.pdf`;
+    const { data, error } = await admin.storage.from("exams").createSignedUploadUrl(path);
+    if (error) {
+      let raw;
+      try { raw = JSON.parse(JSON.stringify(error, Object.getOwnPropertyNames(error))); } catch { raw = String(error); }
+      return res.status(502).json({ error: "sign_failed", message: error.message, raw });
+    }
+    return res.status(200).json({ data: { path: data?.path || path, token: data?.token } });
+  } catch (e) {
+    return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
   }
 }
 
