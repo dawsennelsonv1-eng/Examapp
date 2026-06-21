@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Upload, Loader2, Trash2, FileText, Crown, Sparkles } from "lucide-react";
+import { ArrowLeft, Upload, Loader2, Trash2, FileText, Crown, Sparkles, GraduationCap, BookOpen, Send } from "lucide-react";
 import { useAdminAccess } from "../hooks/useAdminAccess";
 import { useExams } from "../hooks/useExams";
 import { supabase } from "../lib/supabase";
@@ -86,6 +86,87 @@ export default function AdminExams() {
     } finally {
       setQBusy(false);
     }
+  };
+
+  // ----- Course tree builder (AI-authored, OCR-grounded) -----
+  const [ccTrack, setCcTrack] = useState("NS4");
+  const [ccSubjectId, setCcSubjectId] = useState("");
+  const [ccBusy, setCcBusy] = useState(false);
+  const [ccStage, setCcStage] = useState("");
+  const [ccTree, setCcTree] = useState(null);
+  const [ccCounts, setCcCounts] = useState(null);
+  const [ccMsg, setCcMsg] = useState(null);
+
+  const ccSubjects = COURS_SUBJECTS.filter((s) => !s.tracks || s.tracks.includes(ccTrack));
+  const ccSubject = COURS_SUBJECTS.find((s) => s.id === ccSubjectId) || null;
+
+  const buildCourse = async () => {
+    setCcMsg(null); setCcTree(null); setCcCounts(null);
+    if (!ccSubjectId) { setCcMsg({ t: "err", m: "Choisis une matière." }); return; }
+    setCcBusy(true);
+    try {
+      // 1. Find this subject's uploaded exams (read works via anon client).
+      setCcStage("Recherche des examens…");
+      let exams = [];
+      try {
+        const { data } = await supabase
+          .from("exams").select("id, pdf_path, subject")
+          .eq("track", ccTrack);
+        exams = (data || []).filter((e) => !e.subject || e.subject === ccSubjectId).slice(0, 2); // cap OCR cost
+      } catch {}
+
+      // 2. OCR each exam (one call each → no timeout).
+      let examText = "";
+      for (let i = 0; i < exams.length; i++) {
+        setCcStage(`Lecture de l'examen ${i + 1}/${exams.length}…`);
+        try {
+          const r = await fetch("/api/content?task=course_ocr", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ examId: exams[i].id }),
+          });
+          const j = await r.json();
+          if (r.ok && j.data?.text) examText += `\n\n--- Examen ${i + 1} ---\n${j.data.text}`;
+        } catch {}
+      }
+
+      // 3. Build the tree (syllabus + exam text).
+      setCcStage(exams.length ? "Construction du cours (examens + programme)…" : "Construction du cours (programme MENFP)…");
+      const r = await fetch("/api/content?task=build_course", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          track: ccTrack, subjectId: ccSubjectId,
+          subjectName: ccSubject?.name || ccSubjectId, examText,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+      setCcTree(j.data?.tree || null);
+      setCcCounts(j.data?.counts || null);
+      setCcMsg({
+        t: "ok",
+        m: `Brouillon créé : ${j.data?.counts?.chapters || 0} chapitres · ${j.data?.counts?.parts || 0} parties · ${j.data?.counts?.pages || 0} pages${exams.length ? ` (à partir de ${exams.length} examen(s))` : ""}.`,
+      });
+    } catch (err) {
+      setCcMsg({ t: "err", m: err?.message || "Échec de la construction." });
+    } finally {
+      setCcBusy(false);
+      setCcStage("");
+    }
+  };
+
+  const publishCourse = async () => {
+    setCcMsg(null); setCcBusy(true);
+    try {
+      const r = await fetch("/api/content?task=course_publish", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track: ccTrack, subjectId: ccSubjectId }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+      setCcMsg({ t: "ok", m: "Cours publié ✓ — visible par les élèves." });
+    } catch (err) {
+      setCcMsg({ t: "err", m: err?.message || "Échec de la publication." });
+    } finally { setCcBusy(false); }
   };
 
   if (accessLoading) {
@@ -300,6 +381,84 @@ export default function AdminExams() {
             {qBusy ? <><Loader2 size={16} className="animate-spin" /> Génération... {qProgress}%</> : <><Sparkles size={16} /> Générer le bloc de quiz</>}
           </motion.button>
           <p className="text-[10px] text-slate-400 text-center">L'IA génère pour le chapitre choisi, par lots de 15, et enregistre dans la base.</p>
+        </section>
+
+        {/* ===== Cours (IA) — build the curriculum tree from exams + syllabus ===== */}
+        <section className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm ring-1 ring-slate-100 dark:ring-slate-800 space-y-3">
+          <h3 className="text-[10px] uppercase tracking-widest font-black text-slate-500 flex items-center gap-1.5">
+            <GraduationCap size={12} className="text-violet-500" /> Cours (IA) — construire le programme
+          </h3>
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            L'IA lit les examens téléversés de la matière + le programme MENFP, puis bâtit l'arbre Chapitres → Parties → Pages. Tu revois, puis tu publies.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-sm block">
+              <span className="text-[11px] text-slate-500 block mb-1">Classe</span>
+              <select value={ccTrack} onChange={(e) => { setCcTrack(e.target.value); setCcSubjectId(""); setCcTree(null); }}
+                className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500">
+                <option value="9AF">9ème AF</option>
+                <option value="NS4">NS4</option>
+              </select>
+            </label>
+            <label className="text-sm block">
+              <span className="text-[11px] text-slate-500 block mb-1">Matière</span>
+              <select value={ccSubjectId} onChange={(e) => { setCcSubjectId(e.target.value); setCcTree(null); }}
+                className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500">
+                <option value="">— Matière —</option>
+                {ccSubjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </label>
+          </div>
+
+          {ccBusy && ccStage && (
+            <div className="flex items-center gap-2 text-xs text-violet-500">
+              <Loader2 size={14} className="animate-spin" /> {ccStage}
+            </div>
+          )}
+
+          {ccMsg && <p className={`text-xs ${ccMsg.t === "ok" ? "text-emerald-500" : "text-red-500"}`}>{ccMsg.m}</p>}
+
+          <motion.button whileTap={{ scale: 0.97 }} onClick={buildCourse} disabled={ccBusy || !ccSubjectId}
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
+            {ccBusy ? <><Loader2 size={16} className="animate-spin" /> Construction…</> : <><BookOpen size={16} /> Construire le cours</>}
+          </motion.button>
+
+          {/* Draft tree preview */}
+          {ccTree?.chapters?.length > 0 && (
+            <div className="mt-2 space-y-2">
+              <div className="text-[10px] uppercase tracking-widest font-black text-slate-500">
+                Brouillon · {ccCounts?.chapters} chapitres · {ccCounts?.parts} parties · {ccCounts?.pages} pages
+              </div>
+              <div className="max-h-80 overflow-y-auto rounded-xl ring-1 ring-slate-200 dark:ring-slate-700 divide-y divide-slate-100 dark:divide-slate-800">
+                {ccTree.chapters.map((ch, ci) => (
+                  <details key={ci} className="px-3 py-2">
+                    <summary className="text-sm font-bold text-slate-900 dark:text-white cursor-pointer">
+                      {ci + 1}. {ch.title}
+                      <span className="ml-2 text-[10px] font-normal text-slate-400">
+                        {ch.parts?.length || 0} parties · {(ch.parts || []).reduce((a, p) => a + (p.pages?.length || 0), 0)} pages
+                      </span>
+                    </summary>
+                    {ch.subtitle && <div className="text-[11px] text-slate-400 mb-1">{ch.subtitle}</div>}
+                    <div className="pl-3 space-y-1.5 mt-1">
+                      {(ch.parts || []).map((pt, pi) => (
+                        <div key={pi}>
+                          <div className="text-xs font-semibold text-violet-500">{pt.title}</div>
+                          <ul className="pl-3 list-disc text-[11px] text-slate-500 dark:text-slate-400">
+                            {(pt.pages || []).map((pg, gi) => <li key={gi}>{pg.title}</li>)}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                ))}
+              </div>
+              <motion.button whileTap={{ scale: 0.97 }} onClick={publishCourse} disabled={ccBusy}
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
+                <Send size={15} /> Publier ce cours
+              </motion.button>
+            </div>
+          )}
         </section>
       </main>
     </div>

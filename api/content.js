@@ -90,11 +90,20 @@ export default async function handler(req, res) {
     if (task === "exam_sign") {
       return await handleExamSign(req, res);
     }
+    if (task === "course_ocr") {
+      return await handleCourseOcr(req, res);
+    }
+    if (task === "build_course") {
+      return await handleBuildCourse(req, res, KEY);
+    }
+    if (task === "course_publish") {
+      return await handleCoursePublish(req, res);
+    }
     // "brain" router (or any of the brain task names like "decision", "chat", "verify")
     if (task === "brain" || TASK_MODELS[task]) {
       return await handleBrain(req, res, KEY, task === "brain" ? (req.body?.brainTask || "chat") : task);
     }
-    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, brain, verify_payment` });
+    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, exam_sign, course_ocr, build_course, course_publish, brain, verify_payment` });
   } catch (err) {
     console.error("/api/content error:", err);
     return res.status(500).json({ error: "Server error", message: err.message });
@@ -121,6 +130,149 @@ async function handleExamSign(req, res) {
       return res.status(502).json({ error: "sign_failed", message: error.message, raw });
     }
     return res.status(200).json({ data: { path: data?.path || path, token: data?.token } });
+  } catch (e) {
+    return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
+  }
+}
+
+// ============== COURSE BUILDER (AI-authored curriculum tree) ==============
+// Flow: course_ocr (one PDF → text, run per exam client-side) → build_course
+// (accumulated text + MENFP syllabus → 4-level tree, saved as draft) →
+// course_publish (draft → live). Gemini reads PDFs natively (incl. scanned).
+
+async function geminiOcrPdf(base64Pdf, apiKey) {
+  const model = "gemini-3-flash-preview";
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: "Transcris fidèlement TOUT le texte de cet examen (titres, énoncés, questions, exercices). Conserve l'ordre et la structure. Réponds uniquement avec le texte transcrit, sans commentaire." },
+              { inline_data: { mime_type: "application/pdf", data: base64Pdf } },
+            ],
+          }],
+          generationConfig: { temperature: 0, maxOutputTokens: 4096 },
+        }),
+      }
+    );
+    if (!resp.ok) {
+      const t = await resp.text();
+      return { error: `gemini ${resp.status}: ${t.slice(0, 200)}` };
+    }
+    const data = await resp.json();
+    const text = (data?.candidates?.[0]?.content?.parts || [])
+      .map((p) => p.text).filter(Boolean).join("\n");
+    return { text: text || "" };
+  } catch (e) {
+    return { error: e?.message || "ocr exception" };
+  }
+}
+
+async function handleCourseOcr(req, res) {
+  try {
+    const { examId, pdfPath } = req.body || {};
+    const admin = getSupabaseAdmin();
+    if (!admin) return res.status(500).json({ error: "server_misconfig", message: "Service role indisponible." });
+
+    let path = pdfPath || null;
+    if (!path && examId) {
+      const { data } = await admin.from("exams").select("pdf_path").eq("id", examId).single();
+      path = data?.pdf_path || null;
+    }
+    if (!path) return res.status(400).json({ error: "missing_path", message: "Aucun chemin PDF." });
+
+    const { data: blob, error: dErr } = await admin.storage.from("exams").download(path);
+    if (dErr || !blob) return res.status(502).json({ error: "download_failed", message: dErr?.message || "download null" });
+
+    const buf = Buffer.from(await blob.arrayBuffer());
+    const b64 = buf.toString("base64");
+
+    const GEMINI_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_KEY) return res.status(500).json({ error: "no_gemini_key", message: "GEMINI_API_KEY manquant." });
+
+    const out = await geminiOcrPdf(b64, GEMINI_KEY);
+    if (out.error) return res.status(502).json({ error: "ocr_failed", message: out.error });
+    return res.status(200).json({ data: { text: out.text, chars: out.text.length, path } });
+  } catch (e) {
+    return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
+  }
+}
+
+async function handleBuildCourse(req, res, KEY) {
+  try {
+    const { track = "NS4", subjectId, subjectName, examText = "", store = true } = req.body || {};
+    if (!subjectId) return res.status(400).json({ error: "missing_subject" });
+
+    const examBlock = examText
+      ? `\n\nEXTRAITS D'EXAMENS PASSÉS (sers-t'en pour PRIORISER et ORDONNER les thèmes réellement testés, et pour nommer les pages d'après ce qui tombe vraiment) :\n${String(examText).slice(0, 12000)}`
+      : "";
+
+    const prompt = `Tu es un concepteur de curriculum pour l'examen national haïtien (MENFP), matière "${subjectName || subjectId}", niveau ${track}.
+Construis l'ARBRE DU COURS complet sur 4 niveaux : Chapitres → Parties → Pages.
+Appuie-toi sur le programme officiel MENFP (ta connaissance) ET sur les extraits d'examens fournis (priorise/ordonne selon ce qui tombe le plus).${examBlock}
+RÈGLES :
+- En français. Ordre pédagogique (du fondamental à l'avancé).
+- Chaque chapitre : "title" + "subtitle" court.
+- Chaque chapitre contient des "parts" ; chaque partie contient des "pages".
+- Chaque page : "title" + "summary" (1 phrase) + "examTopics" (liste des thèmes d'examen couverts).
+- Couvre tout le programme de l'année, pas seulement ce qui est dans les extraits.
+Réponds UNIQUEMENT en JSON valide :
+{"chapters":[{"title":"...","subtitle":"...","parts":[{"title":"...","pages":[{"title":"...","summary":"...","examTopics":["..."]}]}]}]}`;
+
+    let parsed = null;
+    for (const model of ["google/gemini-3-pro-preview", "anthropic/claude-opus-4.7", "openai/gpt-5.5"]) {
+      const r = await callOpenRouter(KEY, model, prompt, { jsonMode: true, maxTokens: 8000, temperature: 0.4 });
+      if (r?.json?.chapters?.length) { parsed = r.json; break; }
+    }
+    if (!parsed?.chapters?.length) {
+      return res.status(502).json({ error: "build_failed", message: "L'IA n'a pas renvoyé d'arbre valide." });
+    }
+
+    const tree = { chapters: parsed.chapters };
+    let saved = false, version = 1;
+    if (store) {
+      const admin = getSupabaseAdmin();
+      if (admin) {
+        try {
+          const { data: existing } = await admin
+            .from("course_tree").select("version")
+            .eq("subject", subjectId).eq("track", track)
+            .order("version", { ascending: false }).limit(1);
+          version = (existing?.[0]?.version || 0) + 1;
+          const { error } = await admin.from("course_tree").upsert({
+            subject: subjectId, track, subject_name: subjectName || subjectId,
+            tree, status: "draft", version, updated_at: new Date().toISOString(),
+          }, { onConflict: "subject,track" });
+          saved = !error;
+          if (error) console.warn("course_tree save error:", error.message);
+        } catch (e) { console.warn("course save exception:", e?.message); }
+      }
+    }
+
+    const chapters = tree.chapters.length;
+    const parts = tree.chapters.reduce((a, c) => a + (c.parts?.length || 0), 0);
+    const pages = tree.chapters.reduce((a, c) => a + (c.parts?.reduce((b, p) => b + (p.pages?.length || 0), 0) || 0), 0);
+    return res.status(200).json({ data: { tree, saved, version, counts: { chapters, parts, pages } } });
+  } catch (e) {
+    return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
+  }
+}
+
+async function handleCoursePublish(req, res) {
+  try {
+    const { track = "NS4", subjectId } = req.body || {};
+    if (!subjectId) return res.status(400).json({ error: "missing_subject" });
+    const admin = getSupabaseAdmin();
+    if (!admin) return res.status(500).json({ error: "server_misconfig" });
+    const { error } = await admin.from("course_tree")
+      .update({ status: "published", updated_at: new Date().toISOString() })
+      .eq("subject", subjectId).eq("track", track);
+    if (error) return res.status(502).json({ error: "publish_failed", message: error.message });
+    return res.status(200).json({ data: { ok: true } });
   } catch (e) {
     return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
   }
