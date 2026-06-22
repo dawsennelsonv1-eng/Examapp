@@ -169,11 +169,13 @@ function computeMetrics(real, range, days) {
   const arr_htg = mrr_htg * 12;
   const arpu_htg = totalPaying > 0 ? Math.round(mrr_htg / totalPaying) : 0;
 
-  const cac_htg = 320;
-  const ltv_htg = arpu_htg * 14;
-  const ltv_cac_ratio = cac_htg > 0 ? (ltv_htg / cac_htg).toFixed(2) : "—";
+  // One-time "jusqu'aux examens" purchase → lifetime value ≈ one payment.
+  const ltv_htg = arpu_htg;
+  // CAC needs ad spend (you market organically), so it isn't measured yet.
+  const cac_htg = null;
+  const ltv_cac_ratio = "—"; // not measurable without CAC
 
-  const gross_margin_pct = 89;
+  const gross_margin_pct = null; // needs per-user API cost tracking → not measured
   const payment_success_pct = hasReal && real.paymentSuccessPct != null ? real.paymentSuccessPct : 0;
   const checkout_abandonment_pct = 0;
 

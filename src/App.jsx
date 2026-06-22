@@ -8,6 +8,8 @@ import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useApp } from "./contexts/AppContext";
 import { useAuth } from "./contexts/AuthContext";
 import AppShell from "./components/AppShell";
+import FeedbackPrompt from "./components/FeedbackPrompt";
+import InstallPrompt from "./components/InstallPrompt";
 import Home from "./pages/Home";       // eager: first screen
 import Auth from "./pages/Auth";       // eager: gate
 
@@ -38,34 +40,38 @@ function PageFallback() {
 
 export default function App() {
   return (
-    <Suspense fallback={<PageFallback />}>
-      <Routes>
-        <Route path="/share/:shareId" element={<Share />} />
-        <Route path="/onboarding" element={<Onboarding />} />
-        <Route path="/paywall" element={<Paywall />} />
+    <>
+      <Suspense fallback={<PageFallback />}>
+        <Routes>
+          <Route path="/share/:shareId" element={<Share />} />
+          <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/paywall" element={<Paywall />} />
 
-        <Route path="/" element={<ProtectedShell />}>
-          <Route index element={<Home />} />
-          <Route path="reviser" element={<Reviser />} />
-          <Route path="reviser/exam/:year/:track" element={<ReviserExam />} />
-          <Route path="reviser/quiz/:quizId" element={<ReviserQuiz />} />
-          <Route path="cours" element={<Cours />} />
-          <Route path="cours/:subjectId" element={<CoursSubject />} />
-          <Route path="cours/:subjectId/:chapterId/:eventId" element={<CoursEvent />} />
-          <Route path="scan" element={<ScanSolve />} />
-          <Route path="classe" element={<Classroom />} />
-          <Route path="profile" element={<Profile />} />
-          <Route path="admin" element={<AdminDashboard />} />
-          <Route path="admin/config" element={<AdminConfig />} />
-          <Route path="admin/exams" element={<AdminExams />} />
+          <Route path="/" element={<ProtectedShell />}>
+            <Route index element={<Home />} />
+            <Route path="reviser" element={<Reviser />} />
+            <Route path="reviser/exam/:year/:track" element={<ReviserExam />} />
+            <Route path="reviser/quiz/:quizId" element={<ReviserQuiz />} />
+            <Route path="cours" element={<Cours />} />
+            <Route path="cours/:subjectId" element={<CoursSubject />} />
+            <Route path="cours/:subjectId/:chapterId/:eventId" element={<CoursEvent />} />
+            <Route path="scan" element={<ScanSolve />} />
+            <Route path="classe" element={<Classroom />} />
+            <Route path="profile" element={<Profile />} />
+            <Route path="admin" element={<AdminDashboard />} />
+            <Route path="admin/config" element={<AdminConfig />} />
+            <Route path="admin/exams" element={<AdminExams />} />
 
-          {/* Backward compat */}
-          <Route path="quiz" element={<Navigate to="/reviser" replace />} />
-          <Route path="matieres" element={<Navigate to="/cours" replace />} />
-          <Route path="vault" element={<Navigate to="/cours" replace />} />
-        </Route>
-      </Routes>
-    </Suspense>
+            {/* Backward compat */}
+            <Route path="quiz" element={<Navigate to="/reviser" replace />} />
+            <Route path="matieres" element={<Navigate to="/cours" replace />} />
+            <Route path="vault" element={<Navigate to="/cours" replace />} />
+          </Route>
+        </Routes>
+      </Suspense>
+      <InstallPrompt />
+      <FeedbackPrompt />
+    </>
   );
 }
 

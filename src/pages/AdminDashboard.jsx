@@ -227,9 +227,9 @@ function Overview({ metrics }) {
         <MetricCard
           label="LTV:CAC"
           value={financial.ltv_cac_ratio}
-          sublabel={financial.ltv_cac_ratio >= 3 ? "Machine à imprimer 🚀" : "À surveiller"}
+          sublabel={Number(financial.ltv_cac_ratio) >= 3 ? "Machine à imprimer 🚀" : "Non mesuré"}
           icon={Target}
-          color={financial.ltv_cac_ratio >= 3 ? "emerald" : "rose"}
+          color={Number(financial.ltv_cac_ratio) >= 3 ? "emerald" : "slate"}
         />
       </div>
 
@@ -306,10 +306,10 @@ function Financial({ metrics }) {
         <MetricCard label="MRR" value={`${f.mrr_htg.toLocaleString("fr-FR")} HTG`} hint="Revenu mensuel récurrent" icon={DollarSign} color="emerald" trend="up" series={metrics.series.mrr} />
         <MetricCard label="ARR" value={`${(f.arr_htg / 1000).toFixed(0)}k HTG`} hint="Annual recurring revenue. La valeur que les acheteurs regardent." icon={TrendingUp} color="amber" />
         <MetricCard label="ARPU" value={`${f.arpu_htg.toLocaleString("fr-FR")} HTG`} hint="Revenu moyen par utilisateur payant" icon={Wallet} color="violet" />
-        <MetricCard label="CAC" value={`${f.cac_htg.toLocaleString("fr-FR")} HTG`} hint="Coût d'acquisition d'un utilisateur payant" icon={Target} color="blue" />
-        <MetricCard label="LTV" value={`${f.ltv_htg.toLocaleString("fr-FR")} HTG`} hint="Lifetime value: 9AF → Pre-Fac" icon={Users} color="emerald" />
-        <MetricCard label="LTV:CAC" value={f.ltv_cac_ratio} hint="≥3 = excellent. Indicateur ultime de santé business." icon={Activity} color={f.ltv_cac_ratio >= 3 ? "emerald" : "rose"} />
-        <MetricCard label="Gross Margin" value={`${f.gross_margin_pct}%`} hint="Revenue − coûts directs (LLM, serveur)" icon={Zap} color="emerald" />
+        <MetricCard label="CAC" value={f.cac_htg != null ? `${f.cac_htg.toLocaleString("fr-FR")} HTG` : "Non mesuré"} hint="Coût d'acquisition — non mesuré (marketing organique)." icon={Target} color="blue" />
+        <MetricCard label="LTV" value={f.ltv_htg != null ? `${f.ltv_htg.toLocaleString("fr-FR")} HTG` : "Non mesuré"} hint="Valeur d'un client (achat unique jusqu'aux examens)." icon={Users} color="emerald" />
+        <MetricCard label="LTV:CAC" value={f.ltv_cac_ratio} hint="Non mesuré tant que le CAC n'est pas suivi." icon={Activity} color={Number(f.ltv_cac_ratio) >= 3 ? "emerald" : "slate"} />
+        <MetricCard label="Gross Margin" value={f.gross_margin_pct != null ? `${f.gross_margin_pct}%` : "Non mesuré"} hint="Marge brute — nécessite le suivi des coûts API." icon={Zap} color="emerald" />
         <MetricCard label="Payment success" value={`${f.payment_success_pct}%`} hint="% MonCash/NatCash qui aboutissent" icon={DollarSign} color={f.payment_success_pct > 85 ? "emerald" : "amber"} />
         <MetricCard label="Checkout abandon" value={`${f.checkout_abandonment_pct}%`} hint="% qui tap Upgrade mais ne complètent pas le PIN USSD" icon={AlertCircle} color="rose" />
       </div>
