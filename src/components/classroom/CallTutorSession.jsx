@@ -37,6 +37,7 @@ export default function CallTutorSession({
   const sessionRef = useRef(null);
   const videoRef = useRef(null);
   const startTimeRef = useRef(Date.now());
+  const transcriptRef = useRef([]); // recent lines, used to ground the board
   const persona = PERSONALITIES.find((p) => p.id === personaId) || PERSONALITIES[0];
 
   useEffect(() => {
@@ -59,10 +60,15 @@ export default function CallTutorSession({
         exerciseContext,
         studentName,
         onTranscript: ({ role, text }) => {
-          setTranscript((prev) => [...prev.slice(-10), { role, text, ts: Date.now() }]);
-          // Fallback: if the model speaks about drawing but didn't call the
-          // tool, the keyword match still reveals a board. Throttled.
-          if (role === "tutor" && /tableau|sch[ée]ma|dessin|regarde|je te montre|illustration|diagramme/i.test(text)) {
+          setTranscript((prev) => {
+            const next = [...prev.slice(-10), { role, text, ts: Date.now() }];
+            transcriptRef.current = next;
+            return next;
+          });
+          // Fallback ONLY on explicit drawing words — NOT common words like
+          // "regarde"/"je te montre" which used to spawn unrelated diagrams.
+          // The board is grounded in the recent conversation (see requestCallBoard).
+          if (role === "tutor" && /\b(sch[ée]ma|diagramme?|dessin|dessine|graphe|trace|figure|courbe)\b/i.test(text)) {
             requestCallBoard(text);
           }
         },
@@ -154,24 +160,37 @@ export default function CallTutorSession({
     onEnd?.();
   };
 
-  // Generate a schema for the call's hidden board (AI- or user-triggered).
-  const requestCallBoard = async (description, { force = false } = {}) => {
+  // Generate a schema for the call's board, GROUNDED in what's actually being
+  // discussed (recent transcript) so it matches the tutor instead of drawing
+  // something random from a single trigger word.
+  const requestCallBoard = async (hint, { force = false } = {}) => {
     const now = Date.now();
     if (boardLoading) return;
     if (!force && now - lastBoardReqRef.current < 8000) return; // throttle keyword auto-triggers
     lastBoardReqRef.current = now;
     setBoardOpen(true);
     setBoardLoading(true);
+    setBoardSvg(null); // drop the previous (possibly unrelated) drawing while the new one loads
     try {
+      const recent = (transcriptRef.current || [])
+        .slice(-6)
+        .map((m) => `${m.role === "user" ? "Élève" : "Prof"}: ${m.text}`)
+        .join("\n");
+      const topic = String(hint || "schéma").replace(/\s+/g, " ").trim().substring(0, 80);
+      const description =
+        `Dessine un schéma clair qui illustre EXACTEMENT ce que le prof est en train ` +
+        `d'expliquer maintenant dans cet appel. ` +
+        (recent ? `Conversation récente:\n${recent}` : `Sujet: ${topic}`);
       const res = await fetch("/api/content?task=board", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          topic: String(description || "schéma").substring(0, 80),
-          description: description || "Illustration pour aider l'élève pendant l'appel",
+          topic,
+          description,
           subject: exerciseContext?.subject || "Général",
           style: "diagram",
           exerciseContext,
+          context: recent, // extra hint for the endpoint if it uses it
         }),
       });
       if (res.ok) {
@@ -199,7 +218,7 @@ export default function CallTutorSession({
           <motion.div
             initial={{ y: "-100%" }} animate={{ y: 0 }} exit={{ y: "-100%" }}
             transition={{ type: "spring", damping: 26, stiffness: 220 }}
-            className="absolute inset-x-0 top-0 z-30 mx-3 mt-16 rounded-2xl bg-white shadow-2xl overflow-hidden max-h-[55%]"
+            className="absolute inset-x-0 top-0 z-30 mx-3 mt-16 rounded-2xl bg-white shadow-2xl overflow-hidden max-h-[48%]"
           >
             <div className="flex items-center justify-between px-3 py-2 bg-slate-100">
               <span className="text-[11px] font-black uppercase tracking-widest text-violet-700">Tableau</span>
@@ -260,7 +279,13 @@ export default function CallTutorSession({
           autoPlay
           playsInline
           muted
-          className={`w-full max-w-md aspect-square rounded-3xl object-cover bg-black ${cameraOn ? "block" : "hidden"}`}
+          className={
+            !cameraOn
+              ? "hidden"
+              : boardOpen
+              ? "absolute bottom-3 right-3 w-32 h-44 rounded-2xl object-cover bg-black z-40 ring-2 ring-white/40 shadow-2xl"
+              : "w-full max-w-md aspect-square rounded-3xl object-cover bg-black block"
+          }
         />
         {cameraOn ? (
           <div className="absolute top-4 right-4">
