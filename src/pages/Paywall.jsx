@@ -106,7 +106,7 @@ export default function Paywall() {
     try {
       const { data: sess } = await supabase.auth.getSession();
       const accessToken = sess?.session?.access_token;
-      if (!accessToken) { setResult({ status: "error", message: "Konekte anvan." }); setBusy(false); return; }
+      if (!accessToken) { setResult({ status: "error", message: "Connectez-vous d'abord." }); setBusy(false); return; }
 
       const res = await fetch("/api/content?task=verify_payment", {
         method: "POST",
@@ -132,7 +132,7 @@ export default function Paywall() {
         setTimeout(() => navigate("/", { replace: true }), 2200);
       }
     } catch {
-      setResult({ status: "error", message: "Pa gen koneksyon. Eseye ankò." });
+      setResult({ status: "error", message: "Pas de connexion. Réessayez." });
     } finally {
       setBusy(false);
     }
@@ -179,7 +179,7 @@ export default function Paywall() {
           <div className="rounded-2xl px-4 py-3 bg-emerald-500/10 ring-1 ring-emerald-500/30 flex items-center gap-2.5">
             <Clock size={16} className="text-emerald-300 shrink-0" />
             <div className="text-[12px] text-emerald-100">
-              <span className="font-black">Òf espesyal</span> — ekonomize <span className="font-black">{pricing.savings} HTG</span>. Fini nan <span className="font-black tabular-nums">{countdown}</span>.
+              <span className="font-black">Offre spéciale</span> — économisez <span className="font-black">{pricing.savings} HTG</span>. Se termine dans <span className="font-black tabular-nums">{countdown}</span>.
             </div>
           </div>
         )}
@@ -201,7 +201,7 @@ export default function Paywall() {
         {/* Other payment methods (collapsed by default) */}
         <button onClick={() => setShowOther((v) => !v)}
           className="w-full flex items-center justify-center gap-1.5 text-[12px] text-white/45 py-1">
-          Lòt fason pou peye (MonCash / NatCash)
+          Autres moyens de paiement (MonCash / NatCash)
           <ChevronDown size={14} className={`transition ${showOther ? "rotate-180" : ""}`} />
         </button>
 

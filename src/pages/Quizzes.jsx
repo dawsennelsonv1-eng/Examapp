@@ -49,7 +49,7 @@ function normalize(row, i) {
   };
 }
 
-export default function Quizzes() {
+export default function Quizzes({ embedded = false }) {
   const { track } = useApp();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -151,12 +151,13 @@ export default function Quizzes() {
   const didAutoStart = useRef(false);
   useEffect(() => {
     if (didAutoStart.current) return;
+    if (embedded) { didAutoStart.current = true; return; } // toggle shows the picker, no auto-quiz
     if (searchParams.get("subject")) { didAutoStart.current = true; return; } // let deep-link win
     if (!loading && minimal.length) {
       didAutoStart.current = true;
       startMix();
     }
-  }, [loading, minimal, startMix, searchParams]);
+  }, [loading, minimal, startMix, searchParams, embedded]);
 
   // A subject level = all questions of one difficulty for that subject.
   const startLevel = useCallback(async (subjectId, name, difficulty) => {
