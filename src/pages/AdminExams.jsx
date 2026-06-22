@@ -5,7 +5,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Upload, Loader2, Trash2, FileText, Crown, Sparkles, GraduationCap, BookOpen, Send } from "lucide-react";
+import { ArrowLeft, Upload, Loader2, Trash2, FileText, Crown, Sparkles, GraduationCap, BookOpen, Send, X } from "lucide-react";
 import { useAdminAccess } from "../hooks/useAdminAccess";
 import { useExams } from "../hooks/useExams";
 import { supabase } from "../lib/supabase";
@@ -18,7 +18,15 @@ export default function AdminExams() {
   // Attaches the signed-in admin's Supabase token to every admin API call.
   const postAdmin = async (task, body) => {
     let token = null;
-    try { const { data } = await supabase.auth.getSession(); token = data?.session?.access_token || null; } catch {}
+    try {
+      const { data } = await supabase.auth.getSession();
+      token = data?.session?.access_token || null;
+      if (!token) {
+        // Session missing/expired locally — force a refresh before giving up.
+        const r = await supabase.auth.refreshSession();
+        token = r?.data?.session?.access_token || null;
+      }
+    } catch {}
     return fetch(`/api/content?task=${task}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -143,8 +151,72 @@ export default function AdminExams() {
   const [ccCounts, setCcCounts] = useState(null);
   const [ccMsg, setCcMsg] = useState(null);
 
-  const ccSubjects = COURS_SUBJECTS.filter((s) => !s.tracks || s.tracks.includes(ccTrack));
-  const ccSubject = COURS_SUBJECTS.find((s) => s.id === ccSubjectId) || null;
+  // ----- Admin-managed subjects (single source for matière everywhere) -----
+  const [dbSubjects, setDbSubjects] = useState([]);     // [{id,track,name,position}]
+  const [smTrack, setSmTrack] = useState("NS4");
+  const [newSubjName, setNewSubjName] = useState("");
+  const [subjBusy, setSubjBusy] = useState(false);
+  const [subjMsg, setSubjMsg] = useState(null);
+
+  const loadSubjects = async () => {
+    try {
+      const r = await postAdmin("subjects_list", {});
+      const j = await r.json();
+      setDbSubjects(Array.isArray(j.data) ? j.data : []);
+    } catch { setDbSubjects([]); }
+  };
+  useEffect(() => { loadSubjects(); }, []); // eslint-disable-line
+
+  const subjectsForTrack = (tk) => dbSubjects.filter((s) => s.track === tk);
+
+  const addSubject = async () => {
+    const name = newSubjName.trim();
+    if (!name) return;
+    setSubjBusy(true); setSubjMsg(null);
+    try {
+      const r = await postAdmin("subject_add", { track: smTrack, name });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+      setNewSubjName("");
+      await loadSubjects();
+    } catch (err) {
+      setSubjMsg({ t: "err", m: err?.message || "Échec." });
+    } finally { setSubjBusy(false); }
+  };
+
+  const removeSubject = async (id) => {
+    setSubjBusy(true); setSubjMsg(null);
+    try {
+      const r = await postAdmin("subject_remove", { track: smTrack, id });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+      await loadSubjects();
+    } catch (err) {
+      setSubjMsg({ t: "err", m: err?.message || "Échec." });
+    } finally { setSubjBusy(false); }
+  };
+
+  const importDefaultSubjects = async () => {
+    setSubjBusy(true); setSubjMsg(null);
+    try {
+      const defaults = COURS_SUBJECTS.filter((s) => !s.tracks || s.tracks.includes(smTrack));
+      for (const s of defaults) {
+        await postAdmin("subject_add", { track: smTrack, id: s.id, name: s.name });
+      }
+      await loadSubjects();
+      setSubjMsg({ t: "ok", m: `${defaults.length} matière(s) importée(s).` });
+    } catch (err) {
+      setSubjMsg({ t: "err", m: err?.message || "Échec de l'import." });
+    } finally { setSubjBusy(false); }
+  };
+
+  // Course builder matière list: prefer DB subjects; fall back to the hardcoded
+  // defaults only while the DB list for this track is still empty.
+  const ccDb = subjectsForTrack(ccTrack);
+  const ccSubjects = ccDb.length
+    ? ccDb.map((s) => ({ id: s.id, name: s.name }))
+    : COURS_SUBJECTS.filter((s) => !s.tracks || s.tracks.includes(ccTrack));
+  const ccSubject = ccSubjects.find((s) => s.id === ccSubjectId) || null;
 
   const buildCourse = async () => {
     setCcMsg(null); setCcTree(null); setCcCounts(null);
@@ -476,6 +548,59 @@ export default function AdminExams() {
             {qBusy ? <><Loader2 size={16} className="animate-spin" /> Génération... {qProgress}%</> : <><Sparkles size={16} /> Générer le bloc de quiz</>}
           </motion.button>
           <p className="text-[10px] text-slate-400 text-center">L'IA génère pour le chapitre choisi, par lots de 15, et enregistre dans la base.</p>
+        </section>
+
+        {/* ===== Matières — admin-managed subject list per track ===== */}
+        <section className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm ring-1 ring-slate-100 dark:ring-slate-800 space-y-3">
+          <h3 className="text-[10px] uppercase tracking-widest font-black text-slate-500 flex items-center gap-1.5">
+            <BookOpen size={12} className="text-violet-500" /> Matières — gérer par classe
+          </h3>
+
+          <div className="flex gap-2">
+            {["9AF", "NS4"].map((tk) => (
+              <button key={tk} onClick={() => setSmTrack(tk)}
+                className={`flex-1 py-2 rounded-xl text-sm font-bold transition ${smTrack === tk ? "bg-violet-500 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"}`}>
+                {tk}
+              </button>
+            ))}
+          </div>
+
+          <div className="space-y-1.5">
+            {subjectsForTrack(smTrack).length === 0 && (
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 p-3 text-center">
+                <p className="text-[12px] text-slate-400 mb-2">Aucune matière pour {smTrack}.</p>
+                <button onClick={importDefaultSubjects} disabled={subjBusy}
+                  className="text-[12px] font-bold text-violet-600 dark:text-violet-300 disabled:opacity-50">
+                  Importer les matières par défaut
+                </button>
+              </div>
+            )}
+            {subjectsForTrack(smTrack).map((s) => (
+              <div key={s.id} className="flex items-center gap-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 px-3 py-2">
+                <span className="flex-1 text-sm font-semibold text-slate-900 dark:text-white">{s.name}</span>
+                <span className="text-[10px] text-slate-400">{s.id}</span>
+                <button onClick={() => removeSubject(s.id)} disabled={subjBusy}
+                  className="w-7 h-7 rounded-lg bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-300 flex items-center justify-center disabled:opacity-50">
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <input value={newSubjName} onChange={(e) => setNewSubjName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") addSubject(); }}
+              placeholder={`Nouvelle matière (${smTrack})`}
+              className="flex-1 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500" />
+            <button onClick={addSubject} disabled={subjBusy || !newSubjName.trim()}
+              className="px-4 py-2 rounded-xl bg-violet-500 text-white text-sm font-bold disabled:opacity-50">
+              Ajouter
+            </button>
+          </div>
+
+          {subjMsg && (
+            <div className={`text-[12px] font-semibold ${subjMsg.t === "ok" ? "text-emerald-500" : "text-red-500"}`}>{subjMsg.m}</div>
+          )}
         </section>
 
         {/* ===== Cours (IA) — build the curriculum tree from exams + syllabus ===== */}

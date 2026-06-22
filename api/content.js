@@ -232,11 +232,20 @@ export default async function handler(req, res) {
     if (task === "course_list") {
       return await handleCourseList(req, res);
     }
+    if (task === "subjects_list") {
+      return await handleSubjectsList(req, res);
+    }
+    if (task === "subject_add") {
+      return await handleSubjectAdd(req, res);
+    }
+    if (task === "subject_remove") {
+      return await handleSubjectRemove(req, res);
+    }
     // "brain" router (or any of the brain task names like "decision", "chat", "verify")
     if (task === "brain" || TASK_MODELS[task]) {
       return await handleBrain(req, res, KEY, task === "brain" ? (req.body?.brainTask || "chat") : task);
     }
-    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, exam_sign, course_ocr, build_course, course_publish, course_unpublish, course_get, course_list, brain, verify_payment, call_check, call_consume, usage_status, summarize` });
+    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, exam_sign, course_ocr, build_course, course_publish, course_unpublish, course_get, course_list, subjects_list, subject_add, subject_remove, brain, verify_payment, call_check, call_consume, usage_status, summarize` });
   } catch (err) {
     console.error("/api/content error:", err);
     return res.status(500).json({ error: "Server error", message: err.message });
@@ -463,6 +472,63 @@ async function handleCourseGet(req, res) {
 }
 
 // List every saved course (status + version) + exam counts per subject, for one track.
+// ---- Admin-managed subjects per track (single source for course builder + quizzes) ----
+function slugify(s) {
+  return String(s || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
+}
+
+async function handleSubjectsList(req, res) {
+  try {
+    const admin = getSupabaseAdmin();
+    if (!admin) return res.status(500).json({ error: "server_misconfig" });
+    const { track } = req.body || {};
+    let q = admin.from("subjects").select("id, track, name, position")
+      .order("position", { ascending: true }).order("name", { ascending: true });
+    if (track) q = q.eq("track", track);
+    const { data, error } = await q;
+    if (error) return res.status(200).json({ data: [] });
+    return res.status(200).json({ data: data || [] });
+  } catch {
+    return res.status(200).json({ data: [] });
+  }
+}
+
+async function handleSubjectAdd(req, res) {
+  const a = await requireAdmin(req);
+  if (!a.ok) return res.status(a.status).json({ error: a.error });
+  try {
+    const admin = getSupabaseAdmin();
+    const { track, name } = req.body || {};
+    let { id, position } = req.body || {};
+    if (!track || !name) return res.status(400).json({ error: "missing_fields" });
+    if (!id) id = slugify(name);
+    if (!id) return res.status(400).json({ error: "bad_name" });
+    const { error } = await admin.from("subjects")
+      .upsert({ track, id, name, position: Number(position) || 0 }, { onConflict: "track,id" });
+    if (error) return res.status(502).json({ error: "add_failed", message: error.message });
+    return res.status(200).json({ data: { ok: true, id, name, track } });
+  } catch (e) {
+    return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
+  }
+}
+
+async function handleSubjectRemove(req, res) {
+  const a = await requireAdmin(req);
+  if (!a.ok) return res.status(a.status).json({ error: a.error });
+  try {
+    const admin = getSupabaseAdmin();
+    const { track, id } = req.body || {};
+    if (!track || !id) return res.status(400).json({ error: "missing_fields" });
+    const { error } = await admin.from("subjects").delete().eq("track", track).eq("id", id);
+    if (error) return res.status(502).json({ error: "remove_failed", message: error.message });
+    return res.status(200).json({ data: { ok: true } });
+  } catch (e) {
+    return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
+  }
+}
+
 async function handleCourseList(req, res) {
   try {
     const _a = await requireAdmin(req);
