@@ -3,8 +3,8 @@
 // Tapping a page opens CoursEvent (the lesson). Chapters expand to show their
 // parts; each part lists its pages as tappable lessons.
 
-import { useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ChevronRight, Clock, Sparkles, Loader2, GraduationCap } from "lucide-react";
 import { useEffectiveTrack } from "../hooks/useAdminAccess";
@@ -30,6 +30,23 @@ export default function CoursSubject() {
   const { tree, meta, loading } = useCourseTree(subjectId, track || "NS4");
 
   const [expanded, setExpanded] = useState(0); // first chapter open by default
+  const [searchParams] = useSearchParams();
+
+  // Deep link from the quiz "Mwen pa konprann": /cours/<subject>?chapter=<chapterId>
+  // opens that exact chapter and scrolls it into view.
+  useEffect(() => {
+    const ch = searchParams.get("chapter");
+    const chs = tree?.chapters || [];
+    if (!ch || !chs.length) return;
+    const idx = chs.findIndex((_, ci) => chapterId(subjectId, ci) === ch);
+    if (idx >= 0) {
+      setExpanded(idx);
+      setTimeout(() => {
+        const el = document.getElementById(`chapter-${idx}`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 280);
+    }
+  }, [searchParams, tree, subjectId]);
 
   if (loading) {
     return (
@@ -79,6 +96,7 @@ export default function CoursSubject() {
           return (
             <motion.div
               key={ci}
+              id={`chapter-${ci}`}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: ci * 0.04 }}

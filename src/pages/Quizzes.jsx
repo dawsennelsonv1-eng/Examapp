@@ -198,7 +198,8 @@ export default function Quizzes() {
 
   const explainThis = () => {
     const q = questions[currentIdx];
-    if (q?.chapterId) navigate(`/cours?subject=${q.subject || ""}&chapter=${encodeURIComponent(q.chapterId)}`);
+    if (q?.subject && q?.chapterId) navigate(`/cours/${q.subject}?chapter=${encodeURIComponent(q.chapterId)}`);
+    else if (q?.subject) navigate(`/cours/${q.subject}`);
     else navigate("/cours");
   };
 

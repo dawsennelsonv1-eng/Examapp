@@ -1,256 +1,31 @@
-// src/pages/Reviser.jsx — v23
-// Duolingo-inspired layout:
-//   - Top: segmented toggle [Quiz (default)] [Examens]
-//   - Quiz view: vertical lesson-tree style with circular nodes
-//   - Examens view: clean year-by-year grid
-//   - Locked content has a soft amber crown badge, not aggressive
+// src/pages/Reviser.jsx — v24
+// Past exams ONLY. The quiz tree moved to the dedicated Quiz tab, so this page
+// is now a clean year-by-year archive of past national exams.
 
-import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import {
-  Check, Lock, Crown, Star, Calendar, FileText,
-  ChevronRight, Sparkles, Zap, Loader2,
-} from "lucide-react";
+import { Lock, Crown, Calendar, FileText, ChevronRight } from "lucide-react";
 import { useEffectivePlan, useEffectiveTrack } from "../hooks/useAdminAccess";
-import { useApp } from "../contexts/AppContext";
-import { supabase } from "../lib/supabase";
-import { getExamsByYear, isExamLocked, QUIZ_FORMATS } from "../utils/reviserData";
+import { getExamsByYear, isExamLocked } from "../utils/reviserData";
 
 export default function Reviser() {
-  const [mode, setMode] = useState("quiz"); // quiz | examens
-  const planTier = useEffectivePlan(); // admin preview-aware: real plan when not previewing
-
-  return (
-    <div className="pb-28 pt-3 min-h-screen bg-slate-950">
-      {/* Segmented toggle */}
-      <div className="px-4 mb-4">
-        <div className="relative grid grid-cols-2 gap-1 p-1 rounded-2xl bg-slate-900 ring-1 ring-slate-800">
-          {/* Slider */}
-          <motion.div
-            layout
-            transition={{ type: "spring", stiffness: 400, damping: 35 }}
-            className="absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-xl bg-gradient-to-br from-violet-500 to-indigo-700 shadow-lg shadow-violet-500/30"
-            style={{ left: mode === "quiz" ? 4 : "calc(50% + 0px)" }}
-          />
-          <button
-            onClick={() => setMode("quiz")}
-            className={`relative z-10 py-2.5 rounded-xl text-sm font-bold transition-colors ${mode === "quiz" ? "text-white" : "text-slate-400"}`}
-          >
-            Quiz
-          </button>
-          <button
-            onClick={() => setMode("examens")}
-            className={`relative z-10 py-2.5 rounded-xl text-sm font-bold transition-colors ${mode === "examens" ? "text-white" : "text-slate-400"}`}
-          >
-            Examens
-          </button>
-        </div>
-      </div>
-
-      <AnimatePresence mode="wait">
-        {mode === "quiz" ? (
-          <motion.div
-            key="quiz"
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -10 }}
-          >
-            <QuizView planTier={planTier} />
-          </motion.div>
-        ) : (
-          <motion.div
-            key="examens"
-            initial={{ opacity: 0, x: 10 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 10 }}
-          >
-            <ExamsView planTier={planTier} />
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-// ===================== QUIZ VIEW (Duolingo style) =====================
-function QuizView({ planTier }) {
   const navigate = useNavigate();
-  const { track } = useApp();
-  const effTrack = useEffectiveTrack();
-  const [decks, setDecks] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  // Real quiz decks = chapters that actually have generated questions.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("quizzes")
-          .select("chapter_id, subject, topic")
-          .eq("track", effTrack || track || "NS4");
-        if (error) throw error;
-        const map = new Map();
-        for (const row of data || []) {
-          const key = row.chapter_id || `${row.subject}::${row.topic || ""}`;
-          if (!map.has(key)) map.set(key, { key, subject: row.subject, topic: row.topic, count: 0 });
-          map.get(key).count += 1;
-        }
-        if (!cancelled) setDecks(Array.from(map.values()).sort((a, b) => b.count - a.count));
-      } catch {
-        if (!cancelled) setDecks([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [track, effTrack]);
-
-  return (
-    <div className="px-4">
-      {/* Header card */}
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="rounded-2xl bg-gradient-to-br from-violet-600 via-purple-700 to-indigo-800 p-5 mb-5 shadow-xl shadow-violet-500/20"
-      >
-        <div className="flex items-center gap-2 mb-1">
-          <Sparkles size={14} className="text-amber-300" />
-          <span className="text-[10px] uppercase tracking-widest font-black text-white/70">Quiz par chapitre</span>
-        </div>
-        <h2 className="text-xl font-black text-white mb-1">Entraîne-toi</h2>
-        <p className="text-xs text-white/80">
-          {loading ? "Chargement…" : `${decks.length} chapitre${decks.length > 1 ? "s" : ""} disponible${decks.length > 1 ? "s" : ""}`}
-        </p>
-      </motion.div>
-
-      {loading ? (
-        <div className="flex items-center justify-center py-16 text-slate-500">
-          <Loader2 size={22} className="animate-spin" />
-        </div>
-      ) : decks.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-900 ring-1 ring-slate-800 flex items-center justify-center mb-3">
-            <Zap size={22} className="text-amber-400" />
-          </div>
-          <div className="text-sm font-bold text-white mb-1">Quiz bientôt disponibles</div>
-          <div className="text-[11px] text-slate-400 max-w-xs mx-auto">Les chapitres pour ta classe arrivent très vite.</div>
-        </div>
-      ) : (
-        <div className="relative">
-          {/* Connecting line */}
-          <div className="absolute left-1/2 top-0 bottom-0 w-1 bg-gradient-to-b from-violet-800 via-slate-800 to-transparent -translate-x-1/2 -z-10 rounded-full" />
-
-          <div className="space-y-3">
-            {decks.map((deck, i) => {
-              const offset = i % 2 === 0 ? 0 : 40;
-              const fmt = QUIZ_FORMATS[0];
-              const quiz = {
-                id: deck.key,
-                title: deck.topic || deck.subject || "Chapitre",
-                questionCount: deck.count,
-                duration: `${deck.count} questions`,
-              };
-              return (
-                <QuizNode
-                  key={deck.key}
-                  quiz={quiz}
-                  format={fmt}
-                  isDone={false}
-                  isLocked={false}
-                  offset={offset}
-                  delay={i * 0.06}
-                  onTap={() => navigate(`/quiz?chapter=${encodeURIComponent(deck.key)}`)}
-                />
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function QuizNode({ quiz, format, isDone, isLocked, offset, delay, onTap }) {
-  // Node style: large circular button with icon + halo
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay }}
-      style={{ marginLeft: offset, marginRight: -offset }}
-      className="flex items-center gap-3"
-    >
-      {/* Node circle */}
-      <motion.button
-        whileTap={{ scale: 0.92 }}
-        onClick={isLocked ? undefined : onTap}
-        disabled={isLocked}
-        className="relative flex-shrink-0"
-      >
-        {/* Halo */}
-        {!isDone && !isLocked && (
-          <motion.div
-            animate={{ scale: [1, 1.1, 1], opacity: [0.4, 0.7, 0.4] }}
-            transition={{ duration: 2, repeat: Infinity }}
-            className="absolute inset-0 rounded-full bg-violet-500/40 blur-md"
-          />
-        )}
-        <div
-          className={`relative w-20 h-20 rounded-full flex items-center justify-center shadow-xl ring-4 ${
-            isDone
-              ? "bg-gradient-to-br from-emerald-500 to-teal-600 ring-emerald-300/30"
-              : isLocked
-              ? "bg-slate-800 ring-slate-700/50"
-              : "bg-gradient-to-br from-violet-500 to-indigo-700 ring-violet-400/30"
-          }`}
-        >
-          <span className="text-3xl">{isDone ? "✓" : isLocked ? "🔒" : format.icon}</span>
-        </div>
-        {/* Stars at bottom (Duolingo-style score indicator) */}
-        {isDone && (
-          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 flex gap-0.5 bg-slate-900 px-1.5 py-0.5 rounded-full ring-2 ring-slate-950">
-            {[1, 2, 3].map((s) => (
-              <Star key={s} size={8} className="text-amber-400 fill-amber-400" />
-            ))}
-          </div>
-        )}
-      </motion.button>
-
-      {/* Right side: quiz info */}
-      <div className="flex-1 min-w-0">
-        <div className="text-[10px] uppercase tracking-widest font-black text-violet-400 mb-0.5">
-          {format.label}
-        </div>
-        <div className="font-bold text-sm text-white leading-tight">
-          {quiz.title.replace(" — Quiz hebdomadaire", "")}
-        </div>
-        <div className="text-[11px] text-slate-400 mt-0.5">
-          {quiz.questionCount} questions · {quiz.duration}
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ===================== EXAMS VIEW =====================
-function ExamsView({ planTier }) {
-  const navigate = useNavigate();
+  const planTier = useEffectivePlan(); // admin preview-aware
   const track = useEffectiveTrack();
   const examsByYear = getExamsByYear();
 
   return (
-    <div className="px-4">
-      <div className="flex items-center gap-2 mb-3 px-1">
-        <Calendar size={14} className="text-violet-400" />
-        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-          Examens des années précédentes
-        </h2>
+    <div className="pb-28 pt-3 min-h-screen bg-slate-950">
+      {/* Header */}
+      <div className="px-4 pt-3 pb-4">
+        <div className="flex items-center gap-2 mb-1">
+          <Calendar size={20} className="text-violet-400" />
+          <h1 className="text-2xl font-black text-white">Anciens examens</h1>
+        </div>
+        <p className="text-sm text-slate-400">Les sujets des années précédentes, classés par année</p>
       </div>
 
-      <div className="space-y-5">
+      <div className="px-4 space-y-5">
         {examsByYear.map(({ year, exams }, yi) => {
           const tracked = exams.filter((e) => e.track === (track || "NS4"));
           if (tracked.length === 0) return null;
@@ -312,14 +87,14 @@ function ExamsView({ planTier }) {
           transition={{ delay: 0.3 }}
           whileTap={{ scale: 0.98 }}
           onClick={() => navigate("/paywall")}
-          className="mt-6 w-full p-4 rounded-2xl bg-slate-900 ring-1 ring-amber-700/30 flex items-center gap-3 text-left"
+          className="mt-6 mx-4 w-[calc(100%-2rem)] p-4 rounded-2xl bg-slate-900 ring-1 ring-amber-700/30 flex items-center gap-3 text-left"
         >
           <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center">
             <Crown size={18} className="text-amber-400" />
           </div>
           <div className="flex-1">
             <div className="font-bold text-sm text-white">Débloque toutes les années</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">Accès complet 2021-2026</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">Accès complet aux examens premium</div>
           </div>
           <ChevronRight size={16} className="text-slate-500" />
         </motion.button>
