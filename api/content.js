@@ -53,7 +53,83 @@ async function requireAdmin(req) {
   return { ok: false, status: 403, error: "forbidden — admin only" };
 }
 
+// =====================================================================
+// SERVER-SIDE USAGE CAPS (can't be bypassed by clearing localStorage)
+//   scan         : lifetime trial count (free = 2, then must pay)
+//   call_minutes : per-calendar-month minutes (free 2 / basic 15 / premium 90)
+// Counts live in the `usage_counters` table; increments via bump_usage RPC.
+// =====================================================================
+const TIER_LIMITS = {
+  free:    { scan: 2,  call_minutes: 2 },
+  basic:   { scan: -1, call_minutes: 15 },
+  premium: { scan: -1, call_minutes: 90 },
+  admin:   { scan: -1, call_minutes: -1 }, // staff = unlimited
+};
+
+function monthKey() { return new Date().toISOString().slice(0, 7); } // "2026-06"
+function periodFor(feature) { return feature === "scan" ? "all" : monthKey(); }
+
+// Resolve the caller's identity + REAL tier (from profiles, not the client).
+async function resolveUserTier(req) {
+  const admin = getSupabaseAdmin();
+  if (!admin) return { ok: false, status: 500, body: { error: "server_misconfig" } };
+  const headerToken = (req.headers?.authorization || "").replace(/^Bearer\s+/i, "");
+  const token = req.body?.accessToken || headerToken || null;
+  if (!token) return { ok: false, status: 401, body: { error: "not_signed_in", message: "Konekte pou kontinye." } };
+  const { data: ud, error } = await admin.auth.getUser(token);
+  if (error || !ud?.user) return { ok: false, status: 401, body: { error: "invalid_session", message: "Sesyon an fini. Konekte ankò." } };
+  const user = ud.user;
+  let tier = "free";
+  try {
+    const { data: prof } = await admin.from("profiles").select("plan_tier, statut").eq("id", user.id).single();
+    if (prof?.statut === "admin") tier = "admin";
+    else if (prof?.plan_tier === "basic" || prof?.plan_tier === "premium") tier = prof.plan_tier;
+  } catch {}
+  return { ok: true, user, tier, admin };
+}
+
+async function readUsage(admin, userId, feature) {
+  try {
+    const { data } = await admin.from("usage_counters")
+      .select("count").eq("user_id", userId).eq("feature", feature).eq("period", periodFor(feature)).single();
+    return Number(data?.count || 0);
+  } catch { return 0; }
+}
+
+async function bumpUsage(admin, userId, feature, amount) {
+  try {
+    const { data, error } = await admin.rpc("bump_usage", {
+      p_user: userId, p_feature: feature, p_period: periodFor(feature), p_amount: amount,
+    });
+    if (error) { console.warn("bump_usage:", error.message); return null; }
+    return Number(data);
+  } catch (e) { console.warn("bump_usage ex:", e?.message); return null; }
+}
+
+// Enforce a feature limit. Returns the resolved {ok,user,tier,admin,...} when
+// allowed, or {ok:false,status,body} (HTTP 402 when the cap is hit).
+async function enforceLimit(req, feature) {
+  const u = await resolveUserTier(req);
+  if (!u.ok) return u;
+  const limit = (TIER_LIMITS[u.tier] || TIER_LIMITS.free)[feature];
+  if (limit === -1) return { ...u, used: 0, limit: -1 };
+  const used = await readUsage(u.admin, u.user.id, feature);
+  if (used >= limit) {
+    return {
+      ok: false, status: 402,
+      body: {
+        error: "limit_reached", feature, tier: u.tier, used, limit,
+        message: feature === "scan"
+          ? "Ou fin itilize 2 scan gratis ou yo. Pase Premium pou scan san limit."
+          : "Ou fin itilize minit apèl ou yo pou mwa a.",
+      },
+    };
+  }
+  return { ...u, used, limit };
+}
+
 // Cost routing: Gemini Flash does the heavy lifting (cheap, fast, strong enough
+
 // for high-school exam content). A stronger model is kept only as a rare final
 // fallback if Flash is unavailable — it almost never gets hit.
 //   gemini-3-flash-preview  $0.50/$3   per M tokens  (workhorse)
@@ -114,6 +190,15 @@ export default async function handler(req, res) {
     if (task === "solve" || task === "extract") {
       return await handleSolve(req, res);
     }
+    if (task === "call_check") {
+      return await handleCallCheck(req, res);
+    }
+    if (task === "call_consume") {
+      return await handleCallConsume(req, res);
+    }
+    if (task === "usage_status") {
+      return await handleUsageStatus(req, res);
+    }
     if (task === "tts") {
       return await handleTTS(req, res);
     }
@@ -148,7 +233,7 @@ export default async function handler(req, res) {
     if (task === "brain" || TASK_MODELS[task]) {
       return await handleBrain(req, res, KEY, task === "brain" ? (req.body?.brainTask || "chat") : task);
     }
-    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, exam_sign, course_ocr, build_course, course_publish, course_unpublish, course_get, course_list, brain, verify_payment` });
+    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, exam_sign, course_ocr, build_course, course_publish, course_unpublish, course_get, course_list, brain, verify_payment, call_check, call_consume, usage_status` });
   } catch (err) {
     console.error("/api/content error:", err);
     return res.status(500).json({ error: "Server error", message: err.message });
@@ -833,6 +918,51 @@ function familyForSubject(subject) {
   return SCIENCE_SUBJECTS.some((x) => s.includes(x)) ? "sciences" : "choice";
 }
 
+// ---- Usage / call-minute endpoints (server-enforced tiers) ----
+async function handleCallCheck(req, res) {
+  const u = await resolveUserTier(req);
+  if (!u.ok) return res.status(u.status).json(u.body);
+  const limit = (TIER_LIMITS[u.tier] || TIER_LIMITS.free).call_minutes;
+  if (limit === -1) {
+    return res.status(200).json({ data: { allowed: true, remainingMinutes: -1, limitMinutes: -1, tier: u.tier } });
+  }
+  const used = await readUsage(u.admin, u.user.id, "call_minutes");
+  const remaining = Math.max(0, limit - used);
+  return res.status(200).json({
+    data: { allowed: remaining > 0, remainingMinutes: remaining, limitMinutes: limit, usedMinutes: used, tier: u.tier },
+  });
+}
+
+async function handleCallConsume(req, res) {
+  const u = await resolveUserTier(req);
+  if (!u.ok) return res.status(u.status).json(u.body);
+  const minutes = Math.max(0, Number(req.body?.minutes) || 0);
+  const limit = (TIER_LIMITS[u.tier] || TIER_LIMITS.free).call_minutes;
+  if (limit === -1 || minutes <= 0) {
+    return res.status(200).json({ data: { ok: true, consumed: 0, unlimited: limit === -1 } });
+  }
+  const newCount = await bumpUsage(u.admin, u.user.id, "call_minutes", minutes);
+  const remaining = newCount == null ? null : Math.max(0, limit - newCount);
+  return res.status(200).json({ data: { ok: true, consumed: minutes, remainingMinutes: remaining } });
+}
+
+async function handleUsageStatus(req, res) {
+  const u = await resolveUserTier(req);
+  if (!u.ok) return res.status(u.status).json(u.body);
+  const lim = TIER_LIMITS[u.tier] || TIER_LIMITS.free;
+  const [scanUsed, callUsed] = await Promise.all([
+    lim.scan === -1 ? 0 : readUsage(u.admin, u.user.id, "scan"),
+    lim.call_minutes === -1 ? 0 : readUsage(u.admin, u.user.id, "call_minutes"),
+  ]);
+  return res.status(200).json({
+    data: {
+      tier: u.tier,
+      scan: { used: scanUsed, limit: lim.scan, remaining: lim.scan === -1 ? -1 : Math.max(0, lim.scan - scanUsed) },
+      call_minutes: { used: callUsed, limit: lim.call_minutes, remaining: lim.call_minutes === -1 ? -1 : Math.max(0, lim.call_minutes - callUsed) },
+    },
+  });
+}
+
 async function handleSolve(req, res) {
   try {
     const {
@@ -855,6 +985,11 @@ async function handleSolve(req, res) {
     // PHASE: EXTRACT  (fast — OCR + subject + count, no solving)
     // ============================================================
     if (phase === "extract" || phase === null) {
+      // Server-side free-tier wall: a free user gets 2 scans, then must pay.
+      // Enforced here so clearing localStorage / using a new browser can't reset it.
+      const gate = await enforceLimit(req, "scan");
+      if (!gate.ok) return res.status(gate.status).json(gate.body);
+
       let extracted = null;
       let ocrModel = null;
 
@@ -901,6 +1036,10 @@ async function handleSolve(req, res) {
       };
 
       if (payload.count > 1) payload.multipleExercises = true;
+
+      // Count this scan (one per extract). Free tier is capped; paid/admin are
+      // unlimited so we skip the write for them.
+      if (gate.limit !== -1) await bumpUsage(gate.admin, gate.user.id, "scan", 1);
 
       // If caller used the EXTRACT phase explicitly, return now.
       if (phase === "extract") {

@@ -5,17 +5,20 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
   Calculator, BookOpen, Edit3, ChevronRight, Trophy, Flame,
-  Scan, Sparkles, Target, X, CalendarDays,
+  Scan, Sparkles, Target, X, CalendarDays, Clock,
 } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
+import { useAuth } from "../contexts/AuthContext";
 import { useEffectiveTrack } from "../hooks/useAdminAccess";
 import { EXAM_DATES, PERSONALITIES } from "../utils/constants";
 import { useAppConfig } from "../hooks/useAppConfig";
 import { useClassroomSessions } from "../hooks/useClassroom";
+import WhatsAppPayButton from "../components/WhatsAppPayButton";
+import { getPlanPricing, promoEndsAt, formatCountdown } from "../utils/promo";
 import ScanHistoryCard from "../components/home/ScanHistoryCard";
 import ProgressCard from "../components/ProgressCard";
 import TutorAvatar from "../components/shared/TutorAvatar";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 function daysUntil(date) {
   const diff = date - new Date();
@@ -25,9 +28,21 @@ function daysUntil(date) {
 export default function Home() {
   const navigate = useNavigate();
   const { preferences } = useApp();
+  const { profile } = useAuth();
   const track = useEffectiveTrack(); // admin class preview-aware
   const { config } = useAppConfig();
   const { getLastSessionSummary } = useClassroomSessions();
+
+  // Launch-discount banner (free users only): live countdown + WhatsApp pay.
+  const isPaid = profile?.plan_tier === "basic" || profile?.plan_tier === "premium";
+  const [showPromo, setShowPromo] = useState(true);
+  const [nowTs, setNowTs] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const promoPricing = getPlanPricing("premium");
+  const promoCountdown = formatCountdown(promoEndsAt() - nowTs);
   // Exam date/range come from the admin config (live-editable), falling back to
   // the constants defaults when config isn't loaded.
   const fallbackExam = EXAM_DATES[track] || EXAM_DATES.NS4;
@@ -105,6 +120,38 @@ export default function Home() {
 
       <main className="px-4 py-6 space-y-6 -mt-4 relative z-10">
         <ProgressCard />
+
+        {/* Launch-discount banner — free users only */}
+        <AnimatePresence>
+          {!isPaid && showPromo && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+              className="relative rounded-2xl p-4 bg-gradient-to-br from-emerald-500/10 to-teal-500/10 ring-1 ring-emerald-500/30"
+            >
+              <button onClick={() => setShowPromo(false)}
+                className="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center">
+                <X size={12} className="text-slate-500 dark:text-slate-300" />
+              </button>
+              <div className="pr-6 mb-3">
+                <div className="text-[10px] uppercase tracking-widest font-black text-emerald-600 dark:text-emerald-400 mb-1">
+                  Òf espesyal
+                </div>
+                <p className="text-sm font-bold text-slate-900 dark:text-white leading-snug">
+                  Premium {promoPricing.price} HTG jiska egzamen
+                  {promoPricing.active && promoPricing.savings > 0 && (
+                    <span className="text-slate-400 dark:text-slate-500 line-through font-normal text-xs ml-2">{promoPricing.anchor} HTG</span>
+                  )}
+                </p>
+                {promoPricing.active && promoCountdown && (
+                  <div className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
+                    <Clock size={12} /> Fini nan <span className="tabular-nums">{promoCountdown}</span>
+                  </div>
+                )}
+              </div>
+              <WhatsAppPayButton planId="premium" />
+            </motion.div>
+          )}
+        </AnimatePresence>
         <AnimatePresence>
           {showBanner && (
             <motion.div

@@ -15,7 +15,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  ArrowLeft, AlertCircle, Loader2, MessageCircleQuestion, FileDown, Maximize2,
+  ArrowLeft, AlertCircle, Loader2, MessageCircleQuestion, FileDown, Maximize2, Scan,
 } from "lucide-react";
 
 import CameraCapture from "../components/scan/CameraCapture";
@@ -32,6 +32,8 @@ import { useApp } from "../contexts/AppContext";
 import { useScanHistory } from "../hooks/useScanHistory";
 import { exportSolutionToPDF } from "../services/pdfService";
 import { logEvent } from "../services/analytics";
+import { supabase } from "../lib/supabase";
+import WhatsAppPayButton from "../components/WhatsAppPayButton";
 
 const API = "/api/content?task=solve";
 
@@ -52,6 +54,7 @@ export default function ScanSolve() {
   const [solution, setSolution] = useState(null);
   const [error, setError] = useState(null);
   const [imageExpanded, setImageExpanded] = useState(false);
+  const [limitInfo, setLimitInfo] = useState(null); // set when the free scan cap is hit
 
   // Replay a saved scan from history
   useEffect(() => {
@@ -79,16 +82,31 @@ export default function ScanSolve() {
     const t0 = Date.now();
     logEvent("scan_start", { mode, input_type: imageData ? "image" : "text" });
     try {
+      const { data: sess } = await supabase.auth.getSession();
+      const accessToken = sess?.session?.access_token;
       const res = await fetch(API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          accessToken,
           phase: "extract",
           mode,
           input: { imageData, problemText: problemText || undefined, track: track || "NS4" },
         }),
       });
 
+      if (res.status === 402) {
+        const body = await res.json();
+        setLimitInfo(body || { message: "Limit atenn." });
+        setStep("limit"); setSolving(false);
+        logEvent("scan_blocked", { reason: "limit_reached" });
+        return;
+      }
+      if (res.status === 401) {
+        setError("Konekte ankò pou kontinye.");
+        setStep("error"); setSolving(false);
+        return;
+      }
       if (res.status === 422) {
         const body = await res.json();
         setError(body.message || "L'image n'est pas assez claire.");
@@ -202,6 +220,7 @@ export default function ScanSolve() {
     setActiveEnonce("");
     setSolution(null);
     setError(null);
+    setLimitInfo(null);
     setSolving(false);
   };
 
@@ -225,6 +244,39 @@ export default function ScanSolve() {
   // ====== Camera ======
   if (step === "camera") {
     return <CameraCapture onCapture={handleCapture} onClose={() => navigate("/")} />;
+  }
+
+  // ====== Free scan limit reached → pay wall ======
+  if (step === "limit") {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col">
+        <header className="px-4 py-3 flex items-center gap-2">
+          <button onClick={() => navigate("/")} className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
+            <ArrowLeft size={18} />
+          </button>
+          <div className="font-bold">Limite atteinte</div>
+        </header>
+        <div className="flex-1 flex flex-col justify-center px-6 max-w-md mx-auto w-full">
+          <div className="text-center mb-6">
+            <div className="w-16 h-16 rounded-2xl bg-violet-500/20 flex items-center justify-center mx-auto mb-4">
+              <Scan size={30} className="text-violet-300" />
+            </div>
+            <h1 className="text-2xl font-black mb-2">Ou sèvi ak 2 scan gratis ou yo</h1>
+            <p className="text-sm text-white/60 leading-relaxed">
+              {limitInfo?.message || "Pase Premium pou scan san limit, jiska egzamen an."}
+            </p>
+          </div>
+          <div className="space-y-2">
+            <WhatsAppPayButton planId="premium" />
+            <WhatsAppPayButton planId="basic" />
+            <button onClick={() => navigate("/paywall")}
+              className="block w-full text-center text-[12px] text-white/45 underline py-2">
+              Wè tout plan yo
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // ====== Picker ======
