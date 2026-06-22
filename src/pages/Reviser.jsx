@@ -5,15 +5,17 @@
 //   - Examens view: clean year-by-year grid
 //   - Locked content has a soft amber crown badge, not aggressive
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
   Check, Lock, Crown, Star, Calendar, FileText,
-  ChevronRight, Sparkles, Zap,
+  ChevronRight, Sparkles, Zap, Loader2,
 } from "lucide-react";
 import { useEffectivePlan, useEffectiveTrack } from "../hooks/useAdminAccess";
-import { WEEKLY_QUIZZES, getExamsByYear, isExamLocked, QUIZ_FORMATS } from "../utils/reviserData";
+import { useApp } from "../contexts/AppContext";
+import { supabase } from "../lib/supabase";
+import { getExamsByYear, isExamLocked, QUIZ_FORMATS } from "../utils/reviserData";
 
 export default function Reviser() {
   const [mode, setMode] = useState("quiz"); // quiz | examens
@@ -74,8 +76,37 @@ export default function Reviser() {
 // ===================== QUIZ VIEW (Duolingo style) =====================
 function QuizView({ planTier }) {
   const navigate = useNavigate();
-  // Mock progress per quiz — would come from Supabase later
-  const completed = new Set(); // none completed yet
+  const { track } = useApp();
+  const effTrack = useEffectiveTrack();
+  const [decks, setDecks] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Real quiz decks = chapters that actually have generated questions.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("quizzes")
+          .select("chapter_id, subject, topic")
+          .eq("track", effTrack || track || "NS4");
+        if (error) throw error;
+        const map = new Map();
+        for (const row of data || []) {
+          const key = row.chapter_id || `${row.subject}::${row.topic || ""}`;
+          if (!map.has(key)) map.set(key, { key, subject: row.subject, topic: row.topic, count: 0 });
+          map.get(key).count += 1;
+        }
+        if (!cancelled) setDecks(Array.from(map.values()).sort((a, b) => b.count - a.count));
+      } catch {
+        if (!cancelled) setDecks([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [track, effTrack]);
 
   return (
     <div className="px-4">
@@ -87,56 +118,57 @@ function QuizView({ planTier }) {
       >
         <div className="flex items-center gap-2 mb-1">
           <Sparkles size={14} className="text-amber-300" />
-          <span className="text-[10px] uppercase tracking-widest font-black text-white/70">Quiz hebdomadaire</span>
+          <span className="text-[10px] uppercase tracking-widest font-black text-white/70">Quiz par chapitre</span>
         </div>
-        <h2 className="text-xl font-black text-white mb-1">Continue ta série</h2>
+        <h2 className="text-xl font-black text-white mb-1">Entraîne-toi</h2>
         <p className="text-xs text-white/80">
-          {WEEKLY_QUIZZES.length} quiz cette semaine · niveau adapté à toi
+          {loading ? "Chargement…" : `${decks.length} chapitre${decks.length > 1 ? "s" : ""} disponible${decks.length > 1 ? "s" : ""}`}
         </p>
       </motion.div>
 
-      {/* Lesson tree — vertical path with alternating offset */}
-      <div className="relative">
-        {/* Connecting line */}
-        <div className="absolute left-1/2 top-0 bottom-0 w-1 bg-gradient-to-b from-violet-800 via-slate-800 to-transparent -translate-x-1/2 -z-10 rounded-full" />
+      {loading ? (
+        <div className="flex items-center justify-center py-16 text-slate-500">
+          <Loader2 size={22} className="animate-spin" />
+        </div>
+      ) : decks.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-900 ring-1 ring-slate-800 flex items-center justify-center mb-3">
+            <Zap size={22} className="text-amber-400" />
+          </div>
+          <div className="text-sm font-bold text-white mb-1">Quiz bientôt disponibles</div>
+          <div className="text-[11px] text-slate-400 max-w-xs mx-auto">Les chapitres pour ta classe arrivent très vite.</div>
+        </div>
+      ) : (
+        <div className="relative">
+          {/* Connecting line */}
+          <div className="absolute left-1/2 top-0 bottom-0 w-1 bg-gradient-to-b from-violet-800 via-slate-800 to-transparent -translate-x-1/2 -z-10 rounded-full" />
 
-        <div className="space-y-3">
-          {WEEKLY_QUIZZES.map((q, i) => {
-            const isDone = completed.has(q.id);
-            const isLocked = false; // weekly quizzes always accessible
-            const offset = i % 2 === 0 ? 0 : 40; // alternate left/right for visual interest
-            const fmt = QUIZ_FORMATS.find((f) => f.id === q.format) || QUIZ_FORMATS[0];
-            return (
-              <QuizNode
-                key={q.id}
-                quiz={q}
-                format={fmt}
-                isDone={isDone}
-                isLocked={isLocked}
-                offset={offset}
-                delay={i * 0.06}
-                onTap={() => navigate(`/reviser/quiz/${q.id}`)}
-              />
-            );
-          })}
+          <div className="space-y-3">
+            {decks.map((deck, i) => {
+              const offset = i % 2 === 0 ? 0 : 40;
+              const fmt = QUIZ_FORMATS[0];
+              const quiz = {
+                id: deck.key,
+                title: deck.topic || deck.subject || "Chapitre",
+                questionCount: deck.count,
+                duration: `${deck.count} questions`,
+              };
+              return (
+                <QuizNode
+                  key={deck.key}
+                  quiz={quiz}
+                  format={fmt}
+                  isDone={false}
+                  isLocked={false}
+                  offset={offset}
+                  delay={i * 0.06}
+                  onTap={() => navigate(`/quiz?chapter=${encodeURIComponent(deck.key)}`)}
+                />
+              );
+            })}
+          </div>
         </div>
-      </div>
-
-      {/* Encouragement footer */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.4 }}
-        className="mt-6 p-4 rounded-2xl bg-slate-900 ring-1 ring-slate-800 flex items-center gap-3"
-      >
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
-          <Zap size={18} className="text-white" />
-        </div>
-        <div className="flex-1">
-          <div className="text-sm font-bold text-white">Plus de quiz bientôt</div>
-          <div className="text-[11px] text-slate-400 mt-0.5">Nouveaux quiz chaque lundi</div>
-        </div>
-      </motion.div>
+      )}
     </div>
   );
 }
