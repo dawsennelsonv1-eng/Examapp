@@ -15,7 +15,7 @@ import {
   Brain, CheckCircle, XCircle, ChevronRight, ChevronLeft,
   RefreshCw, Trophy, BookOpen, Loader2, Lock, Check, Sparkles, HelpCircle, Star,
 } from "lucide-react";
-import { useApp } from "../contexts/AppContext";
+import { useEffectiveTrack } from "../hooks/useAdminAccess";
 import { supabase } from "../lib/supabase";
 
 const PROG_KEY = "laureat.quizProgress";
@@ -50,7 +50,7 @@ function normalize(row, i) {
 }
 
 export default function Quizzes({ embedded = false }) {
-  const { track } = useApp();
+  const track = useEffectiveTrack();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const tk = track || "NS4";
@@ -405,7 +405,7 @@ export default function Quizzes({ embedded = false }) {
           {/* "I don't understand" → opens the chapter's lesson */}
           <button onClick={explainThis}
             className="w-full mt-3 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 text-sm font-bold flex items-center justify-center gap-2">
-            <HelpCircle size={16} /> Mwen pa konprann — wè leson an
+            <HelpCircle size={16} /> Je ne comprends pas — voir la leçon
           </button>
 
           <div className="mt-3">

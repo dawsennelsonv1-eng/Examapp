@@ -65,8 +65,8 @@ export function buildWhatsAppPayLink({ planName, price }) {
   const num = getWhatsAppNumber();
   if (!num) return null;
   const msg =
-    `Bonjour ! Je voudrais payer le plan ${planName} (${price} HTG jusqu'aux examens) ` +
-    `pour ${APP_NAME}. Mon nom : `;
+    `Bonjou! Mwen vle peye plan ${planName} (${price} HTG jiska egzamen) ` +
+    `pou ${APP_NAME}. Non mwen: `;
   return `https://wa.me/${num}?text=${encodeURIComponent(msg)}`;
 }
 

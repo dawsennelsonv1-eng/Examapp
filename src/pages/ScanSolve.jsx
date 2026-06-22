@@ -161,6 +161,7 @@ export default function ScanSolve() {
 
       setSolution(data);
       setStep("solution");
+      try { localStorage.setItem("laureat.firstScanDone", "1"); } catch {}
       setSolving(false);
 
       logEvent("scan_complete", {

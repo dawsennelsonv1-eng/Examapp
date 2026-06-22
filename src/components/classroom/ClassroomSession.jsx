@@ -96,6 +96,7 @@ export default function ClassroomSession({ session, onExit, autoCall = false }) 
   useEffect(() => {
     if (hasInitiated.current) return;
     hasInitiated.current = true;
+    try { localStorage.setItem("laureat.firstTutorDone", "1"); } catch {}
     if (localMessages.length === 0) {
       if (session.exercise) startExerciseTeaching();
       else sendGreeting();
