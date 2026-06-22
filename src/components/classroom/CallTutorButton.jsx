@@ -25,6 +25,8 @@ export default function CallTutorButton({
   exerciseContext = null,
   language = "mix",
   studentName = "",
+  sessionId = null,
+  onCallSummary = null,
   isPremium = false, // kept for compatibility; server enforces the real limit now
   compact = false,
   autoStart = false,
@@ -119,6 +121,8 @@ export default function CallTutorButton({
           exerciseContext={exerciseContext}
           language={language}
           studentName={studentName}
+          sessionId={sessionId}
+          onCallSummary={onCallSummary}
           maxMinutes={maxMinutes}
           onEnd={endCall}
         />

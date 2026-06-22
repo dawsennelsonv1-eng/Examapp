@@ -17,6 +17,8 @@ export default function CallTutorSession({
   exerciseContext = null,
   language = "mix",
   studentName = "",
+  sessionId = null,
+  onCallSummary = null,
   onEnd,
 }) {
   const [status, setStatus] = useState("connecting"); // connecting | ready | recording | speaking | error
@@ -155,9 +157,42 @@ export default function CallTutorSession({
     }
   };
 
-  const handleEndCall = () => {
+  const handleEndCall = async () => {
+    await finishAndSaveSummary();
     sessionRef.current?.disconnect();
     onEnd?.();
+  };
+
+  // Summarize the call (cheap Flash) and hand the recap to the parent so it can
+  // be saved to the session + power the "veux-tu continuer ?" resume on Home.
+  const finishAndSaveSummary = async () => {
+    if (typeof onCallSummary !== "function") return;
+    const tr = (transcriptRef.current || []).filter((m) => m.text);
+    if (tr.length < 2) return;
+    const subject = exerciseContext?.subject || "Général";
+    const durationSec = Math.floor((Date.now() - startTimeRef.current) / 1000);
+    let data = {};
+    try {
+      const res = await fetch("/api/content?task=summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: tr.map((m) => ({ role: m.role, text: m.text })),
+          subject,
+        }),
+      });
+      if (res.ok) data = (await res.json())?.data || {};
+    } catch {}
+    try {
+      onCallSummary({
+        sessionId,
+        subject,
+        topic: data.topic || subject,
+        summary: data.summary || "",
+        didComplete: Boolean(data.didComplete),
+        durationSec,
+      });
+    } catch {}
   };
 
   // Generate a schema for the call's board, GROUNDED in what's actually being

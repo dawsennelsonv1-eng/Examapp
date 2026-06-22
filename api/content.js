@@ -199,6 +199,9 @@ export default async function handler(req, res) {
     if (task === "usage_status") {
       return await handleUsageStatus(req, res);
     }
+    if (task === "summarize") {
+      return await handleSummarize(req, res);
+    }
     if (task === "tts") {
       return await handleTTS(req, res);
     }
@@ -233,7 +236,7 @@ export default async function handler(req, res) {
     if (task === "brain" || TASK_MODELS[task]) {
       return await handleBrain(req, res, KEY, task === "brain" ? (req.body?.brainTask || "chat") : task);
     }
-    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, exam_sign, course_ocr, build_course, course_publish, course_unpublish, course_get, course_list, brain, verify_payment, call_check, call_consume, usage_status` });
+    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, exam_sign, course_ocr, build_course, course_publish, course_unpublish, course_get, course_list, brain, verify_payment, call_check, call_consume, usage_status, summarize` });
   } catch (err) {
     console.error("/api/content error:", err);
     return res.status(500).json({ error: "Server error", message: err.message });
@@ -944,6 +947,36 @@ async function handleCallConsume(req, res) {
   const newCount = await bumpUsage(u.admin, u.user.id, "call_minutes", minutes);
   const remaining = newCount == null ? null : Math.max(0, limit - newCount);
   return res.status(200).json({ data: { ok: true, consumed: minutes, remainingMinutes: remaining } });
+}
+
+async function handleSummarize(req, res) {
+  try {
+    const { transcript = [], subject = "Général" } = req.body || {};
+    const KEY = process.env.OPENROUTER_API_KEY;
+    const convo = (Array.isArray(transcript) ? transcript : [])
+      .map((m) => `${m.role === "user" ? "Élève" : "Prof"}: ${m.text || ""}`)
+      .join("\n")
+      .slice(0, 4000);
+    if (!convo.trim() || !KEY) {
+      return res.status(200).json({ data: { topic: subject, summary: "", didComplete: false } });
+    }
+    const prompt =
+      `Transcription d'un appel entre un élève haïtien et son prof IA (matière: ${subject}).\n` +
+      `Réponds UNIQUEMENT en JSON strict, sans texte autour:\n` +
+      `{"topic":"sujet précis travaillé, max 8 mots","summary":"2 phrases: ce qui a été vu et où l'élève en est","didComplete":true|false}\n\n` +
+      `Transcription:\n${convo}`;
+    let parsed = {};
+    try { parsed = await callJSON("google/gemini-3-flash-preview", KEY, prompt); } catch {}
+    return res.status(200).json({
+      data: {
+        topic: parsed?.topic || subject,
+        summary: parsed?.summary || "",
+        didComplete: Boolean(parsed?.didComplete),
+      },
+    });
+  } catch (e) {
+    return res.status(200).json({ data: { topic: "Appel", summary: "", didComplete: false } });
+  }
 }
 
 async function handleUsageStatus(req, res) {

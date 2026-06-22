@@ -48,6 +48,7 @@ export default function ClassroomSession({ session, onExit, autoCall = false }) 
   const sessionsHook = useClassroomSessions() || {};
   const appendMessage = sessionsHook.appendMessage || (() => {});
   const updateSession = sessionsHook.updateSession || (() => {});
+  const saveCallSummary = sessionsHook.saveCallSummary || (() => {});
 
   const appCtx = useApp() || {};
   const preferences = appCtx.preferences || {};
@@ -422,6 +423,30 @@ export default function ClassroomSession({ session, onExit, autoCall = false }) 
     speakMessage(switchMsg);
   };
 
+  // When a voice call ends, fold its AI recap into this session and set the
+  // resume summary so Home can offer "veux-tu continuer ?".
+  const handleCallSummary = ({ topic, summary, didComplete }) => {
+    const text = summary ? `📞 Résumé de l'appel : ${summary}` : "📞 Appel terminé.";
+    const msg = {
+      id: `msg_${Date.now()}_call`,
+      role: "tutor",
+      personaId: currentPersonaId,
+      segments: [{ type: "acknowledge", text, speakable: text }],
+      content: text,
+      timestamp: Date.now(),
+    };
+    setLocalMessages((prev) => [...prev, msg]);
+    appendMessage(session.id, msg);
+    saveCallSummary({
+      sessionId: session.id,
+      subject: session.subject,
+      personaId: currentPersonaId,
+      topic,
+      summary,
+      didComplete,
+    });
+  };
+
   const handleVoiceTranscribed = (text) => {
     setInput(text);
     if (autoSendTimer) clearTimeout(autoSendTimer);
@@ -462,7 +487,8 @@ export default function ClassroomSession({ session, onExit, autoCall = false }) 
         </div>
 
         <CallTutorButton personaId={currentPersonaId} exerciseContext={session.exercise}
-          language={preferences?.language || "fr"} studentName={preferences?.name || ""} isPremium={isPremium} compact autoStart={autoCall} />
+          language={preferences?.language || "fr"} studentName={preferences?.name || ""} isPremium={isPremium}
+          sessionId={session.id} onCallSummary={handleCallSummary} compact autoStart={autoCall} />
 
         <button onClick={() => setShowTutorSwitch(true)}
           className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
