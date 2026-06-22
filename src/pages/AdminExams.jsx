@@ -151,6 +151,27 @@ export default function AdminExams() {
   const [ccCounts, setCcCounts] = useState(null);
   const [ccMsg, setCcMsg] = useState(null);
 
+  // ----- Grant a paid plan to a user (after WhatsApp payment) -----
+  const [grantEmail, setGrantEmail] = useState("");
+  const [grantPlan, setGrantPlan] = useState("basic");
+  const [grantBusy, setGrantBusy] = useState(false);
+  const [grantMsg, setGrantMsg] = useState(null);
+
+  const grantAccess = async () => {
+    const email = grantEmail.trim();
+    if (!email) return;
+    setGrantBusy(true); setGrantMsg(null);
+    try {
+      const r = await postAdmin("grant_access", { email, plan: grantPlan });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+      setGrantMsg({ t: "ok", m: `${j.data?.who || email} → ${grantPlan} ✓` });
+      setGrantEmail("");
+    } catch (err) {
+      setGrantMsg({ t: "err", m: err?.message || "Échec." });
+    } finally { setGrantBusy(false); }
+  };
+
   // ----- Admin-managed subjects (single source for matière everywhere) -----
   const [dbSubjects, setDbSubjects] = useState([]);     // [{id,track,name,position}]
   const [smTrack, setSmTrack] = useState("NS4");
@@ -548,6 +569,35 @@ export default function AdminExams() {
             {qBusy ? <><Loader2 size={16} className="animate-spin" /> Génération... {qProgress}%</> : <><Sparkles size={16} /> Générer le bloc de quiz</>}
           </motion.button>
           <p className="text-[10px] text-slate-400 text-center">L'IA génère pour le chapitre choisi, par lots de 15, et enregistre dans la base.</p>
+        </section>
+
+        {/* ===== Abonnements — accorder un plan après paiement WhatsApp ===== */}
+        <section className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm ring-1 ring-slate-100 dark:ring-slate-800 space-y-3">
+          <h3 className="text-[10px] uppercase tracking-widest font-black text-slate-500 flex items-center gap-1.5">
+            <Crown size={12} className="text-amber-500" /> Abonnements — accorder un accès
+          </h3>
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            Après un paiement reçu sur WhatsApp, entre l'email du client et choisis son plan.
+          </p>
+          <input value={grantEmail} onChange={(e) => setGrantEmail(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") grantAccess(); }}
+            placeholder="Email du client"
+            className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500" />
+          <div className="flex gap-2">
+            {["basic", "premium", "free"].map((p) => (
+              <button key={p} onClick={() => setGrantPlan(p)}
+                className={`flex-1 py-2 rounded-xl text-sm font-bold capitalize transition ${grantPlan === p ? "bg-violet-500 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"}`}>
+                {p}
+              </button>
+            ))}
+          </div>
+          <button onClick={grantAccess} disabled={grantBusy || !grantEmail.trim()}
+            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white text-sm font-bold disabled:opacity-50">
+            {grantBusy ? "…" : "Accorder l'accès"}
+          </button>
+          {grantMsg && (
+            <div className={`text-[12px] font-semibold ${grantMsg.t === "ok" ? "text-emerald-500" : "text-red-500"}`}>{grantMsg.m}</div>
+          )}
         </section>
 
         {/* ===== Matières — admin-managed subject list per track ===== */}

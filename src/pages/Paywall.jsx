@@ -54,7 +54,7 @@ export default function Paywall() {
 
   const { config } = useAppConfig();
 
-  const [planId, setPlanId] = useState("premium");
+  const [planId, setPlanId] = useState("basic");
   const [methodId, setMethodId] = useState(null);
   const [copied, setCopied] = useState(false);
   const [name, setName] = useState("");
@@ -161,7 +161,7 @@ export default function Paywall() {
                 <div className="mt-2 font-black">{p.name}</div>
                 <div className="text-sm text-white/80 mt-0.5">
                   <span className="font-black">{pr.price} HTG</span>
-                  <span className="text-[11px] text-white/40"> {"jiska egzamen"}</span>
+                  <span className="text-[11px] text-white/40"> {"jusqu'aux examens"}</span>
                 </div>
                 {pr.active && pr.savings > 0 && (
                   <div className="mt-1 flex items-center gap-1.5">
@@ -188,7 +188,7 @@ export default function Paywall() {
         <div className="space-y-2">
           <WhatsAppPayButton planId={planId} livePrice={livePrice[planId]} />
           <p className="text-center text-[11px] text-white/45 px-2">
-            Klike, voye mesaj la, epi nou ap aktive kont ou apre peman an. Pi fasil la.
+            Cliquez, envoyez le message, et nous activons votre compte après le paiement. Le plus simple.
           </p>
         </div>
 

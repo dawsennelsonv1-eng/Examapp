@@ -241,11 +241,14 @@ export default async function handler(req, res) {
     if (task === "subject_remove") {
       return await handleSubjectRemove(req, res);
     }
+    if (task === "grant_access") {
+      return await handleGrantAccess(req, res);
+    }
     // "brain" router (or any of the brain task names like "decision", "chat", "verify")
     if (task === "brain" || TASK_MODELS[task]) {
       return await handleBrain(req, res, KEY, task === "brain" ? (req.body?.brainTask || "chat") : task);
     }
-    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, exam_sign, course_ocr, build_course, course_publish, course_unpublish, course_get, course_list, subjects_list, subject_add, subject_remove, brain, verify_payment, call_check, call_consume, usage_status, summarize` });
+    return res.status(400).json({ error: `Unknown task: '${task}'. Valid: board, lesson, solve, extract, tts, share, gen_quiz, exam_sign, course_ocr, build_course, course_publish, course_unpublish, course_get, course_list, subjects_list, subject_add, subject_remove, grant_access, brain, verify_payment, call_check, call_consume, usage_status, summarize` });
   } catch (err) {
     console.error("/api/content error:", err);
     return res.status(500).json({ error: "Server error", message: err.message });
@@ -477,6 +480,41 @@ function slugify(s) {
   return String(s || "")
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
+}
+
+// ---- Grant a paid plan to a user (after a WhatsApp payment) ----
+async function handleGrantAccess(req, res) {
+  const a = await requireAdmin(req);
+  if (!a.ok) return res.status(a.status).json({ error: a.error });
+  try {
+    const admin = getSupabaseAdmin();
+    let { email, phone, plan } = req.body || {};
+    plan = (plan === "basic" || plan === "premium" || plan === "free") ? plan : null;
+    if (!plan) return res.status(400).json({ error: "bad_plan" });
+    email = (email || "").trim().toLowerCase();
+    phone = (phone || "").trim();
+    if (!email && !phone) return res.status(400).json({ error: "missing_identifier" });
+
+    // Find the user across the auth list (small user base; paginate to be safe).
+    let target = null, page = 1;
+    while (page <= 10 && !target) {
+      const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+      if (error) break;
+      const users = data?.users || [];
+      target = users.find((u) =>
+        (email && (u.email || "").toLowerCase() === email) ||
+        (phone && (u.phone || "") === phone));
+      if (users.length < 200) break;
+      page++;
+    }
+    if (!target) return res.status(404).json({ error: "user_not_found", message: "Aucun utilisateur avec cet email / téléphone." });
+
+    const { error: upErr } = await admin.from("profiles").update({ plan_tier: plan }).eq("id", target.id);
+    if (upErr) return res.status(502).json({ error: "update_failed", message: upErr.message });
+    return res.status(200).json({ data: { ok: true, who: target.email || target.phone, plan } });
+  } catch (e) {
+    return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
+  }
 }
 
 async function handleSubjectsList(req, res) {

@@ -4,16 +4,16 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
-  Calculator, BookOpen, Edit3, ChevronRight, Trophy, Flame,
+  BookOpen, Edit3, ChevronRight, Flame,
   Scan, Sparkles, Target, X, CalendarDays, Clock,
 } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
 import { useAuth } from "../contexts/AuthContext";
+import { useStreak } from "../hooks/useStreak";
 import { useEffectiveTrack } from "../hooks/useAdminAccess";
 import { EXAM_DATES, PERSONALITIES } from "../utils/constants";
 import { useAppConfig } from "../hooks/useAppConfig";
 import { useClassroomSessions } from "../hooks/useClassroom";
-import WhatsAppPayButton from "../components/WhatsAppPayButton";
 import { getPlanPricing, promoEndsAt, formatCountdown } from "../utils/promo";
 import ScanHistoryCard from "../components/home/ScanHistoryCard";
 import ProgressCard from "../components/ProgressCard";
@@ -29,6 +29,7 @@ export default function Home() {
   const navigate = useNavigate();
   const { preferences } = useApp();
   const { profile } = useAuth();
+  const { streak } = useStreak();
   const track = useEffectiveTrack(); // admin class preview-aware
   const { config } = useAppConfig();
   const { getLastSessionSummary } = useClassroomSessions();
@@ -41,7 +42,7 @@ export default function Home() {
     const t = setInterval(() => setNowTs(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
-  const promoPricing = getPlanPricing("premium");
+  const promoBasic = getPlanPricing("basic");
   const promoCountdown = formatCountdown(promoEndsAt() - nowTs);
   // Exam date/range come from the admin config (live-editable), falling back to
   // the constants defaults when config isn't loaded.
@@ -72,17 +73,11 @@ export default function Home() {
     else navigate("/classe");
   };
 
-  const missions = [
-    { icon: Calculator, title: "Maîtrise 2 formules", subtitle: "Physique - Chapitre 5", count: 2, color: "from-violet-600 to-indigo-700", route: "/reviser" },
-    { icon: BookOpen, title: "Lis 1 texte d'histoire", subtitle: "Sciences Sociales", count: 1, color: "from-amber-500 to-orange-600", route: "/reviser" },
-    { icon: Edit3, title: "Fais 5 questions de quiz", subtitle: "Toutes matières", count: 5, color: "from-emerald-500 to-teal-600", route: "/quiz" },
-  ];
-
-  const leaderboard = [
-    { rank: 1, name: "Tania M.", score: 94 },
-    { rank: 2, name: "Joseph P.", score: 89 },
-    { rank: 3, name, score: 82, you: true },
-    { rank: 4, name: "Marie L.", score: 78 },
+  // Honest quick actions (real navigation, no fabricated chapters/counts).
+  const quickActions = [
+    { icon: Scan, title: "Scanner un exercice", subtitle: "Photo → solution expliquée", color: "from-violet-600 to-indigo-700", route: "/scan" },
+    { icon: Edit3, title: "Faire un quiz", subtitle: "Teste-toi par matière", color: "from-emerald-500 to-teal-600", route: "/quiz" },
+    { icon: BookOpen, title: "Réviser un cours", subtitle: "Leçons et chapitres", color: "from-amber-500 to-orange-600", route: "/cours" },
   ];
 
   return (
@@ -121,34 +116,48 @@ export default function Home() {
       <main className="px-4 py-6 space-y-6 -mt-4 relative z-10">
         <ProgressCard />
 
-        {/* Launch-discount banner — free users only */}
+        {/* Offre spéciale — utilisateurs gratuits seulement → page de paiement */}
         <AnimatePresence>
           {!isPaid && showPromo && (
             <motion.div
               initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-              className="relative rounded-2xl p-4 bg-gradient-to-br from-emerald-500/10 to-teal-500/10 ring-1 ring-emerald-500/30"
+              className="relative"
             >
               <button onClick={() => setShowPromo(false)}
-                className="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center">
-                <X size={12} className="text-slate-500 dark:text-slate-300" />
+                className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full bg-white/15 flex items-center justify-center">
+                <X size={12} className="text-white/80" />
               </button>
-              <div className="pr-6 mb-3">
-                <div className="text-[10px] uppercase tracking-widest font-black text-emerald-600 dark:text-emerald-400 mb-1">
-                  Òf espesyal
-                </div>
-                <p className="text-sm font-bold text-slate-900 dark:text-white leading-snug">
-                  Premium {promoPricing.price} HTG jiska egzamen
-                  {promoPricing.active && promoPricing.savings > 0 && (
-                    <span className="text-slate-400 dark:text-slate-500 line-through font-normal text-xs ml-2">{promoPricing.anchor} HTG</span>
+              <button
+                onClick={() => navigate("/paywall")}
+                className="w-full text-left rounded-2xl p-5 text-white shadow-xl bg-gradient-to-br from-violet-600 via-indigo-700 to-slate-900 relative overflow-hidden"
+              >
+                <div className="absolute -top-10 -right-10 w-32 h-32 rounded-full bg-amber-400/15 blur-2xl" />
+                <div className="flex items-center justify-between mb-2 pr-6">
+                  <span className="text-[10px] uppercase tracking-widest font-black text-amber-300">Offre spéciale</span>
+                  {promoBasic.active && promoBasic.savings > 0 && (
+                    <span className="text-[11px] font-black text-white bg-emerald-500 px-2 py-0.5 rounded-full">
+                      -{promoBasic.savings} HTG
+                    </span>
                   )}
-                </p>
-                {promoPricing.active && promoCountdown && (
-                  <div className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
-                    <Clock size={12} /> Fini nan <span className="tabular-nums">{promoCountdown}</span>
+                </div>
+                <div className="text-xl font-black leading-tight">Plan Basic</div>
+                <div className="flex items-baseline gap-2 mt-0.5">
+                  <span className="text-2xl font-black">{promoBasic.price} HTG</span>
+                  {promoBasic.active && promoBasic.savings > 0 && (
+                    <span className="text-sm text-white/50 line-through">{promoBasic.anchor} HTG</span>
+                  )}
+                </div>
+                <div className="text-xs text-white/75 mt-0.5">Accès complet jusqu'aux examens</div>
+                {promoBasic.active && promoCountdown && (
+                  <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-200">
+                    <Clock size={12} /> Se termine dans <span className="tabular-nums">{promoCountdown}</span>
                   </div>
                 )}
-              </div>
-              <WhatsAppPayButton planId="premium" />
+                <div className="mt-3 inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-sm px-4 py-2 rounded-xl text-sm font-bold">
+                  Profiter de l'offre <ChevronRight size={16} />
+                </div>
+                <div className="text-[11px] text-white/55 mt-2">Plan Premium également disponible</div>
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -206,10 +215,10 @@ export default function Home() {
         <section>
           <div className="flex items-center gap-2 mb-3 px-1">
             <Target size={16} className="text-violet-600 dark:text-violet-400" />
-            <h2 className="text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-300">Missions du jour</h2>
+            <h2 className="text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-300">Que veux-tu faire ?</h2>
           </div>
           <div className="space-y-3">
-            {missions.map((m, i) => {
+            {quickActions.map((m, i) => {
               const Icon = m.icon;
               return (
                 <motion.button key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.08 }} whileTap={{ scale: 0.98 }} onClick={() => navigate(m.route)}
@@ -221,44 +230,32 @@ export default function Home() {
                     <div className="font-bold text-slate-900 dark:text-white text-sm">{m.title}</div>
                     <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{m.subtitle}</div>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400">{m.count}</span>
-                    <ChevronRight size={18} className="text-slate-400" />
-                  </div>
+                  <ChevronRight size={18} className="text-slate-400 flex-shrink-0" />
                 </motion.button>
               );
             })}
           </div>
         </section>
 
+        {/* Real consistency streak (no fabricated leaderboard) */}
         <section>
           <div className="flex items-center gap-2 mb-3 px-1">
-            <Trophy size={16} className="text-amber-500" />
-            <h2 className="text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-300">Classement</h2>
+            <Flame size={16} className="text-orange-500" />
+            <h2 className="text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-300">Ta régularité</h2>
           </div>
-          <div className="rounded-2xl bg-white dark:bg-slate-800 shadow-md shadow-slate-200/50 dark:shadow-slate-900/50 overflow-hidden ring-1 ring-slate-100 dark:ring-slate-700">
-            {leaderboard.map((l) => (
-              <div key={l.rank} className={`flex items-center gap-4 px-4 py-3 border-b last:border-b-0 border-slate-100 dark:border-slate-700 ${
-                l.you ? "bg-gradient-to-r from-violet-50 to-indigo-50 dark:from-violet-950/40 dark:to-indigo-950/40" : ""
-              }`}>
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm flex-shrink-0 ${
-                  l.rank === 1 ? "bg-gradient-to-br from-amber-400 to-yellow-500 text-amber-900" :
-                  l.rank === 2 ? "bg-gradient-to-br from-slate-300 to-slate-400 text-slate-700" :
-                  l.rank === 3 ? "bg-gradient-to-br from-orange-400 to-amber-500 text-orange-900" :
-                  "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
-                }`}>
-                  {l.rank}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className={`font-bold text-sm truncate ${l.you ? "text-violet-700 dark:text-violet-300" : "text-slate-900 dark:text-white"}`}>
-                    {l.you ? `${l.name} (toi)` : l.name}
-                  </div>
-                </div>
-                <div className={`font-black text-base ${l.you ? "text-violet-600 dark:text-violet-400" : "text-slate-700 dark:text-slate-300"}`}>
-                  {l.score}%
-                </div>
+          <div className="rounded-2xl bg-gradient-to-br from-orange-500 to-red-600 p-5 text-white shadow-md shadow-orange-500/30 flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+              <Flame size={28} fill="currentColor" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-baseline gap-2">
+                <span className="text-4xl font-black tabular-nums">{streak}</span>
+                <span className="text-sm font-semibold opacity-90">{streak > 1 ? "jours de suite" : "jour"}</span>
               </div>
-            ))}
+              <p className="text-xs opacity-80 mt-0.5">
+                {streak > 1 ? "Continue comme ça, ne casse pas la série !" : "Reviens demain pour continuer ta série."}
+              </p>
+            </div>
           </div>
         </section>
       </main>

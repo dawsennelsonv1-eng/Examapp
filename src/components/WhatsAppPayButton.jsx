@@ -42,10 +42,10 @@ export default function WhatsAppPayButton({
     >
       <span className="flex items-center justify-center gap-2.5">
         <WhatsAppGlyph />
-        <span className="text-[15px]">{label || "Peye sou WhatsApp"}</span>
+        <span className="text-[15px]">{label || "Payer sur WhatsApp"}</span>
       </span>
       <span className="block mt-0.5 text-[12px] font-semibold text-white/90">
-        {subLabel || `${planName} · ${price} HTG jiska egzamen`}
+        {subLabel || `${planName} · ${price} HTG jusqu'aux examens`}
       </span>
     </motion.a>
   );

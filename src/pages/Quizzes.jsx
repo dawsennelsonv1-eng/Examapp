@@ -8,7 +8,7 @@
 //     has a "Mwen pa konprann" button that opens that chapter's lesson.
 // All questions come from the `quizzes` table the admin generator fills.
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
@@ -107,6 +107,7 @@ export default function Quizzes() {
     return () => { cancelled = true; };
   }, [tk]);
 
+
   const subjectsList = Object.keys(coverage).map((id) => ({
     id, name: subjectName[id] || id, count: coverage[id].count,
     diffs: Object.keys(coverage[id].byDiff).map(Number).sort((a, b) => a - b),
@@ -144,6 +145,18 @@ export default function Quizzes() {
       beginPlay(qs, { mix: true });
     } finally { setLoadingQuiz(false); }
   }, [minimal]);
+
+  // Auto-start the daily mix when the Quiz tab opens (once). "Quitter"/results
+  // return to the home screen with the subject picker.
+  const didAutoStart = useRef(false);
+  useEffect(() => {
+    if (didAutoStart.current) return;
+    if (searchParams.get("subject")) { didAutoStart.current = true; return; } // let deep-link win
+    if (!loading && minimal.length) {
+      didAutoStart.current = true;
+      startMix();
+    }
+  }, [loading, minimal, startMix, searchParams]);
 
   // A subject level = all questions of one difficulty for that subject.
   const startLevel = useCallback(async (subjectId, name, difficulty) => {

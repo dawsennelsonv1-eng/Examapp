@@ -56,7 +56,7 @@ export const PLAN_ANCHOR_PRICES = {
 export const DISCOUNT_WINDOW_DAYS = 5;
 
 // One-time access that ends with the exams (not a recurring subscription).
-export const PRICE_SUFFIX = "jiska egzamen";
+export const PRICE_SUFFIX = "jusqu'aux examens";
 
 // WhatsApp number that receives payment messages. Prefer the Vercel env var
 // VITE_WHATSAPP_NUMBER; this constant is the fallback. Digits only, with country
@@ -174,7 +174,7 @@ export const PERSONAS = PERSONALITIES; // alias
 
 // ===== LANGUAGES =====
 export const LANGUAGE_OPTIONS = [
-  { id: "fr",  name: "Français", description: "Réponses en français uniquement", icon: "🇫🇷" },
+  { id: "fr",  name: "Français (recommandé)", description: "Réponses en français", icon: "🇫🇷", recommended: true },
   { id: "kr",  name: "Kreyòl",   description: "Repons yo nan kreyòl sèlman",     icon: "🇭🇹" },
   { id: "mix", name: "Mixte",    description: "Français + kreyòl naturellement", icon: "🌍" },
 ];

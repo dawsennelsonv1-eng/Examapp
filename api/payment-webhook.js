@@ -83,8 +83,8 @@ export default async function handler(req, res) {
       if (!parsed) return res.status(400).json({ error: "Could not parse SMS" });
 
       let plan = null;
-      if (parsed.amount === 900) plan = "basic";
-      else if (parsed.amount === 2400) plan = "premium";
+      if (parsed.amount === 750 || parsed.amount === 900) plan = "basic";
+      else if (parsed.amount === 1200 || parsed.amount === 1450) plan = "premium";
       else {
         // Still store the tx for manual review but don't auto-validate
         await storeTx(parsed.txId, {
