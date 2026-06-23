@@ -557,6 +557,7 @@ async function handleClientsList(req, res) {
     const usage = byUser[u.id] || { total: 0, features: {}, last: null };
     const top = Object.entries(usage.features).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
     return {
+      id: u.id,
       email: u.email || u.phone || "—",
       plan: planById[u.id] || "free",
       created_at: u.created_at,
@@ -655,6 +656,7 @@ async function fireMetaPurchase({ email, value }) {
         custom_data: { value: Number(value) || 0, currency: "HTG" },
       }],
     };
+    if (process.env.META_TEST_EVENT_CODE) payload.test_event_code = process.env.META_TEST_EVENT_CODE;
     await fetch(`https://graph.facebook.com/v19.0/${pixelId}/events?access_token=${token}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
     });
@@ -667,26 +669,34 @@ async function handleGrantAccess(req, res) {
   if (!a.ok) return res.status(a.status).json({ error: a.error });
   try {
     const admin = getSupabaseAdmin();
-    let { email, phone, plan } = req.body || {};
+    let { email, phone, plan, user_id } = req.body || {};
     plan = (plan === "basic" || plan === "premium" || plan === "free") ? plan : null;
     if (!plan) return res.status(400).json({ error: "bad_plan" });
     email = (email || "").trim().toLowerCase();
     phone = (phone || "").trim();
-    if (!email && !phone) return res.status(400).json({ error: "missing_identifier" });
+    user_id = (user_id || "").trim();
+    if (!email && !phone && !user_id) return res.status(400).json({ error: "missing_identifier" });
 
-    // Find the user across the auth list (small user base; paginate to be safe).
-    let target = null, page = 1;
-    while (page <= 10 && !target) {
-      const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
-      if (error) break;
-      const users = data?.users || [];
-      target = users.find((u) =>
-        (email && (u.email || "").toLowerCase() === email) ||
-        (phone && (u.phone || "") === phone));
-      if (users.length < 200) break;
-      page++;
+    // Preferred path: a user_id picked from the Clients list (no typing, no typos).
+    let target = null;
+    if (user_id) {
+      const { data } = await admin.auth.admin.getUserById(user_id);
+      target = data?.user || null;
+    } else {
+      // Fallback: look up by email/phone across the auth list.
+      let page = 1;
+      while (page <= 10 && !target) {
+        const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+        if (error) break;
+        const users = data?.users || [];
+        target = users.find((u) =>
+          (email && (u.email || "").toLowerCase() === email) ||
+          (phone && (u.phone || "") === phone));
+        if (users.length < 200) break;
+        page++;
+      }
     }
-    if (!target) return res.status(404).json({ error: "user_not_found", message: "Aucun utilisateur avec cet email / téléphone." });
+    if (!target) return res.status(404).json({ error: "user_not_found", message: "Aucun utilisateur trouvé." });
 
     const { error: upErr } = await admin.from("profiles").update({ plan_tier: plan }).eq("id", target.id);
     if (upErr) return res.status(502).json({ error: "update_failed", message: upErr.message });

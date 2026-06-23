@@ -452,16 +452,15 @@ function Clients() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try { const d = await adminPost("clients_list"); if (alive) setData(d); }
-      catch (e) { if (alive) setErr(e.message); }
-      finally { if (alive) setLoading(false); }
-    })();
-    return () => { alive = false; };
-  }, []);
+  const load = async () => {
+    setLoading(true); setErr(null);
+    try { const d = await adminPost("clients_list"); setData(d); }
+    catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
 
   if (loading) return <div className="text-center py-12"><Loader2 size={28} className="animate-spin mx-auto text-violet-500" /></div>;
   if (err) return <div className="rounded-2xl bg-red-50 dark:bg-red-950/30 p-4 text-sm text-red-700 dark:text-red-300">{err}</div>;
@@ -493,14 +492,15 @@ function Clients() {
         )}
       </div>
 
-      {/* Client list */}
+      {/* Client list — tap a client to see details + grant a plan */}
       <div className="flex items-center justify-between px-1">
         <h3 className="text-[10px] uppercase tracking-widest font-black text-slate-500">Clients ({clients.length})</h3>
-        <span className="text-[10px] text-slate-400">triés par activité</span>
+        <span className="text-[10px] text-slate-400">tape pour gérer</span>
       </div>
       <div className="space-y-2">
         {clients.map((c, i) => (
-          <div key={i} className="rounded-2xl bg-white dark:bg-slate-900 p-3.5 ring-1 ring-slate-100 dark:ring-slate-800">
+          <button key={c.id || i} onClick={() => setSelected(c)}
+            className="w-full text-left rounded-2xl bg-white dark:bg-slate-900 p-3.5 ring-1 ring-slate-100 dark:ring-slate-800 active:bg-slate-50 dark:active:bg-slate-800/60">
             <div className="flex items-center gap-2">
               <div className="flex-1 min-w-0">
                 <div className="font-bold text-sm text-slate-900 dark:text-white truncate">{c.email}</div>
@@ -511,21 +511,92 @@ function Clients() {
             <div className="flex items-center gap-3 mt-2 flex-wrap">
               <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300">{c.total_events} actions</span>
               {Object.entries(c.features || {}).map(([f, n]) => (
-                <span key={f} className="text-[10px] text-slate-500 dark:text-slate-400">
-                  {FEATURE_LABEL[f] || f}: <b>{n}</b>
-                </span>
+                <span key={f} className="text-[10px] text-slate-500 dark:text-slate-400">{FEATURE_LABEL[f] || f}: <b>{n}</b></span>
               ))}
               {c.total_events === 0 && <span className="text-[10px] text-slate-400 italic">pas encore actif</span>}
             </div>
-          </div>
+          </button>
         ))}
       </div>
-      <p className="text-[10px] text-slate-400 text-center leading-relaxed px-4">
-        L'activité apparaît dès que les clients utilisent l'app (après le déploiement du suivi).
-      </p>
+
+      {selected && (
+        <ClientDetail client={selected} onClose={() => setSelected(null)} onGranted={(plan) => {
+          setData((d) => ({ ...d, clients: d.clients.map((x) => x.id === selected.id ? { ...x, plan } : x) }));
+          setSelected((s) => s ? { ...s, plan } : s);
+        }} />
+      )}
     </div>
   );
 }
+
+function ClientDetail({ client, onClose, onGranted }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const features = Object.entries(client.features || {}).sort((a, b) => b[1] - a[1]);
+  const maxN = features.length ? features[0][1] : 1;
+
+  const grant = async (plan) => {
+    setBusy(true); setMsg(null);
+    try {
+      await adminPost("grant_access", { user_id: client.id, plan });
+      setMsg({ t: "ok", m: `Plan ${plan} accordé ✓` });
+      onGranted?.(plan);
+    } catch (e) { setMsg({ t: "err", m: e.message }); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      className="fixed inset-0 z-[60] bg-slate-950/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-4" onClick={onClose}>
+      <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-white/10 p-5 relative max-h-[85vh] overflow-y-auto">
+        <button onClick={onClose} className="absolute top-3 right-3 w-8 h-8 rounded-full bg-slate-100 dark:bg-white/10 flex items-center justify-center text-slate-500">
+          <span className="text-lg leading-none">×</span>
+        </button>
+
+        <div className="font-black text-base text-slate-900 dark:text-white truncate pr-8">{client.email}</div>
+        <div className="flex items-center gap-2 mt-1 mb-4">
+          <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${PLAN_BADGE[client.plan] || PLAN_BADGE.free}`}>{client.plan}</span>
+          <span className="text-[10px] text-slate-400">Inscrit {timeAgo(client.created_at)} · Actif {timeAgo(client.last_active)}</span>
+        </div>
+
+        {/* Usage breakdown */}
+        <h4 className="text-[10px] uppercase tracking-widest font-black text-slate-500 mb-2">Utilisation ({client.total_events} actions)</h4>
+        {features.length === 0 ? (
+          <p className="text-xs text-slate-400 mb-4">Pas encore d'activité enregistrée.</p>
+        ) : (
+          <div className="space-y-2 mb-4">
+            {features.map(([f, n]) => (
+              <div key={f} className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 w-16">{FEATURE_LABEL[f] || f}</span>
+                <div className="flex-1 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-violet-500 to-indigo-500" style={{ width: `${(n / maxN) * 100}%` }} />
+                </div>
+                <span className="text-[11px] font-bold text-slate-500 w-8 text-right">{n}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Grant a plan */}
+        <h4 className="text-[10px] uppercase tracking-widest font-black text-slate-500 mb-2">Accorder un plan</h4>
+        <div className="flex gap-2">
+          {["basic", "premium", "free"].map((p) => (
+            <button key={p} onClick={() => grant(p)} disabled={busy}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-bold capitalize disabled:opacity-50 ${
+                p === "premium" ? "bg-gradient-to-r from-amber-500 to-orange-600 text-white"
+                : p === "basic" ? "bg-violet-500 text-white"
+                : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"}`}>
+              {busy ? "…" : p}
+            </button>
+          ))}
+        </div>
+        {msg && <div className={`text-[12px] font-semibold mt-3 ${msg.t === "ok" ? "text-emerald-500" : "text-red-500"}`}>{msg.m}</div>}
+      </motion.div>
+    </motion.div>
+  );
+}
+
 
 // ======================== PUBLICITÉ (ADS) ========================
 

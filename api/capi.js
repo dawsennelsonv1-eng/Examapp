@@ -48,6 +48,9 @@ export default async function handler(req, res) {
         custom_data,
       }],
     };
+    // Set META_TEST_EVENT_CODE in Vercel to make server events appear in
+    // Events Manager → Test Events. REMOVE it for production.
+    if (process.env.META_TEST_EVENT_CODE) payload.test_event_code = process.env.META_TEST_EVENT_CODE;
 
     const r = await fetch(
       `https://graph.facebook.com/v19.0/${pixelId}/events?access_token=${accessToken}`,

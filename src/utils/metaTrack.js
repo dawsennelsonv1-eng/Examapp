@@ -14,10 +14,12 @@ export async function trackMetaEvent(eventName, { email, phone, value, currency 
     window.fbq("track", eventName, customData, { eventID: eventId });
   }
 
-  // 2) Server CAPI (same eventId → dedup). Fire-and-forget.
+  // 2) Server CAPI (same eventId → dedup). keepalive lets it complete even if
+  // the page navigates away (e.g. tapping a WhatsApp link on mobile).
   try {
     await fetch("/api/capi", {
       method: "POST",
+      keepalive: true,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ eventName, eventId, url, email, phone, value, currency }),
     });
