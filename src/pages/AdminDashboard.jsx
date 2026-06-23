@@ -8,19 +8,34 @@ import { motion } from "framer-motion";
 import {
   ArrowLeft, RefreshCw, Loader2, Crown, Users, Zap, AlertCircle,
   DollarSign, Activity, Wrench, Sparkles, TrendingUp, Calendar,
-  Wallet, Target, Globe, BarChart3,
+  Wallet, Target, Globe, BarChart3, Megaphone, Trash2, Plus,
 } from "lucide-react";
 import { useAdminAccess } from "../hooks/useAdminAccess";
 import { MetricCard, BarChart, Donut } from "../components/admin/MetricBlocks";
 
 const TABS = [
   { id: "overview",   label: "Aperçu",       icon: BarChart3 },
+  { id: "clients",    label: "Clients",      icon: Users },
+  { id: "ads",        label: "Publicité",    icon: Megaphone },
   { id: "financial",  label: "Financier",    icon: DollarSign },
   { id: "acquisition",label: "Acquisition",  icon: Target },
   { id: "engagement", label: "Engagement",   icon: Activity },
   { id: "engineering",label: "Ingénierie",   icon: Wrench },
   { id: "bonus",      label: "Bonus",        icon: Sparkles },
 ];
+
+// Admin POST to the content endpoint with the stored admin secret.
+async function adminPost(task, body = {}) {
+  const secret = (typeof localStorage !== "undefined" && localStorage.getItem("laureat.adminSecret")) || "";
+  const r = await fetch("/api/content", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Secret": secret },
+    body: JSON.stringify({ task, ...body }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+  return j.data;
+}
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -169,6 +184,9 @@ export default function AdminDashboard() {
             <Loader2 size={32} className="animate-spin mx-auto text-violet-500" />
           </div>
         )}
+
+        {tab === "clients" && <Clients />}
+        {tab === "ads" && <Ads range={range} />}
 
         {metrics && tab === "overview" && <Overview metrics={metrics} />}
         {metrics && tab === "financial" && <Financial metrics={metrics} />}
@@ -407,5 +425,213 @@ function Bonus({ metrics }) {
         ))}
       </div>
     </>
+  );
+}
+
+// ======================== CLIENTS ========================
+
+const PLAN_BADGE = {
+  premium: "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400",
+  basic:   "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400",
+  free:    "bg-slate-100 text-slate-600 dark:bg-slate-700/40 dark:text-slate-300",
+};
+const FEATURE_LABEL = { scan: "Scan", quiz: "Quiz", lesson: "Leçons", tutor: "Prof" };
+
+function timeAgo(iso) {
+  if (!iso) return "jamais";
+  const diff = Date.now() - new Date(iso).getTime();
+  const d = Math.floor(diff / 86400000);
+  if (d > 0) return `il y a ${d}j`;
+  const h = Math.floor(diff / 3600000);
+  if (h > 0) return `il y a ${h}h`;
+  const m = Math.floor(diff / 60000);
+  return m > 1 ? `il y a ${m}min` : "à l'instant";
+}
+
+function Clients() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try { const d = await adminPost("clients_list"); if (alive) setData(d); }
+      catch (e) { if (alive) setErr(e.message); }
+      finally { if (alive) setLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  if (loading) return <div className="text-center py-12"><Loader2 size={28} className="animate-spin mx-auto text-violet-500" /></div>;
+  if (err) return <div className="rounded-2xl bg-red-50 dark:bg-red-950/30 p-4 text-sm text-red-700 dark:text-red-300">{err}</div>;
+
+  const clients = data?.clients || [];
+  const totals = data?.featureTotals || {};
+  const totalUses = Object.values(totals).reduce((a, b) => a + b, 0);
+  const sortedFeatures = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+
+  return (
+    <div className="space-y-4">
+      {/* Most-used features overall */}
+      <div className="rounded-2xl bg-white dark:bg-slate-900 p-4 ring-1 ring-slate-100 dark:ring-slate-800">
+        <h3 className="text-[10px] uppercase tracking-widest font-black text-slate-500 mb-3">Fonctionnalités les plus utilisées</h3>
+        {sortedFeatures.length === 0 ? (
+          <p className="text-xs text-slate-400">Aucune activité enregistrée pour l'instant.</p>
+        ) : (
+          <div className="space-y-2">
+            {sortedFeatures.map(([feat, n]) => (
+              <div key={feat} className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 w-16">{FEATURE_LABEL[feat] || feat}</span>
+                <div className="flex-1 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-violet-500 to-indigo-500" style={{ width: `${totalUses ? (n / totalUses) * 100 : 0}%` }} />
+                </div>
+                <span className="text-[11px] font-bold text-slate-500 w-10 text-right">{n}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Client list */}
+      <div className="flex items-center justify-between px-1">
+        <h3 className="text-[10px] uppercase tracking-widest font-black text-slate-500">Clients ({clients.length})</h3>
+        <span className="text-[10px] text-slate-400">triés par activité</span>
+      </div>
+      <div className="space-y-2">
+        {clients.map((c, i) => (
+          <div key={i} className="rounded-2xl bg-white dark:bg-slate-900 p-3.5 ring-1 ring-slate-100 dark:ring-slate-800">
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-sm text-slate-900 dark:text-white truncate">{c.email}</div>
+                <div className="text-[10px] text-slate-400">Inscrit {timeAgo(c.created_at)} · Actif {timeAgo(c.last_active)}</div>
+              </div>
+              <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${PLAN_BADGE[c.plan] || PLAN_BADGE.free}`}>{c.plan}</span>
+            </div>
+            <div className="flex items-center gap-3 mt-2 flex-wrap">
+              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300">{c.total_events} actions</span>
+              {Object.entries(c.features || {}).map(([f, n]) => (
+                <span key={f} className="text-[10px] text-slate-500 dark:text-slate-400">
+                  {FEATURE_LABEL[f] || f}: <b>{n}</b>
+                </span>
+              ))}
+              {c.total_events === 0 && <span className="text-[10px] text-slate-400 italic">pas encore actif</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="text-[10px] text-slate-400 text-center leading-relaxed px-4">
+        L'activité apparaît dès que les clients utilisent l'app (après le déploiement du suivi).
+      </p>
+    </div>
+  );
+}
+
+// ======================== PUBLICITÉ (ADS) ========================
+
+function Ads({ range }) {
+  const [perf, setPerf] = useState(null);
+  const [entries, setEntries] = useState([]);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ label: "", start_date: "", end_date: "", amount_htg: "" });
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    setLoading(true); setErr(null);
+    try {
+      const [p, list] = await Promise.all([
+        adminPost("ad_performance", { range }),
+        adminPost("ad_spend_list"),
+      ]);
+      setPerf(p); setEntries(list?.entries || []);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [range]);
+
+  const add = async () => {
+    if (!form.start_date || !form.amount_htg) return;
+    setBusy(true);
+    try {
+      await adminPost("ad_spend_add", {
+        label: form.label || "Campagne",
+        start_date: form.start_date,
+        end_date: form.end_date || null,
+        amount_htg: Number(form.amount_htg),
+      });
+      setForm({ label: "", start_date: "", end_date: "", amount_htg: "" });
+      await load();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async (id) => {
+    try { await adminPost("ad_spend_remove", { id }); await load(); }
+    catch (e) { setErr(e.message); }
+  };
+
+  const fmt = (n) => (n == null ? "—" : Number(n).toLocaleString("fr-FR"));
+
+  return (
+    <div className="space-y-4">
+      {err && <div className="rounded-2xl bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-300">{err}</div>}
+
+      {/* Performance summary */}
+      <div className="grid grid-cols-2 gap-2.5">
+        <MetricCard label="Dépense pub" value={`${fmt(perf?.spend)} HTG`} hint="Total saisi sur la période." icon={Megaphone} color="rose" />
+        <MetricCard label="ROAS" value={perf?.roas != null ? `${perf.roas}×` : "—"} hint="Revenu ÷ dépense. ≥1 = rentable." icon={TrendingUp} color={perf?.roas >= 1 ? "emerald" : "amber"} />
+        <MetricCard label="CAC réel" value={perf?.cac != null ? `${fmt(perf.cac)} HTG` : "—"} hint="Dépense ÷ clients payants." icon={Target} color="blue" />
+        <MetricCard label="Coût / inscription" value={perf?.costPerSignup != null ? `${fmt(perf.costPerSignup)} HTG` : "—"} hint="Dépense ÷ nouvelles inscriptions." icon={Users} color="violet" />
+        <MetricCard label="Conversions" value={fmt(perf?.conversions)} hint="Clients payants (Basic + Premium)." icon={DollarSign} color="emerald" />
+        <MetricCard label="Inscriptions" value={fmt(perf?.signups)} hint={`Nouveaux comptes sur ${range}.`} icon={Sparkles} color="amber" />
+      </div>
+      <p className="text-[10px] text-slate-400 leading-relaxed px-1">
+        Approximatif : le revenu compte tous les abonnés actifs (l'app n'enregistre pas encore la date exacte de chaque paiement). La dépense est ce que tu saisis ci-dessous.
+      </p>
+
+      {/* Add spend */}
+      <div className="rounded-2xl bg-white dark:bg-slate-900 p-4 ring-1 ring-slate-100 dark:ring-slate-800 space-y-2.5">
+        <h3 className="text-[10px] uppercase tracking-widest font-black text-slate-500">Ajouter une dépense pub</h3>
+        <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="Nom (ex. TikTok juin)"
+          className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none" />
+        <div className="flex gap-2">
+          <label className="flex-1 text-[10px] font-bold text-slate-400">Début
+            <input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })}
+              className="w-full mt-1 px-2 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none" />
+          </label>
+          <label className="flex-1 text-[10px] font-bold text-slate-400">Fin (option)
+            <input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })}
+              className="w-full mt-1 px-2 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none" />
+          </label>
+        </div>
+        <input type="number" inputMode="numeric" value={form.amount_htg} onChange={(e) => setForm({ ...form, amount_htg: e.target.value })} placeholder="Montant dépensé (HTG)"
+          className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none" />
+        <button onClick={add} disabled={busy || !form.start_date || !form.amount_htg}
+          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-700 text-white text-sm font-bold flex items-center justify-center gap-1.5 disabled:opacity-50">
+          <Plus size={15} /> Ajouter
+        </button>
+      </div>
+
+      {/* Spend entries */}
+      <div className="space-y-2">
+        {loading ? (
+          <div className="text-center py-6"><Loader2 size={22} className="animate-spin mx-auto text-violet-500" /></div>
+        ) : entries.length === 0 ? (
+          <p className="text-xs text-slate-400 text-center py-4">Aucune dépense saisie. Ajoute les jours où tu lances des pubs.</p>
+        ) : entries.map((e) => (
+          <div key={e.id} className="rounded-2xl bg-white dark:bg-slate-900 p-3.5 ring-1 ring-slate-100 dark:ring-slate-800 flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-sm text-slate-900 dark:text-white truncate">{e.label}</div>
+              <div className="text-[10px] text-slate-400">{e.start_date}{e.end_date ? ` → ${e.end_date}` : " → en cours"}</div>
+            </div>
+            <span className="font-black text-sm text-slate-900 dark:text-white">{Number(e.amount_htg).toLocaleString("fr-FR")} HTG</span>
+            <button onClick={() => remove(e.id)} className="w-8 h-8 rounded-full bg-red-50 dark:bg-red-500/10 flex items-center justify-center text-red-500">
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

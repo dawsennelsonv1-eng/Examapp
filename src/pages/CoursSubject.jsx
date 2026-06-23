@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ChevronRight, Clock, Sparkles, Loader2, GraduationCap } from "lucide-react";
 import { useEffectiveTrack } from "../hooks/useAdminAccess";
 import { useCourseTree, chapterId, pageId } from "../hooks/useCourseTree";
+import { logUsage } from "../utils/logUsage";
 
 const BANNERS = {
   math: "linear-gradient(135deg, #7c3aed 0%, #4338ca 100%)",
@@ -132,7 +133,7 @@ export default function CoursSubject() {
                               <motion.button
                                 key={gi}
                                 whileTap={{ scale: 0.98 }}
-                                onClick={() => navigate(`/cours/${subjectId}/${chapterId(subjectId, ci)}/${pageId(subjectId, ci, pi, gi)}`)}
+                                onClick={() => { logUsage("lesson"); navigate(`/cours/${subjectId}/${chapterId(subjectId, ci)}/${pageId(subjectId, ci, pi, gi)}`); }}
                                 className="w-full p-3 rounded-xl bg-white dark:bg-slate-800 shadow-sm flex items-center gap-3 text-left"
                               >
                                 <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400">

@@ -14,6 +14,7 @@ import { useEffectiveTrack } from "../hooks/useAdminAccess";
 import { EXAM_DATES, PERSONALITIES } from "../utils/constants";
 import { useAppConfig } from "../hooks/useAppConfig";
 import { useClassroomSessions } from "../hooks/useClassroom";
+import GettingStarted from "../components/GettingStarted";
 import { getPlanPricing, promoEndsAt, formatCountdown } from "../utils/promo";
 import ScanHistoryCard from "../components/home/ScanHistoryCard";
 import ProgressCard from "../components/ProgressCard";
@@ -161,6 +162,9 @@ export default function Home() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <GettingStarted />
+
         <AnimatePresence>
           {showBanner && (
             <motion.div

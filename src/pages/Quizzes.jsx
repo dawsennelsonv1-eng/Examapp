@@ -16,6 +16,7 @@ import {
   RefreshCw, Trophy, BookOpen, Loader2, Lock, Check, Sparkles, HelpCircle, Star,
 } from "lucide-react";
 import { useEffectiveTrack } from "../hooks/useAdminAccess";
+import { logUsage } from "../utils/logUsage";
 import { supabase } from "../lib/supabase";
 
 const PROG_KEY = "laureat.quizProgress";
@@ -205,6 +206,7 @@ export default function Quizzes({ embedded = false }) {
         });
       }
       setView("results");
+      logUsage("quiz");
     }
   };
 

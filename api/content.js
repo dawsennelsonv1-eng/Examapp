@@ -167,7 +167,7 @@ const BOARD_MODELS = [
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Admin-Secret");
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
@@ -180,6 +180,20 @@ export default async function handler(req, res) {
       return await handleVerifyPayment(req, res);
     } catch (err) {
       console.error("/api/content verify_payment error:", err);
+      return res.status(500).json({ error: "Server error", message: err.message });
+    }
+  }
+
+  // ----- Admin analytics tasks (secret-gated; only need Supabase) -----
+  if (["clients_list", "ad_spend_list", "ad_spend_add", "ad_spend_remove", "ad_performance"].includes(task)) {
+    try {
+      if (task === "clients_list") return await handleClientsList(req, res);
+      if (task === "ad_spend_list") return await handleAdSpendList(req, res);
+      if (task === "ad_spend_add") return await handleAdSpendAdd(req, res);
+      if (task === "ad_spend_remove") return await handleAdSpendRemove(req, res);
+      if (task === "ad_performance") return await handleAdPerformance(req, res);
+    } catch (err) {
+      console.error(`/api/content ${task} error:`, err);
       return res.status(500).json({ error: "Server error", message: err.message });
     }
   }
@@ -487,6 +501,138 @@ function slugify(s) {
   return String(s || "")
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
+}
+
+// ===== Admin analytics: clients list, usage, ad spend & performance =====
+function adminSecretOk(req) {
+  const expected = process.env.ADMIN_SECRET;
+  if (!expected) return true; // not configured → don't block (dev)
+  return (req.headers["x-admin-secret"] || "") === expected;
+}
+
+async function listAllAuthUsers(admin) {
+  const users = [];
+  let page = 1;
+  while (page <= 12) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) break;
+    const u = data?.users || [];
+    users.push(...u);
+    if (u.length < 200) break;
+    page++;
+  }
+  return users;
+}
+
+async function handleClientsList(req, res) {
+  if (!adminSecretOk(req)) return res.status(401).json({ error: "Unauthorized" });
+  const admin = getSupabaseAdmin();
+  if (!admin) return res.status(500).json({ error: "server_misconfig" });
+
+  const users = await listAllAuthUsers(admin);
+  const { data: profs } = await admin.from("profiles").select("id, plan_tier");
+  const planById = {};
+  (profs || []).forEach((p) => { planById[p.id] = p.plan_tier; });
+
+  const { data: events } = await admin
+    .from("usage_events")
+    .select("user_id, event, created_at")
+    .order("created_at", { ascending: false })
+    .limit(8000);
+
+  const byUser = {};
+  (events || []).forEach((e) => {
+    if (!e.user_id) return;
+    const b = byUser[e.user_id] || (byUser[e.user_id] = { total: 0, features: {}, last: null });
+    b.total++;
+    b.features[e.event] = (b.features[e.event] || 0) + 1;
+    if (!b.last || e.created_at > b.last) b.last = e.created_at;
+  });
+
+  // Global feature totals (which features are used most overall).
+  const featureTotals = {};
+  (events || []).forEach((e) => { if (e.event) featureTotals[e.event] = (featureTotals[e.event] || 0) + 1; });
+
+  const clients = users.map((u) => {
+    const usage = byUser[u.id] || { total: 0, features: {}, last: null };
+    const top = Object.entries(usage.features).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    return {
+      email: u.email || u.phone || "—",
+      plan: planById[u.id] || "free",
+      created_at: u.created_at,
+      last_active: usage.last,
+      total_events: usage.total,
+      features: usage.features,
+      top_feature: top,
+    };
+  }).sort((a, b) => (b.total_events - a.total_events) || (new Date(b.created_at) - new Date(a.created_at)));
+
+  return res.status(200).json({ data: { clients, count: clients.length, featureTotals } });
+}
+
+async function handleAdSpendList(req, res) {
+  if (!adminSecretOk(req)) return res.status(401).json({ error: "Unauthorized" });
+  const admin = getSupabaseAdmin();
+  const { data, error } = await admin.from("ad_spend").select("*").order("start_date", { ascending: false });
+  if (error) return res.status(502).json({ error: "read_failed", message: error.message });
+  return res.status(200).json({ data: { entries: data || [] } });
+}
+
+async function handleAdSpendAdd(req, res) {
+  if (!adminSecretOk(req)) return res.status(401).json({ error: "Unauthorized" });
+  const admin = getSupabaseAdmin();
+  let { label, start_date, end_date, amount_htg, platform } = req.body || {};
+  amount_htg = Number(amount_htg);
+  if (!start_date || !(amount_htg >= 0)) return res.status(400).json({ error: "bad_input" });
+  const row = { label: label || "Campagne", start_date, end_date: end_date || null, amount_htg, platform: platform || "meta" };
+  const { data, error } = await admin.from("ad_spend").insert(row).select().single();
+  if (error) return res.status(502).json({ error: "insert_failed", message: error.message });
+  return res.status(200).json({ data: { entry: data } });
+}
+
+async function handleAdSpendRemove(req, res) {
+  if (!adminSecretOk(req)) return res.status(401).json({ error: "Unauthorized" });
+  const admin = getSupabaseAdmin();
+  const { id } = req.body || {};
+  if (!id) return res.status(400).json({ error: "missing_id" });
+  const { error } = await admin.from("ad_spend").delete().eq("id", id);
+  if (error) return res.status(502).json({ error: "delete_failed", message: error.message });
+  return res.status(200).json({ data: { ok: true } });
+}
+
+async function handleAdPerformance(req, res) {
+  if (!adminSecretOk(req)) return res.status(401).json({ error: "Unauthorized" });
+  const admin = getSupabaseAdmin();
+  const range = (req.body?.range || "30d");
+  const days = range === "7d" ? 7 : range === "90d" ? 90 : range === "all" ? 3650 : 30;
+  const sinceIso = new Date(Date.now() - days * 86400000).toISOString();
+  const sinceDate = sinceIso.slice(0, 10);
+
+  // Spend: entries overlapping the window (ongoing entries always count).
+  const { data: spendRows } = await admin.from("ad_spend").select("amount_htg, start_date, end_date");
+  let spend = 0;
+  (spendRows || []).forEach((r) => {
+    if (!r.start_date) return;
+    const endsBeforeWindow = r.end_date && r.end_date < sinceDate;
+    if (!endsBeforeWindow) spend += Number(r.amount_htg) || 0;
+  });
+
+  // Conversions / revenue / signups from profiles.
+  const { data: profs } = await admin.from("profiles").select("plan_tier, created_at");
+  const PRICE = { basic: 750, premium: 1200 };
+  let conversions = 0, revenue = 0, signups = 0;
+  (profs || []).forEach((p) => {
+    if (p.created_at && p.created_at >= sinceIso) signups++;
+    if (p.plan_tier === "basic" || p.plan_tier === "premium") { conversions++; revenue += PRICE[p.plan_tier]; }
+  });
+
+  const roas = spend > 0 ? Math.round((revenue / spend) * 100) / 100 : null;
+  const cac = conversions > 0 && spend > 0 ? Math.round(spend / conversions) : null;
+  const costPerSignup = signups > 0 && spend > 0 ? Math.round(spend / signups) : null;
+
+  return res.status(200).json({
+    data: { range, spend, conversions, revenue, signups, roas, cac, costPerSignup },
+  });
 }
 
 // Fire a Meta "Purchase" from the server when a plan is granted (the real

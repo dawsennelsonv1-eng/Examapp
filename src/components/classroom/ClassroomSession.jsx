@@ -23,6 +23,7 @@ import VoiceInputButton from "./VoiceInputButton";
 import TutorSwitchModal from "./TutorSwitchModal";
 import TutorAvatar from "../shared/TutorAvatar";
 import CallTutorButton from "./CallTutorButton";
+import { logUsage } from "../../utils/logUsage";
 
 function defaultBoards() {
   return [
@@ -96,7 +97,7 @@ export default function ClassroomSession({ session, onExit, autoCall = false }) 
   useEffect(() => {
     if (hasInitiated.current) return;
     hasInitiated.current = true;
-    try { localStorage.setItem("laureat.firstTutorDone", "1"); } catch {}
+    logUsage("tutor");
     if (localMessages.length === 0) {
       if (session.exercise) startExerciseTeaching();
       else sendGreeting();

@@ -12,6 +12,7 @@
 //   choice   → correct answer / why others wrong / key facts (ChoiceSolution)
 
 import { useState, useEffect } from "react";
+import { logUsage } from "../utils/logUsage";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -161,7 +162,7 @@ export default function ScanSolve() {
 
       setSolution(data);
       setStep("solution");
-      try { localStorage.setItem("laureat.firstScanDone", "1"); } catch {}
+      logUsage("scan");
       setSolving(false);
 
       logEvent("scan_complete", {

@@ -9,6 +9,7 @@ import { useApp } from "./contexts/AppContext";
 import { useAuth } from "./contexts/AuthContext";
 import AppShell from "./components/AppShell";
 import MetaPixel from "./components/MetaPixel";
+import WelcomeTour from "./components/WelcomeTour";
 import FeedbackPrompt from "./components/FeedbackPrompt";
 import InstallPrompt from "./components/InstallPrompt";
 import Home from "./pages/Home";       // eager: first screen
@@ -73,6 +74,7 @@ export default function App() {
       <InstallPrompt />
       <FeedbackPrompt />
       <MetaPixel />
+      <WelcomeTour />
     </>
   );
 }
