@@ -82,3 +82,10 @@ export function formatCountdown(ms) {
   if (h > 0) return `${h}h ${m}m ${sec}s`;
   return `${m}m ${sec}s`;
 }
+
+// Days remaining until a date (0 if past). Real, honest urgency for exams.
+export function daysUntil(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return null;
+  return Math.max(0, Math.ceil((d.getTime() - Date.now()) / 86400000));
+}

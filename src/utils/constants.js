@@ -37,6 +37,10 @@ export const PLAN_TIERS = {
   PREMIUM: "premium",
 };
 
+// Honest value anchor: roughly what a private tutor (répétiteur) costs per
+// month in Haiti. Used to make the one-time price feel small by comparison.
+export const REPETITEUR_MONTHLY_HTG = 2000;
+
 export const PLAN_PRICES = {
   basic: 750,
   premium: 1200,

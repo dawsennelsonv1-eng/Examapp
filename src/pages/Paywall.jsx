@@ -22,10 +22,11 @@ import { useApp } from "../contexts/AppContext";
 import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
 import { logEvent } from "../services/analytics";
-import { PLAN_PRICES, PLAN_FEATURES } from "../utils/constants";
+import { PLAN_PRICES, PLAN_FEATURES, EXAM_DATES, REPETITEUR_MONTHLY_HTG } from "../utils/constants";
+import { useEffectiveTrack } from "../hooks/useAdminAccess";
 import { useAppConfig } from "../hooks/useAppConfig";
 import WhatsAppPayButton from "../components/WhatsAppPayButton";
-import { getPlanPricing, promoEndsAt, formatCountdown } from "../utils/promo";
+import { getPlanPricing, promoEndsAt, formatCountdown, daysUntil } from "../utils/promo";
 
 // Prices and features come from constants.js (single source of truth) so they
 // can never drift from the rest of the app again. Icons stay local (components).
@@ -78,6 +79,11 @@ export default function Paywall() {
   const livePrice = { basic: config?.price_basic ?? PLAN_PRICES.basic, premium: config?.price_premium ?? PLAN_PRICES.premium };
   const pricing = getPlanPricing(planId, livePrice[planId]);
   const plan = { ...PLANS[planId], price: pricing.price };
+
+  // Real, honest urgency: days until THIS student's national exam.
+  const track = useEffectiveTrack();
+  const examInfo = EXAM_DATES[track] || EXAM_DATES["9AF"];
+  const examDaysLeft = daysUntil(examInfo.start);
   const method = methodId ? METHODS[methodId] : null;
 
   const copyNumber = () => {
@@ -148,6 +154,17 @@ export default function Paywall() {
       </header>
 
       <div className="px-4 pt-5 space-y-6 max-w-md mx-auto">
+        {/* URGENCY — real countdown to the national exam (honest deadline) */}
+        {examDaysLeft != null && examDaysLeft > 0 && (
+          <div className="rounded-2xl px-4 py-3 bg-gradient-to-r from-rose-600/20 to-amber-600/20 ring-1 ring-rose-500/30 flex items-center gap-3">
+            <div className="text-3xl font-black tabular-nums text-rose-300 leading-none">{examDaysLeft}</div>
+            <div className="text-[12px] text-rose-50 leading-snug">
+              <span className="font-black">jour{examDaysLeft > 1 ? "s" : ""}</span> avant l'examen {examInfo.label} ({examInfo.range}).
+              <br /><span className="text-rose-200/80">Chaque jour de révision compte. Ne perds pas de temps.</span>
+            </div>
+          </div>
+        )}
+
         {/* Plan picker */}
         <div className="grid grid-cols-2 gap-3">
           {Object.values(PLANS).map((p) => {
@@ -184,12 +201,32 @@ export default function Paywall() {
           </div>
         )}
 
+        {/* VALUE ANCHOR — make the one-time price feel small vs a real tutor */}
+        <div className="rounded-2xl px-4 py-3 bg-white/5 ring-1 ring-white/10">
+          <div className="flex items-center justify-between text-[13px]">
+            <span className="text-white/55">Un répétiteur privé</span>
+            <span className="text-white/55">≈ {REPETITEUR_MONTHLY_HTG.toLocaleString("fr-FR")} HTG / mois</span>
+          </div>
+          <div className="flex items-center justify-between mt-1.5">
+            <span className="font-black text-white">Laureat AI</span>
+            <span className="font-black text-emerald-300">{plan.price} HTG · une seule fois</span>
+          </div>
+          <p className="text-[11px] text-white/40 mt-1.5">Accès complet jusqu'aux examens — pas d'abonnement.</p>
+        </div>
+
         {/* PRIMARY: pay on WhatsApp */}
         <div className="space-y-2">
           <WhatsAppPayButton planId={planId} livePrice={livePrice[planId]} />
           <p className="text-center text-[11px] text-white/45 px-2">
             Cliquez, envoyez le message, et nous activons votre compte après le paiement. Le plus simple.
           </p>
+          {/* GUARANTEE / risk reversal */}
+          <div className="flex items-start gap-2 rounded-xl bg-emerald-500/10 ring-1 ring-emerald-500/20 px-3 py-2.5">
+            <ShieldCheck size={16} className="text-emerald-300 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-emerald-50 leading-snug">
+              <span className="font-bold">Sans risque.</span> Tu as déjà essayé gratuitement — tu paies seulement parce que ça t'aide. Pas de carte bancaire, aucun engagement.
+            </p>
+          </div>
         </div>
 
         <ul className="space-y-1.5">
