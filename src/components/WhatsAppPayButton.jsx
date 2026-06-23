@@ -8,6 +8,7 @@
 import { motion } from "framer-motion";
 import { PLAN_FEATURES } from "../utils/constants";
 import { getPlanPricing, buildWhatsAppPayLink } from "../utils/promo";
+import { trackMetaEvent } from "../utils/metaTrack";
 
 // Inline WhatsApp glyph (no external asset / no copyrighted logo file needed).
 function WhatsAppGlyph({ size = 22 }) {
@@ -37,6 +38,7 @@ export default function WhatsAppPayButton({
       href={href}
       target="_blank"
       rel="noopener noreferrer"
+      onClick={() => trackMetaEvent("InitiateCheckout", { value: price, currency: "HTG" })}
       className={`block w-full rounded-2xl px-5 py-4 text-center font-black text-white shadow-lg ${className}`}
       style={{ background: "#25D366", boxShadow: "0 8px 24px -8px rgba(37,211,102,.6)" }}
     >

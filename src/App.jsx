@@ -8,6 +8,7 @@ import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useApp } from "./contexts/AppContext";
 import { useAuth } from "./contexts/AuthContext";
 import AppShell from "./components/AppShell";
+import MetaPixel from "./components/MetaPixel";
 import FeedbackPrompt from "./components/FeedbackPrompt";
 import InstallPrompt from "./components/InstallPrompt";
 import Home from "./pages/Home";       // eager: first screen
@@ -71,6 +72,7 @@ export default function App() {
       </Suspense>
       <InstallPrompt />
       <FeedbackPrompt />
+      <MetaPixel />
     </>
   );
 }

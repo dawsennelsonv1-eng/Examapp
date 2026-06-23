@@ -489,6 +489,32 @@ function slugify(s) {
     .toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
 }
 
+// Fire a Meta "Purchase" from the server when a plan is granted (the real
+// conversion — payment happens off-app via WhatsApp). No-op if Meta unconfigured.
+async function fireMetaPurchase({ email, value }) {
+  const pixelId = process.env.META_PIXEL_ID || process.env.VITE_META_PIXEL_ID;
+  const token = process.env.META_ACCESS_TOKEN;
+  if (!pixelId || !token) return;
+  try {
+    const crypto = await import("crypto");
+    const em = email
+      ? crypto.createHash("sha256").update(String(email).trim().toLowerCase()).digest("hex")
+      : undefined;
+    const payload = {
+      data: [{
+        event_name: "Purchase",
+        event_time: Math.floor(Date.now() / 1000),
+        action_source: "website",
+        user_data: { em: em ? [em] : undefined },
+        custom_data: { value: Number(value) || 0, currency: "HTG" },
+      }],
+    };
+    await fetch(`https://graph.facebook.com/v19.0/${pixelId}/events?access_token=${token}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+  } catch { /* tracking must never block a grant */ }
+}
+
 // ---- Grant a paid plan to a user (after a WhatsApp payment) ----
 async function handleGrantAccess(req, res) {
   const a = await requireAdmin(req);
@@ -518,6 +544,12 @@ async function handleGrantAccess(req, res) {
 
     const { error: upErr } = await admin.from("profiles").update({ plan_tier: plan }).eq("id", target.id);
     if (upErr) return res.status(502).json({ error: "update_failed", message: upErr.message });
+
+    // Real conversion → tell Meta (server-side Purchase with value).
+    if (plan === "basic" || plan === "premium") {
+      await fireMetaPurchase({ email: target.email, value: plan === "premium" ? 1200 : 750 });
+    }
+
     return res.status(200).json({ data: { ok: true, who: target.email || target.phone, plan } });
   } catch (e) {
     return res.status(500).json({ error: "exception", message: e?.message || "unknown" });
