@@ -771,23 +771,75 @@ async function handleAdPerformance(req, res) {
   });
 }
 
+// Parse the Cookie header into a plain object. Used to recover the Meta
+// click/browser identifiers (_fbc, _fbp) that the browser Pixel sets.
+function parseCookies(req) {
+  const raw = req.headers?.cookie || "";
+  const out = {};
+  raw.split(";").forEach((p) => {
+    const i = p.indexOf("=");
+    if (i > -1) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
+  });
+  return out;
+}
+
+// Pull the buyer's own Meta identifiers + IP + user-agent from THIS request.
+// Only meaningful when the request comes from the buyer's browser (verify_payment),
+// not from an admin grant. Same-origin fetch sends the _fbc/_fbp cookies automatically.
+function clientMeta(req) {
+  const c = parseCookies(req);
+  return {
+    fbc: c._fbc || undefined,           // click id (set only when the visit came from an ad)
+    fbp: c._fbp || undefined,           // browser id (set for all Pixel visitors)
+    clientIp: (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || undefined,
+    clientUserAgent: req.headers["user-agent"] || undefined,
+    eventSourceUrl: req.headers["referer"] || undefined,
+  };
+}
+
 // Fire a Meta "Purchase" from the server when a plan is granted (the real
 // conversion — payment happens off-app via WhatsApp). No-op if Meta unconfigured.
-async function fireMetaPurchase({ email, value }) {
+// Pass as many identifiers as the calling path legitimately has: the more we send,
+// the higher Meta's Event Match Quality and the better attribution back to the ad.
+async function fireMetaPurchase({
+  email, phone, value, externalId,
+  fbc, fbp, clientIp, clientUserAgent, eventId, eventSourceUrl,
+} = {}) {
   const pixelId = process.env.META_PIXEL_ID || process.env.VITE_META_PIXEL_ID;
   const token = process.env.META_ACCESS_TOKEN;
   if (!pixelId || !token) return;
   try {
     const crypto = await import("crypto");
-    const em = email
-      ? crypto.createHash("sha256").update(String(email).trim().toLowerCase()).digest("hex")
+    const hashLower = (v) =>
+      v ? crypto.createHash("sha256").update(String(v).trim().toLowerCase()).digest("hex") : undefined;
+
+    const em = hashLower(email);
+    // Phone: Meta wants digits only (country code, no +, no spaces) before hashing.
+    const phDigits = phone ? String(phone).replace(/[^0-9]/g, "") : "";
+    const ph = phDigits ? crypto.createHash("sha256").update(phDigits).digest("hex") : undefined;
+    // external_id: hashed Supabase user id (recommended hashed by Meta).
+    const ext = externalId
+      ? crypto.createHash("sha256").update(String(externalId).trim()).digest("hex")
       : undefined;
+
+    const user_data = {
+      em: em ? [em] : undefined,
+      ph: ph ? [ph] : undefined,
+      external_id: ext ? [ext] : undefined,
+      fbc: fbc || undefined,
+      fbp: fbp || undefined,
+      client_ip_address: clientIp || undefined,
+      client_user_agent: clientUserAgent || undefined,
+    };
+
     const payload = {
       data: [{
         event_name: "Purchase",
         event_time: Math.floor(Date.now() / 1000),
+        event_id: eventId || undefined,
+        event_source_url: eventSourceUrl || undefined,
         action_source: "website",
-        user_data: { em: em ? [em] : undefined },
+        user_data,
         custom_data: { value: Number(value) || 0, currency: "HTG" },
       }],
     };
@@ -837,8 +889,15 @@ async function handleGrantAccess(req, res) {
     if (upErr) return res.status(502).json({ error: "update_failed", message: upErr.message });
 
     // Real conversion → tell Meta (server-side Purchase with value).
+    // Admin path: no buyer browser here, so no fbc/fbp/IP. Still send the
+    // strong identifiers we DO have (email, phone, user id) for matching.
     if (plan === "basic" || plan === "premium") {
-      await fireMetaPurchase({ email: target.email, value: plan === "premium" ? 1200 : 750 });
+      await fireMetaPurchase({
+        email: target.email,
+        phone: target.phone,
+        externalId: target.id,
+        value: plan === "premium" ? 1200 : 750,
+      });
       await creditReferrer(admin, target.id);
     }
 
@@ -1284,6 +1343,25 @@ async function handleVerifyPayment(req, res) {
     plan_started_at: new Date().toISOString(),
     plan_expires_at: expires.toISOString(),
   }).eq("id", user.id);
+
+  // Real conversion on the self-serve path. THIS request is the buyer's own
+  // browser, so we can recover their _fbc/_fbp cookies + IP + user-agent and
+  // attach email/phone/user-id. This is what lets Meta attribute the sale to
+  // the ad click and what lifts Event Match Quality above the email-only floor.
+  if (planTier === "basic" || planTier === "premium") {
+    const cm = clientMeta(req);
+    await fireMetaPurchase({
+      email: user.email,
+      phone: customerWhatsapp || user.phone,
+      externalId: user.id,
+      value: planTier === "premium" ? 1200 : 750,
+      fbc: cm.fbc,
+      fbp: cm.fbp,
+      clientIp: cm.clientIp,
+      clientUserAgent: cm.clientUserAgent,
+      eventSourceUrl: cm.eventSourceUrl,
+    });
+  }
 
   return res.status(200).json({ data: { status: "verified", planTier, message: "Peman konfime! Ou gen aksè kounye a. 🎉" } });
 }
