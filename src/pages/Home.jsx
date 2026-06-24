@@ -9,9 +9,10 @@ import {
 } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
 import { useAuth } from "../contexts/AuthContext";
+import { supabase } from "../lib/supabase";
 import { useStreak } from "../hooks/useStreak";
 import { useEffectiveTrack } from "../hooks/useAdminAccess";
-import { EXAM_DATES, PERSONALITIES } from "../utils/constants";
+import { EXAM_DATES, PERSONALITIES, PLAN_PRICES } from "../utils/constants";
 import { useAppConfig } from "../hooks/useAppConfig";
 import { useClassroomSessions } from "../hooks/useClassroom";
 import GettingStarted from "../components/GettingStarted";
@@ -37,7 +38,25 @@ export default function Home() {
   const { getLastSessionSummary } = useClassroomSessions();
 
   // Launch-discount banner (free users only): live countdown + WhatsApp pay.
-  const isPaid = profile?.plan_tier === "basic" || profile?.plan_tier === "premium";
+  // Read the LIVE plan from the DB (the context profile can be stale right after
+  // an admin grant), so granted users immediately see the correct offer.
+  const [livePlan, setLivePlan] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data: u } = await supabase.auth.getUser();
+        const uid = u?.user?.id;
+        if (!uid) return;
+        const { data: p } = await supabase.from("profiles").select("plan_tier").eq("id", uid).single();
+        if (alive && p) setLivePlan(p.plan_tier || "free");
+      } catch { /* ignore */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+  const planTier = livePlan || profile?.plan_tier || "free";
+  const isPaid = planTier === "basic" || planTier === "premium";
+  const upgradeDiff = Math.max((PLAN_PRICES.premium || 1200) - (PLAN_PRICES.basic || 750), 0);
   const [showPromo, setShowPromo] = useState(true);
   const [nowTs, setNowTs] = useState(Date.now());
   useEffect(() => {
@@ -118,9 +137,9 @@ export default function Home() {
       <main className="px-4 py-6 space-y-6 -mt-4 relative z-10">
         <ProgressCard />
 
-        {/* Offre spéciale — utilisateurs gratuits seulement → page de paiement */}
+        {/* Offre Basic — utilisateurs GRATUITS seulement → page de paiement */}
         <AnimatePresence>
-          {!isPaid && showPromo && (
+          {planTier === "free" && showPromo && (
             <motion.div
               initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
               className="relative"
@@ -167,7 +186,38 @@ export default function Home() {
           )}
         </AnimatePresence>
 
-        <GettingStarted />
+        {/* Mise à niveau — pour les abonnés BASIC seulement → Premium au prix de la différence */}
+        <AnimatePresence>
+          {planTier === "basic" && showPromo && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+              className="relative"
+            >
+              <button onClick={() => setShowPromo(false)}
+                className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full bg-white/15 flex items-center justify-center">
+                <X size={12} className="text-white/80" />
+              </button>
+              <button
+                onClick={() => navigate("/paywall?plan=premium")}
+                className="w-full text-left rounded-2xl p-5 text-white shadow-xl bg-gradient-to-br from-amber-600 via-orange-600 to-slate-900 relative overflow-hidden"
+              >
+                <div className="absolute -top-10 -right-10 w-32 h-32 rounded-full bg-amber-300/20 blur-2xl" />
+                <span className="text-[10px] uppercase tracking-widest font-black text-amber-200">Passe à Premium</span>
+                <div className="text-xl font-black leading-tight mt-1">Débloque tout le Premium</div>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-2xl font-black">+{upgradeDiff} HTG</span>
+                  <span className="text-xs text-white/70">seulement (tu as déjà payé Basic)</span>
+                </div>
+                <div className="text-[11px] text-amber-100/90 mt-1.5 font-semibold">
+                  Plus d'appels avec le prof, tout illimité jusqu'aux examens.
+                </div>
+                <div className="mt-3 inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-sm px-4 py-2 rounded-xl text-sm font-bold">
+                  Passer à Premium <ChevronRight size={16} />
+                </div>
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <ReferralCard />
 

@@ -1,27 +1,26 @@
 // src/components/ReferralCard.jsx
-// Home referral hub. Shows how many friends signed up via your link, how many
-// PAID, and the escalating rewards:
-//   • 2 paid  → free Basic plan (claim)
-//   • 4 paid  → choose Premium OR 250 HTG cash
-//   • 6,8,…   → 250 HTG cash for every extra 2 paid friends
-// Plus a one-tap share. Reads/writes status through /api/content.
+// Home growth card, aligned to the real tiered referral backend:
+//   - 2 paid friends  → claim free Basic
+//   - 4 paid friends  → choose Premium upgrade OR 250 HTG cash
+//   - beyond          → +250 HTG cash each (auto)
+// Talks to /api/content tasks: referral_status, referral_claim_basic, referral_claim_tier2.
 
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Gift, Share2, Check, Crown, Coins, Users, Loader2 } from "lucide-react";
+import { Gift, Share2, Check, Loader2, Crown, Banknote } from "lucide-react";
 import { supabase } from "../lib/supabase";
-import { getWhatsAppNumber } from "../utils/promo";
 
 async function call(task, body = {}) {
   const { data: s } = await supabase.auth.getSession();
   const token = s?.session?.access_token;
+  if (!token) return null;
   const r = await fetch("/api/content", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ task, accessToken: token, ...body }),
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || "err");
+  if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
   return j.data;
 }
 
@@ -34,10 +33,9 @@ export default function ReferralCard() {
   const load = useCallback(async () => {
     try {
       const { data: u } = await supabase.auth.getUser();
-      const id = u?.user?.id;
-      if (!id) return;
-      setUid(id);
-      setSt(await call("referral_status"));
+      if (u?.user?.id) setUid(u.user.id);
+      const d = await call("referral_status");
+      if (d) setSt(d);
     } catch { /* ignore */ }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -46,85 +44,66 @@ export default function ReferralCard() {
   const text = `Je prépare mon examen national avec Laureat AI 🎓 Essaie gratuitement : ${link}`;
 
   const share = async () => {
-    try { if (navigator.share) { await navigator.share({ title: "Laureat AI", text, url: link }); return; } } catch { return; }
+    try { if (navigator.share) { await navigator.share({ title: "Laureat AI", text, url: link }); return; } } catch {}
     try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1600); } catch {}
   };
 
   const claimBasic = async () => { setBusy(true); try { await call("referral_claim_basic"); await load(); } catch {} setBusy(false); };
   const claimTier2 = async (choice) => { setBusy(true); try { await call("referral_claim_tier2", { choice }); await load(); } catch {} setBusy(false); };
 
-  const cashWhatsApp = () => {
-    const num = getWhatsAppNumber();
-    if (!num) return;
-    const msg = `Bonjour ! J'ai gagné ${st?.cashHtg || 0} HTG en parrainage sur Laureat AI. Je voudrais le recevoir.`;
-    window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
-  };
-
-  const paid = st?.paid ?? 0;
-  const referred = st?.referred ?? 0;
-  const reward = st?.reward ?? 250;
-
-  // What's the next milestone message?
-  let nextLine = `Invite 2 amis qui paient → plan Basic GRATUIT.`;
-  if (paid >= 2 && paid < 4) nextLine = `Encore ${4 - paid} ami(s) payant(s) → Premium ou ${reward} HTG.`;
-  else if (paid >= 4) nextLine = `Chaque 2 amis qui paient → ${reward} HTG. À l'infini.`;
-  else if (paid === 1) nextLine = `Encore 1 ami qui paie → plan Basic GRATUIT.`;
-
-  const showClaimBasic = st && paid >= 2 && !st.basicClaimed;
-  const showTier2 = st && paid >= 4 && !st.tier2Choice;
-  const showCash = st && (st.cashHtg || 0) > 0;
+  const paid = st?.paid || 0;
+  const goal = st?.goal || 2;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-      className="rounded-2xl p-4 bg-gradient-to-br from-amber-500/20 to-orange-600/10 ring-1 ring-amber-500/30"
+      className="rounded-2xl p-4 bg-gradient-to-br from-amber-500/15 to-orange-600/10 ring-1 ring-amber-500/30"
     >
-      <div className="flex items-center gap-2.5 mb-3">
-        <div className="w-10 h-10 rounded-xl bg-amber-500/25 flex items-center justify-center">
-          <Gift size={20} className="text-amber-300" />
+      <div className="flex items-center gap-2 mb-1">
+        <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center">
+          <Gift size={18} className="text-amber-400" />
         </div>
         <div className="flex-1">
-          <h3 className="text-sm font-black text-white">Invite tes amis, gagne gros</h3>
-          <p className="text-[11px] text-amber-100/70">{nextLine}</p>
+          <h3 className="text-sm font-black text-white">Parraine et gagne</h3>
+          <p className="text-[11px] text-white/60">2 amis qui paient → ton Plan Basic GRATUIT 🎁</p>
         </div>
+        {st?.cashHtg > 0 && (
+          <span className="text-[11px] font-black text-emerald-300 bg-emerald-500/15 px-2 py-0.5 rounded-full">{st.cashHtg} HTG</span>
+        )}
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 gap-2 mb-3">
-        <div className="rounded-xl bg-black/20 p-2.5 text-center">
-          <div className="text-lg font-black text-white tabular-nums">{referred}</div>
-          <div className="text-[10px] text-white/55">inscrits via toi</div>
-        </div>
-        <div className="rounded-xl bg-black/20 p-2.5 text-center">
-          <div className="text-lg font-black text-emerald-300 tabular-nums">{paid}</div>
-          <div className="text-[10px] text-white/55">ont payé</div>
-        </div>
+      {/* progress to tier 1 (free Basic) */}
+      <div className="flex items-center gap-2 mt-2 mb-3">
+        {Array.from({ length: goal }).map((_, i) => (
+          <div key={i} className={`flex-1 h-2 rounded-full ${i < paid ? "bg-amber-400" : "bg-white/10"}`} />
+        ))}
+        <span className="text-[11px] font-bold text-amber-200 tabular-nums">{Math.min(paid, goal)}/{goal}</span>
       </div>
 
-      {/* Reward claims */}
-      {showClaimBasic && (
+      {/* Tier 1: claim free Basic */}
+      {paid >= goal && !st?.basicClaimed && (
         <button onClick={claimBasic} disabled={busy}
-          className="w-full mb-2 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-sm font-black flex items-center justify-center gap-2 disabled:opacity-60">
-          {busy ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Réclame ton plan Basic GRATUIT
+          className="w-full mb-2 py-2.5 rounded-xl bg-emerald-500 text-white text-sm font-black flex items-center justify-center gap-2 disabled:opacity-50">
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <Gift size={15} />} Réclame ton Plan Basic GRATUIT
         </button>
       )}
-      {showTier2 && (
-        <div className="grid grid-cols-2 gap-2 mb-2">
+
+      {/* Tier 2: at 4 paid, choose Premium or cash */}
+      {paid >= 4 && !st?.tier2Choice && (
+        <div className="mb-2 grid grid-cols-2 gap-2">
           <button onClick={() => claimTier2("premium")} disabled={busy}
-            className="py-2.5 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-700 text-white text-[13px] font-black flex items-center justify-center gap-1.5 disabled:opacity-60">
+            className="py-2.5 rounded-xl bg-violet-500 text-white text-xs font-black flex items-center justify-center gap-1.5 disabled:opacity-50">
             <Crown size={14} /> Premium
           </button>
           <button onClick={() => claimTier2("cash")} disabled={busy}
-            className="py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white text-[13px] font-black flex items-center justify-center gap-1.5 disabled:opacity-60">
-            <Coins size={14} /> {reward} HTG
+            className="py-2.5 rounded-xl bg-emerald-500 text-white text-xs font-black flex items-center justify-center gap-1.5 disabled:opacity-50">
+            <Banknote size={14} /> 250 HTG cash
           </button>
         </div>
       )}
-      {showCash && (
-        <button onClick={cashWhatsApp}
-          className="w-full mb-2 py-2.5 rounded-xl bg-amber-500/20 ring-1 ring-amber-400/40 text-amber-100 text-[13px] font-bold flex items-center justify-center gap-2">
-          <Coins size={14} /> Tu as gagné {st.cashHtg} HTG — réclame-les
-        </button>
+
+      {st?.basicClaimed && paid < 4 && (
+        <p className="text-[11px] text-emerald-300 font-bold mb-2">✓ Basic gratuit obtenu ! Parraine 2 de plus pour Premium ou 250 HTG cash.</p>
       )}
 
       <button onClick={share}

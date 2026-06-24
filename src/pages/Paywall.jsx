@@ -12,7 +12,7 @@
 // Until then a clean branded tile shows (no copyrighted asset embedded).
 
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Copy, Check, Upload, Hash, Loader2, ShieldCheck,
@@ -55,7 +55,8 @@ export default function Paywall() {
 
   const { config } = useAppConfig();
 
-  const [planId, setPlanId] = useState("basic");
+  const [searchParams] = useSearchParams();
+  const [planId, setPlanId] = useState(searchParams.get("plan") === "premium" ? "premium" : "basic");
   const [methodId, setMethodId] = useState(null);
   const [copied, setCopied] = useState(false);
   const [name, setName] = useState("");
@@ -85,8 +86,9 @@ export default function Paywall() {
   const examInfo = EXAM_DATES[track] || EXAM_DATES["9AF"];
   const examDaysLeft = daysUntil(examInfo.start);
 
-  // Referral reward the student has earned (subtracted from their price).
-  const [refDiscount, setRefDiscount] = useState(0);
+  // Current plan (for upgrade pricing). Referral rewards are claimed on Home,
+  // not applied here, so the paywall only needs the plan tier.
+  const [currentPlan, setCurrentPlan] = useState("free");
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -94,12 +96,16 @@ export default function Paywall() {
         const { data: u } = await supabase.auth.getUser();
         const uid = u?.user?.id;
         if (!uid) return;
-        const { data: p } = await supabase.from("profiles").select("referral_discount_htg").eq("id", uid).single();
-        if (alive && p?.referral_discount_htg) setRefDiscount(p.referral_discount_htg);
+        const { data: p } = await supabase.from("profiles").select("plan_tier").eq("id", uid).single();
+        if (alive && p) setCurrentPlan(p.plan_tier || "free");
       } catch { /* ignore */ }
     })();
     return () => { alive = false; };
   }, []);
+
+  // Upgrade: a Basic subscriber pays only the difference to Premium.
+  const upgradeCredit = currentPlan === "basic" && planId === "premium" ? (PLAN_PRICES.basic || 750) : 0;
+  const totalDiscount = upgradeCredit;
   const method = methodId ? METHODS[methodId] : null;
 
   const copyNumber = () => {
@@ -225,24 +231,24 @@ export default function Paywall() {
           </div>
           <div className="flex items-center justify-between mt-1.5">
             <span className="font-black text-white">Laureat AI</span>
-            <span className="font-black text-emerald-300">{Math.max(plan.price - refDiscount, 0)} HTG · une seule fois</span>
+            <span className="font-black text-emerald-300">{Math.max(plan.price - totalDiscount, 0)} HTG · une seule fois</span>
           </div>
           <p className="text-[11px] text-white/40 mt-1.5">Accès complet jusqu'aux examens — pas d'abonnement.</p>
         </div>
 
-        {/* Referral reward earned */}
-        {refDiscount > 0 && (
-          <div className="rounded-2xl px-4 py-3 bg-amber-500/10 ring-1 ring-amber-500/30 flex items-center gap-2.5">
-            <Crown size={16} className="text-amber-300 shrink-0" />
-            <div className="text-[12px] text-amber-50">
-              <span className="font-black">Réduction parrainage −{refDiscount} HTG</span> appliquée à ton paiement. Merci d'avoir partagé !
+        {/* Upgrade credit — Basic subscriber pays only the difference */}
+        {upgradeCredit > 0 && (
+          <div className="rounded-2xl px-4 py-3 bg-violet-500/10 ring-1 ring-violet-500/30 flex items-center gap-2.5">
+            <Crown size={16} className="text-violet-300 shrink-0" />
+            <div className="text-[12px] text-violet-50">
+              <span className="font-black">Mise à niveau</span> — tu as déjà payé Basic, donc <span className="font-black">−{upgradeCredit} HTG</span> sur le Premium.
             </div>
           </div>
         )}
 
         {/* PRIMARY: pay on WhatsApp */}
         <div className="space-y-2">
-          <WhatsAppPayButton planId={planId} livePrice={livePrice[planId]} extraDiscount={refDiscount} />
+          <WhatsAppPayButton planId={planId} livePrice={livePrice[planId]} extraDiscount={totalDiscount} />
           <p className="text-center text-[11px] text-white/45 px-2">
             Cliquez, envoyez le message, et nous activons votre compte après le paiement. Le plus simple.
           </p>
