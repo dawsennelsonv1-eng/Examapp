@@ -22,7 +22,7 @@ import { useApp } from "../contexts/AppContext";
 import { useAuth } from "../contexts/AuthContext";
 import { supabase } from "../lib/supabase";
 import { logEvent } from "../services/analytics";
-import { PLAN_PRICES, PLAN_FEATURES, EXAM_DATES, REPETITEUR_MONTHLY_HTG } from "../utils/constants";
+import { PLAN_PRICES, PLAN_FEATURES, EXAM_DATES, PROF_PRIVE_HTG, SEMINAIRE_HTG } from "../utils/constants";
 import { useEffectiveTrack } from "../hooks/useAdminAccess";
 import { useAppConfig } from "../hooks/useAppConfig";
 import WhatsAppPayButton from "../components/WhatsAppPayButton";
@@ -223,17 +223,45 @@ export default function Paywall() {
           </div>
         )}
 
-        {/* VALUE ANCHOR — make the one-time price feel small vs a real tutor */}
-        <div className="rounded-2xl px-4 py-3 bg-white/5 ring-1 ring-white/10">
-          <div className="flex items-center justify-between text-[13px]">
-            <span className="text-white/55">Un répétiteur privé</span>
-            <span className="text-white/55">≈ {REPETITEUR_MONTHLY_HTG.toLocaleString("fr-FR")} HTG / mois</span>
+        {/* VALUE STACK — Laureat AI vs prof privé vs séminaire */}
+        <div className="rounded-2xl p-4 bg-white/5 ring-1 ring-white/10">
+          <h3 className="text-[11px] uppercase tracking-widest font-black text-white/50 mb-3">Compare par toi-même</h3>
+
+          {/* header */}
+          <div className="flex items-end mb-1">
+            <span className="flex-1" />
+            <span className="w-11 text-center text-[9px] font-black text-white/45 leading-tight">Prof<br/>privé</span>
+            <span className="w-11 text-center text-[9px] font-black text-white/45 leading-tight">Sémi-<br/>naire</span>
+            <span className="w-12 text-center text-[9px] font-black text-violet-300 leading-tight">Laureat<br/>AI</span>
           </div>
-          <div className="flex items-center justify-between mt-1.5">
-            <span className="font-black text-white">Laureat AI</span>
-            <span className="font-black text-emerald-300">{Math.max(plan.price - totalDiscount, 0)} HTG · une seule fois</span>
+
+          {[
+            { label: "Disponible 24h/24 (même à 2h du matin)", prof: false, sem: false },
+            { label: "Sans te déplacer — sur ton téléphone", prof: false, sem: false },
+            { label: "Anciens examens (toutes les années)", prof: false, sem: true },
+            { label: "Leçons : ce qui tombe le plus à l'examen", prof: false, sem: false },
+            { label: "Quiz illimités par matière", prof: false, sem: false },
+            { label: "Prof IA illimité (scan + explications)", prof: false, sem: false },
+          ].map((r, i) => (
+            <div key={i} className="flex items-center py-2 border-t border-white/5">
+              <span className="flex-1 text-[12px] text-white/80 pr-2 leading-snug">{r.label}</span>
+              <span className="w-11 flex justify-center">{r.prof ? <Check size={15} className="text-emerald-400" /> : <X size={15} className="text-white/25" />}</span>
+              <span className="w-11 flex justify-center">{r.sem ? <Check size={15} className="text-emerald-400" /> : <X size={15} className="text-white/25" />}</span>
+              <span className="w-12 flex justify-center"><Check size={16} className="text-emerald-400" strokeWidth={3} /></span>
+            </div>
+          ))}
+
+          {/* price row */}
+          <div className="flex items-center py-2 border-t border-white/10 mt-0.5">
+            <span className="flex-1 text-[11px] font-bold text-white/55 pr-2">Prix</span>
+            <span className="w-11 text-center text-[10px] font-bold text-white/55 leading-tight">{PROF_PRIVE_HTG.toLocaleString("fr-FR")}<br/>/mois</span>
+            <span className="w-11 text-center text-[10px] font-bold text-white/55 leading-tight">{SEMINAIRE_HTG.toLocaleString("fr-FR")}</span>
+            <span className="w-12 text-center text-[10px] font-black text-emerald-300 leading-tight">{Math.max(plan.price - totalDiscount, 0)}<br/>1 fois</span>
           </div>
-          <p className="text-[11px] text-white/40 mt-1.5">Accès complet jusqu'aux examens — pas d'abonnement.</p>
+
+          <p className="text-[11px] text-white/45 mt-2 leading-relaxed">
+            Un prof privé coûte ~{PROF_PRIVE_HTG.toLocaleString("fr-FR")} HTG/mois et n'est pas là à 2h du matin. Laureat AI : tout ça, dans ta poche, jusqu'aux examens — pour {Math.max(plan.price - totalDiscount, 0)} HTG une seule fois.
+          </p>
         </div>
 
         {/* Upgrade credit — Basic subscriber pays only the difference */}

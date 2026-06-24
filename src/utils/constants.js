@@ -40,6 +40,9 @@ export const PLAN_TIERS = {
 // Honest value anchor: roughly what a private tutor (répétiteur) costs per
 // month in Haiti. Used to make the one-time price feel small by comparison.
 export const REPETITEUR_MONTHLY_HTG = 2000;
+// Honest value anchors for the offer comparison (adjust to your market).
+export const PROF_PRIVE_HTG = 7500;  // private tutor, per month
+export const SEMINAIRE_HTG  = 1000;  // a one-off exam-prep seminar
 
 export const PLAN_PRICES = {
   basic: 750,

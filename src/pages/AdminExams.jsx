@@ -169,6 +169,15 @@ export default function AdminExams() {
 
   const subjectsForTrack = (tk) => dbSubjects.filter((s) => s.track === tk);
 
+  // Exam-upload picker: use the admin-managed DB subjects for the chosen track,
+  // falling back to the built-in list only while the DB list is still empty.
+  const examSubjects = (() => {
+    const db = subjectsForTrack(track);
+    return db.length
+      ? db.map((s) => ({ id: s.id, name: s.name }))
+      : SUBJECTS.map((s) => ({ id: s, name: s.charAt(0).toUpperCase() + s.slice(1) }));
+  })();
+
   const addSubject = async () => {
     const name = newSubjName.trim();
     if (!name) return;
@@ -450,7 +459,7 @@ export default function AdminExams() {
             <select value={subject} onChange={(e) => setSubject(e.target.value)}
               className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500">
               <option value="">Examen complet</option>
-              {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
+              {examSubjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </label>
 
