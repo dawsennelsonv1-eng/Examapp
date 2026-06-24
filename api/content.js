@@ -184,6 +184,25 @@ export default async function handler(req, res) {
     }
   }
 
+  // ----- Referral attribution + status/claims (student self-service) -----
+  if (task === "attribute_referral") {
+    try { return await handleAttributeReferral(req, res); }
+    catch (err) {
+      console.error("/api/content attribute_referral error:", err);
+      return res.status(500).json({ error: "Server error", message: err.message });
+    }
+  }
+  if (["referral_status", "referral_claim_basic", "referral_claim_tier2"].includes(task)) {
+    try {
+      if (task === "referral_status") return await handleReferralStatus(req, res);
+      if (task === "referral_claim_basic") return await handleReferralClaimBasic(req, res);
+      if (task === "referral_claim_tier2") return await handleReferralClaimTier2(req, res);
+    } catch (err) {
+      console.error(`/api/content ${task} error:`, err);
+      return res.status(500).json({ error: "Server error", message: err.message });
+    }
+  }
+
   // ----- Admin analytics tasks (secret-gated; only need Supabase) -----
   if (["clients_list", "ad_spend_list", "ad_spend_add", "ad_spend_remove", "ad_performance"].includes(task)) {
     try {
@@ -503,6 +522,122 @@ function slugify(s) {
     .toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
 }
 
+// ===== Referral program =====
+const REFERRAL_PAID_GOAL = 2;
+const REFERRAL_REWARD_HTG = 250;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// A newly-referred user records who referred them (first touch wins).
+async function handleAttributeReferral(req, res) {
+  const admin = getSupabaseAdmin();
+  if (!admin) return res.status(500).json({ error: "server_misconfig" });
+  const token = (req.body?.accessToken || "").trim();
+  const ref = (req.body?.ref || "").trim();
+  if (!token || !UUID_RE.test(ref)) return res.status(400).json({ error: "bad_input" });
+
+  const { data: u, error } = await admin.auth.getUser(token);
+  const userId = u?.user?.id;
+  if (error || !userId) return res.status(401).json({ error: "invalid session" });
+  if (userId === ref) return res.status(200).json({ data: { ok: false, reason: "self" } });
+
+  const { data: prof } = await admin.from("profiles").select("referred_by").eq("id", userId).single();
+  if (prof?.referred_by) return res.status(200).json({ data: { ok: false, reason: "already_set" } });
+
+  // Make sure the referrer is a real user.
+  const { data: refProf } = await admin.from("profiles").select("id").eq("id", ref).single();
+  if (!refProf) return res.status(200).json({ data: { ok: false, reason: "ref_not_found" } });
+
+  const { error: upErr } = await admin.from("profiles").update({ referred_by: ref }).eq("id", userId);
+  if (upErr) return res.status(502).json({ error: "update_failed", message: upErr.message });
+  return res.status(200).json({ data: { ok: true } });
+}
+
+// Called after a successful PAID grant: count it for the referrer and, past the
+// first 4, accrue 250 HTG cash for every additional 2 paid referrals.
+async function creditReferrer(admin, buyerId) {
+  try {
+    const { data: buyer } = await admin.from("profiles").select("referred_by").eq("id", buyerId).single();
+    const refId = buyer?.referred_by;
+    if (!refId) return;
+    const { data: ref } = await admin.from("profiles")
+      .select("paid_referrals, referral_cash_htg").eq("id", refId).single();
+    if (!ref) return;
+    const newCount = (ref.paid_referrals || 0) + 1;
+    const updates = { paid_referrals: newCount };
+    // Tier 3: every 2 paid referrals beyond the first 4 → +250 HTG cash.
+    if (newCount > 4 && newCount % 2 === 0) {
+      updates.referral_cash_htg = (ref.referral_cash_htg || 0) + REFERRAL_REWARD_HTG;
+    }
+    await admin.from("profiles").update(updates).eq("id", refId);
+  } catch { /* never block a grant on referral bookkeeping */ }
+}
+
+// Student-facing: full referral status for the Home section.
+async function handleReferralStatus(req, res) {
+  const admin = getSupabaseAdmin();
+  if (!admin) return res.status(500).json({ error: "server_misconfig" });
+  const token = (req.body?.accessToken || "").trim();
+  const { data: u, error } = await admin.auth.getUser(token);
+  const uid = u?.user?.id;
+  if (error || !uid) return res.status(401).json({ error: "invalid session" });
+
+  const { count: referredCount } = await admin
+    .from("profiles").select("id", { count: "exact", head: true }).eq("referred_by", uid);
+  const { data: me } = await admin.from("profiles")
+    .select("paid_referrals, reward_basic_claimed, reward_tier2_choice, referral_cash_htg, plan_tier")
+    .eq("id", uid).single();
+
+  return res.status(200).json({ data: {
+    referred: referredCount || 0,
+    paid: me?.paid_referrals || 0,
+    basicClaimed: !!me?.reward_basic_claimed,
+    tier2Choice: me?.reward_tier2_choice || null,
+    cashHtg: me?.referral_cash_htg || 0,
+    plan: me?.plan_tier || "free",
+    goal: REFERRAL_PAID_GOAL,
+    reward: REFERRAL_REWARD_HTG,
+  } });
+}
+
+// Claim the free Basic plan at 2 paid referrals.
+async function handleReferralClaimBasic(req, res) {
+  const admin = getSupabaseAdmin();
+  const token = (req.body?.accessToken || "").trim();
+  const { data: u } = await admin.auth.getUser(token);
+  const uid = u?.user?.id;
+  if (!uid) return res.status(401).json({ error: "invalid session" });
+  const { data: me } = await admin.from("profiles")
+    .select("paid_referrals, reward_basic_claimed, plan_tier").eq("id", uid).single();
+  if (!me) return res.status(404).json({ error: "no_profile" });
+  if ((me.paid_referrals || 0) < REFERRAL_PAID_GOAL) return res.status(400).json({ error: "not_eligible" });
+  if (me.reward_basic_claimed) return res.status(200).json({ data: { ok: true, already: true } });
+  const newPlan = me.plan_tier === "premium" ? "premium" : "basic";
+  const { error } = await admin.from("profiles").update({ plan_tier: newPlan, reward_basic_claimed: true }).eq("id", uid);
+  if (error) return res.status(502).json({ error: "update_failed", message: error.message });
+  return res.status(200).json({ data: { ok: true, plan: newPlan } });
+}
+
+// At 4 paid referrals, choose Premium upgrade OR 250 HTG cash.
+async function handleReferralClaimTier2(req, res) {
+  const admin = getSupabaseAdmin();
+  const token = (req.body?.accessToken || "").trim();
+  const choice = req.body?.choice === "premium" ? "premium" : "cash";
+  const { data: u } = await admin.auth.getUser(token);
+  const uid = u?.user?.id;
+  if (!uid) return res.status(401).json({ error: "invalid session" });
+  const { data: me } = await admin.from("profiles")
+    .select("paid_referrals, reward_tier2_choice, referral_cash_htg").eq("id", uid).single();
+  if (!me) return res.status(404).json({ error: "no_profile" });
+  if ((me.paid_referrals || 0) < 4) return res.status(400).json({ error: "not_eligible" });
+  if (me.reward_tier2_choice) return res.status(200).json({ data: { ok: true, already: me.reward_tier2_choice } });
+  const updates = { reward_tier2_choice: choice };
+  if (choice === "premium") updates.plan_tier = "premium";
+  else updates.referral_cash_htg = (me.referral_cash_htg || 0) + REFERRAL_REWARD_HTG;
+  const { error } = await admin.from("profiles").update(updates).eq("id", uid);
+  if (error) return res.status(502).json({ error: "update_failed", message: error.message });
+  return res.status(200).json({ data: { ok: true, choice } });
+}
+
 // ===== Admin analytics: clients list, usage, ad spend & performance =====
 function adminSecretOk(req) {
   const expected = process.env.ADMIN_SECRET;
@@ -704,6 +839,7 @@ async function handleGrantAccess(req, res) {
     // Real conversion → tell Meta (server-side Purchase with value).
     if (plan === "basic" || plan === "premium") {
       await fireMetaPurchase({ email: target.email, value: plan === "premium" ? 1200 : 750 });
+      await creditReferrer(admin, target.id);
     }
 
     return res.status(200).json({ data: { ok: true, who: target.email || target.phone, plan } });

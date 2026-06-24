@@ -3,12 +3,14 @@
 // bundle. Home + Auth load eagerly (first screens); everything else is split.
 // Auth gate + admin config route from prior packages are preserved.
 
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useApp } from "./contexts/AppContext";
 import { useAuth } from "./contexts/AuthContext";
+import { supabase } from "./lib/supabase";
 import AppShell from "./components/AppShell";
 import MetaPixel from "./components/MetaPixel";
+import ReferralCapture from "./components/ReferralCapture";
 import WelcomeTour from "./components/WelcomeTour";
 import FeedbackPrompt from "./components/FeedbackPrompt";
 import InstallPrompt from "./components/InstallPrompt";
@@ -75,18 +77,55 @@ export default function App() {
       <FeedbackPrompt />
       <MetaPixel />
       <WelcomeTour />
+      <ReferralCapture />
     </>
   );
 }
 
 function ProtectedShell() {
-  const { onboardingComplete } = useApp();
+  const { onboardingComplete, setOnboardingComplete, setTrack, setPreferences } = useApp();
   const { isConfigured, loading, isAuthenticated } = useAuth();
   const location = useLocation();
+  const [profileChecked, setProfileChecked] = useState(false);
+
+  // Cross-device onboarding: if this account already finished onboarding on
+  // another device, pull it from the profile so we don't re-onboard here.
+  useEffect(() => {
+    if (!isAuthenticated || onboardingComplete || profileChecked) return;
+    let alive = true;
+    (async () => {
+      try {
+        const { data: u } = await supabase.auth.getUser();
+        const uid = u?.user?.id;
+        if (uid) {
+          const { data: prof } = await supabase
+            .from("profiles")
+            .select("onboarding_complete, track, display_name, personality, language")
+            .eq("id", uid).single();
+          if (alive && prof?.onboarding_complete) {
+            setTrack?.(prof.track || "NS4");
+            setPreferences?.({
+              name: prof.display_name || "Élève",
+              personality: prof.personality || "joseph",
+              language: prof.language || "fr",
+            });
+            setOnboardingComplete?.(true);
+          }
+        }
+      } catch { /* ignore — fall back to local onboarding */ }
+      finally { if (alive) setProfileChecked(true); }
+    })();
+    return () => { alive = false; };
+  }, [isAuthenticated, onboardingComplete, profileChecked, setOnboardingComplete, setTrack, setPreferences]);
 
   if (isConfigured) {
     if (loading) return <div className="min-h-screen bg-slate-950" />;
     if (!isAuthenticated) return <Auth />;
+  }
+
+  // While we check the profile for a returning user, hold (avoids an onboarding flash).
+  if (isAuthenticated && !onboardingComplete && !profileChecked) {
+    return <div className="min-h-screen bg-slate-950" />;
   }
 
   if (!onboardingComplete) {

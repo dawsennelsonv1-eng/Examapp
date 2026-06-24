@@ -15,6 +15,7 @@ import { EXAM_DATES, PERSONALITIES } from "../utils/constants";
 import { useAppConfig } from "../hooks/useAppConfig";
 import { useClassroomSessions } from "../hooks/useClassroom";
 import GettingStarted from "../components/GettingStarted";
+import ReferralCard from "../components/ReferralCard";
 import { getPlanPricing, promoEndsAt, formatCountdown } from "../utils/promo";
 import ScanHistoryCard from "../components/home/ScanHistoryCard";
 import ProgressCard from "../components/ProgressCard";
@@ -149,6 +150,9 @@ export default function Home() {
                   )}
                 </div>
                 <div className="text-xs text-white/75 mt-0.5">Accès complet jusqu'aux examens</div>
+                <div className="text-[11px] text-amber-200/90 mt-1.5 font-semibold">
+                  Moins cher qu'un répétiteur — et disponible 24h/24.
+                </div>
                 {promoBasic.active && promoCountdown && (
                   <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-200">
                     <Clock size={12} /> Se termine dans <span className="tabular-nums">{promoCountdown}</span>
@@ -164,6 +168,8 @@ export default function Home() {
         </AnimatePresence>
 
         <GettingStarted />
+
+        <ReferralCard />
 
         <AnimatePresence>
           {showBanner && (

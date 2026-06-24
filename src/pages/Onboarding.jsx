@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, BookOpen, GraduationCap, Check, ArrowRight, ArrowLeft } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
 import { PERSONALITIES, LANGUAGE_OPTIONS, STORAGE_KEYS } from "../utils/constants";
+import { supabase } from "../lib/supabase";
 
 const TOTAL_STEPS = 4;
 
@@ -39,6 +40,22 @@ export default function Onboarding() {
     } catch (err) {
       console.warn("Onboarding save failed:", err);
     }
+    // Persist to the profile so a new device doesn't re-onboard (best-effort).
+    (async () => {
+      try {
+        const { data: u } = await supabase.auth.getUser();
+        const uid = u?.user?.id;
+        if (uid) {
+          await supabase.from("profiles").update({
+            onboarding_complete: true,
+            track: selectedTrack,
+            display_name: name.trim() || "Élève",
+            personality: selectedPersonality,
+            language: selectedLanguage,
+          }).eq("id", uid);
+        }
+      } catch { /* local flag already set; fine */ }
+    })();
     navigate("/", { replace: true });
   };
 

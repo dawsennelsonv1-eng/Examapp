@@ -25,10 +25,12 @@ export default function WhatsAppPayButton({
   className = "",
   label,        // optional override
   subLabel,     // optional override
+  extraDiscount = 0, // e.g. referral reward, subtracted from the price
 }) {
   const f = PLAN_FEATURES[planId] || {};
   const planName = f.label || (planId === "premium" ? "Premium" : "Basic");
-  const { price } = getPlanPricing(planId, livePrice);
+  const base = getPlanPricing(planId, livePrice).price;
+  const price = Math.max(base - (Number(extraDiscount) || 0), 0);
   const href = buildWhatsAppPayLink({ planName, price });
   if (!href) return null; // no number configured -> render nothing
 

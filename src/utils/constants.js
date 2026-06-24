@@ -57,7 +57,11 @@ export const PLAN_ANCHOR_PRICES = {
 
 // The discount is valid for this many days after the student first opens the app.
 // After the window, the anchor price applies (creates real urgency to pay fast).
-export const DISCOUNT_WINDOW_DAYS = 5;
+export const DISCOUNT_WINDOW_DAYS = 3;
+
+// Referral program: refer N friends who PAY → get a discount on your own plan.
+export const REFERRAL_PAID_GOAL = 2;
+export const REFERRAL_REWARD_HTG = 250;
 
 // One-time access that ends with the exams (not a recurring subscription).
 export const PRICE_SUFFIX = "jusqu'aux examens";
