@@ -37,7 +37,7 @@ export default function AdminExams() {
   const { isAdmin, loading: accessLoading } = useAdminAccess();
   const { exams, loading, reload } = useExams();
 
-  const [year, setYear] = useState(new Date().getFullYear());
+  const [year, setYear] = useState(String(new Date().getFullYear())); // free text: "2024" or "2010-2023"
   const [track, setTrack] = useState("NS4");
   const [subject, setSubject] = useState("");
   const [premium, setPremium] = useState(true);
@@ -363,7 +363,9 @@ export default function AdminExams() {
     try {
       // Step 1: ask the server (service-role) for a one-time signed upload URL.
       step = "sign";
-      const signResp = await postAdmin("exam_sign", { track, year: Number(year), subject: subject || "" });
+      const periodText = String(year).trim() || String(new Date().getFullYear());
+      const startYear = parseInt((periodText.match(/\d{4}/) || [String(new Date().getFullYear())])[0], 10) || new Date().getFullYear();
+      const signResp = await postAdmin("exam_sign", { track, year: startYear, subject: subject || "" });
       const signJson = await signResp.json();
       if (!signResp.ok) {
         throw new Error(`${signJson.message || signJson.error || "sign error"} ${signJson.raw ? JSON.stringify(signJson.raw) : ""}`);
@@ -384,9 +386,9 @@ export default function AdminExams() {
       const { data: { user } } = await supabase.auth.getUser();
 
       step = "db.insert";
-      const title = `${subject ? subject.charAt(0).toUpperCase() + subject.slice(1) + " " : ""}${track} ${year}`;
+      const title = `${subject ? subject.charAt(0).toUpperCase() + subject.slice(1) + " " : ""}${track} ${periodText}`;
       const ins = await supabase.from("exams").insert({
-        year: Number(year), track, subject: subject || null, title,
+        year: startYear, period: periodText, track, subject: subject || null, title,
         pdf_path: path, premium, uploaded_by: user?.id || null,
       });
       if (ins.error) throw ins.error;
@@ -429,8 +431,9 @@ export default function AdminExams() {
 
           <div className="grid grid-cols-2 gap-3">
             <label className="text-sm">
-              <span className="text-[11px] text-slate-500 block mb-1">Année</span>
-              <input type="number" value={year} onChange={(e) => setYear(e.target.value)}
+              <span className="text-[11px] text-slate-500 block mb-1">Année / période</span>
+              <input type="text" value={year} onChange={(e) => setYear(e.target.value)}
+                placeholder="2024  ou  2010-2023"
                 className="w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500" />
             </label>
             <label className="text-sm">
@@ -485,8 +488,8 @@ export default function AdminExams() {
                 <div key={e.id} className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800">
                   <FileText size={16} className="text-violet-500 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">{e.title || `${e.track} ${e.year}`}</div>
-                    <div className="text-[10px] text-slate-500">{e.track} · {e.year}{e.premium ? " · Premium" : " · Gratuit"}</div>
+                    <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">{e.title || `${e.track} ${e.period || e.year}`}</div>
+                    <div className="text-[10px] text-slate-500">{e.track} · {e.period || e.year}{e.premium ? " · Premium" : " · Gratuit"}</div>
                   </div>
                   <button onClick={() => remove(e)} className="p-1.5 text-red-500"><Trash2 size={15} /></button>
                 </div>
