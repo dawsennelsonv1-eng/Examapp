@@ -889,14 +889,23 @@ async function handleGrantAccess(req, res) {
     if (upErr) return res.status(502).json({ error: "update_failed", message: upErr.message });
 
     // Real conversion → tell Meta (server-side Purchase with value).
-    // Admin path: no buyer browser here, so no fbc/fbp/IP. Still send the
-    // strong identifiers we DO have (email, phone, user id) for matching.
+    // Admin path: no buyer browser here, so no live IP. But if we captured the
+    // buyer's click id (_fbc) / browser id (_fbp) on their profile at landing,
+    // read it back now so even a MANUAL grant attributes to the ad they came from.
     if (plan === "basic" || plan === "premium") {
+      let storedFb = {};
+      try {
+        const { data: prof } = await admin
+          .from("profiles").select("fbc, fbp").eq("id", target.id).single();
+        storedFb = prof || {};
+      } catch { /* fbc/fbp columns may not exist yet — ignore */ }
       await fireMetaPurchase({
         email: target.email,
         phone: target.phone,
         externalId: target.id,
         value: plan === "premium" ? 1200 : 750,
+        fbc: storedFb.fbc || undefined,
+        fbp: storedFb.fbp || undefined,
       });
       await creditReferrer(admin, target.id);
     }
@@ -1350,13 +1359,21 @@ async function handleVerifyPayment(req, res) {
   // the ad click and what lifts Event Match Quality above the email-only floor.
   if (planTier === "basic" || planTier === "premium") {
     const cm = clientMeta(req);
+    // Fallback: if the live request has no _fbc/_fbp cookie (e.g. they clicked
+    // the ad in one browser and paid in another), use what we stored at landing.
+    let storedFb = {};
+    try {
+      const { data: prof } = await admin
+        .from("profiles").select("fbc, fbp").eq("id", user.id).single();
+      storedFb = prof || {};
+    } catch { /* fbc/fbp columns may not exist yet — ignore */ }
     await fireMetaPurchase({
       email: user.email,
       phone: customerWhatsapp || user.phone,
       externalId: user.id,
       value: planTier === "premium" ? 1200 : 750,
-      fbc: cm.fbc,
-      fbp: cm.fbp,
+      fbc: cm.fbc || storedFb.fbc || undefined,
+      fbp: cm.fbp || storedFb.fbp || undefined,
       clientIp: cm.clientIp,
       clientUserAgent: cm.clientUserAgent,
       eventSourceUrl: cm.eventSourceUrl,
