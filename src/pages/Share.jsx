@@ -60,9 +60,7 @@ export default function Share() {
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-violet-950 to-slate-950 text-white pb-32">
       {/* Header banner */}
       <header className="bg-gradient-to-br from-violet-700 via-purple-700 to-indigo-800 p-6 pb-8 text-white text-center">
-        <div className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center mx-auto mb-3">
-          <Sparkles size={26} />
-        </div>
+        <img src="/icon-512.png" alt="Laureat AI" className="w-16 h-16 rounded-2xl mx-auto mb-3 shadow-lg" />
         <h1 className="text-2xl font-black mb-1">Quelqu'un t'a partagé ça</h1>
         <p className="text-sm text-white/80">Un exercice résolu par Laureat AI</p>
       </header>
@@ -81,7 +79,7 @@ export default function Share() {
           <div className="text-4xl mb-3">🎯</div>
           <h2 className="text-xl font-black mb-2">Toi aussi tu peux scanner tes exos</h2>
           <p className="text-sm opacity-90 mb-4">
-            Laureat AI résout tes exercices MENFP et t'explique étape par étape — en français et kreyòl.
+            Laureat AI résout tes exercices et t'explique étape par étape, pour réussir tes examens nationaux.
           </p>
           <motion.button
             whileTap={{ scale: 0.97 }}
@@ -90,11 +88,14 @@ export default function Share() {
           >
             Essayer gratuitement <ArrowRight size={18} />
           </motion.button>
-          <p className="text-xs opacity-75 mt-3">3 scans gratuits par jour · Aucune carte requise</p>
+          <p className="text-xs opacity-75 mt-3">5 scans gratuits · Aucune carte requise · laureatai.app</p>
         </motion.div>
 
-        <p className="text-center text-xs text-slate-500 mt-8">
-          Laureat AI · Préparation MENFP pour les élèves haïtiens
+        <a href="https://laureatai.app" className="block text-center text-xs text-violet-300 font-semibold mt-8 underline">
+          laureatai.app
+        </a>
+        <p className="text-center text-xs text-slate-500 mt-1">
+          Laureat AI · Préparation aux examens nationaux pour les élèves haïtiens
         </p>
       </main>
     </div>
