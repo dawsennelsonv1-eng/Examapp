@@ -62,14 +62,14 @@ async function requireAdmin(req) {
 
 // =====================================================================
 // SERVER-SIDE USAGE CAPS (can't be bypassed by clearing localStorage)
-//   scan         : lifetime trial count (free = 2, then must pay)
-//   call_minutes : per-calendar-month minutes (free 2 / basic 15 / premium 90)
+//   scan         : lifetime trial count (free = 5, then must pay)
+//   call_minutes : per-calendar-month minutes (free 5 / basic 30 / premium 180)
 // Counts live in the `usage_counters` table; increments via bump_usage RPC.
 // =====================================================================
 const TIER_LIMITS = {
-  free:    { scan: 2,  call_minutes: 2 },
-  basic:   { scan: -1, call_minutes: 15 },
-  premium: { scan: -1, call_minutes: 90 },
+  free:    { scan: 5,  call_minutes: 5 },
+  basic:   { scan: -1, call_minutes: 30 },
+  premium: { scan: -1, call_minutes: 180 },
   admin:   { scan: -1, call_minutes: -1 }, // staff = unlimited
 };
 
@@ -127,7 +127,7 @@ async function enforceLimit(req, feature) {
       body: {
         error: "limit_reached", feature, tier: u.tier, used, limit,
         message: feature === "scan"
-          ? "Ou fin itilize 2 scan gratis ou yo. Pase Premium pou scan san limit."
+          ? "Ou fin itilize 5 scan gratis ou yo. Pase Premium pou scan san limit."
           : "Ou fin itilize minit apèl ou yo pou mwa a.",
       },
     };

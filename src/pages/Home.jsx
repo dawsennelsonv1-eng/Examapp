@@ -57,7 +57,19 @@ export default function Home() {
   const planTier = livePlan || profile?.plan_tier || "free";
   const isPaid = planTier === "basic" || planTier === "premium";
   const upgradeDiff = Math.max((PLAN_PRICES.premium || 1200) - (PLAN_PRICES.basic || 750), 0);
+
+  // Banner dismissal must persist — otherwise the X works but the banner returns
+  // on the next Home mount. Key per tier so dismissing the free offer doesn't
+  // also hide the Basic→Premium upgrade nudge after they pay.
+  const promoDismissKey = `laureat.promoDismissed.${planTier}`;
   const [showPromo, setShowPromo] = useState(true);
+  useEffect(() => {
+    try { setShowPromo(localStorage.getItem(promoDismissKey) !== "1"); } catch {}
+  }, [promoDismissKey]);
+  const dismissPromo = () => {
+    try { localStorage.setItem(promoDismissKey, "1"); } catch {}
+    setShowPromo(false);
+  };
   const [nowTs, setNowTs] = useState(Date.now());
   useEffect(() => {
     const t = setInterval(() => setNowTs(Date.now()), 1000);
@@ -78,8 +90,21 @@ export default function Home() {
   const days = daysUntil(examInfo.start);
   const name = preferences?.name || "champion";
 
-  const [showRememberBanner, setShowRememberBanner] = useState(true);
   const lastSession = getLastSessionSummary ? getLastSessionSummary() : null;
+
+  // Persist this resume-prompt's dismissal so it stays gone; a NEW session gets a
+  // new id and will surface its own prompt.
+  const rememberDismissKey = lastSession?.sessionId
+    ? `laureat.rememberDismissed.${lastSession.sessionId}` : null;
+  const [showRememberBanner, setShowRememberBanner] = useState(true);
+  useEffect(() => {
+    if (!rememberDismissKey) return;
+    try { setShowRememberBanner(localStorage.getItem(rememberDismissKey) !== "1"); } catch {}
+  }, [rememberDismissKey]);
+  const dismissRemember = () => {
+    try { if (rememberDismissKey) localStorage.setItem(rememberDismissKey, "1"); } catch {}
+    setShowRememberBanner(false);
+  };
 
   const showBanner =
     showRememberBanner &&
@@ -144,7 +169,7 @@ export default function Home() {
               initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
               className="relative"
             >
-              <button onClick={() => setShowPromo(false)}
+              <button onClick={dismissPromo}
                 className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full bg-white/15 flex items-center justify-center">
                 <X size={12} className="text-white/80" />
               </button>
@@ -193,7 +218,7 @@ export default function Home() {
               initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
               className="relative"
             >
-              <button onClick={() => setShowPromo(false)}
+              <button onClick={dismissPromo}
                 className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full bg-white/15 flex items-center justify-center">
                 <X size={12} className="text-white/80" />
               </button>
@@ -230,7 +255,7 @@ export default function Home() {
               className="relative rounded-2xl bg-gradient-to-br from-violet-100 to-indigo-100 dark:from-violet-950/40 dark:to-indigo-950/40 p-4 border border-violet-200 dark:border-violet-700/40"
             >
               <button
-                onClick={() => setShowRememberBanner(false)}
+                onClick={dismissRemember}
                 className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/50 dark:bg-slate-800/50 flex items-center justify-center"
               >
                 <X size={12} className="text-slate-500" />

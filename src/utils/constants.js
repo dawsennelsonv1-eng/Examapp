@@ -82,7 +82,7 @@ export const PLAN_FEATURES = {
     price: 0,
     tagline: "Pour essayer",
     included: [
-      "2 scans par jour",
+      "5 scans gratis",
       "5 messages au prof par jour",
       "Quiz hebdomadaire (1)",
       "Anciens examens (avant 2019)",
