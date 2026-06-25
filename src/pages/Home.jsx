@@ -162,50 +162,23 @@ export default function Home() {
       <main className="px-4 py-6 space-y-6 -mt-4 relative z-10">
         <ProgressCard />
 
-        {/* Offre Basic — utilisateurs GRATUITS seulement → page de paiement */}
+        {/* Free users: no aggressive offer card on open (it scared users off). The
+            exam-countdown header above is the hook; a small, dismissible link is the
+            only upgrade nudge here. The full pitch lives on /paywall + the scan wall. */}
         <AnimatePresence>
           {planTier === "free" && showPromo && (
             <motion.div
-              initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-              className="relative"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="relative flex items-center justify-between gap-2 rounded-xl bg-slate-100 dark:bg-slate-800/60 px-4 py-2.5 ring-1 ring-slate-200 dark:ring-slate-700"
             >
-              <button onClick={dismissPromo}
-                className="absolute top-2 right-2 z-10 w-6 h-6 rounded-full bg-white/15 flex items-center justify-center">
-                <X size={12} className="text-white/80" />
+              <button onClick={() => navigate("/paywall")} className="flex items-center gap-2 text-left">
+                <Sparkles size={15} className="text-violet-600 dark:text-violet-400 flex-shrink-0" />
+                <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  Débloque tout jusqu'aux examens — voir les forfaits
+                </span>
               </button>
-              <button
-                onClick={() => navigate("/paywall")}
-                className="w-full text-left rounded-2xl p-5 text-white shadow-xl bg-gradient-to-br from-violet-600 via-indigo-700 to-slate-900 relative overflow-hidden"
-              >
-                <div className="absolute -top-10 -right-10 w-32 h-32 rounded-full bg-amber-400/15 blur-2xl" />
-                <div className="flex items-center justify-between mb-2 pr-6">
-                  <span className="text-[10px] uppercase tracking-widest font-black text-amber-300">Offre spéciale</span>
-                  {promoBasic.active && promoBasic.savings > 0 && (
-                    <span className="text-[11px] font-black text-white bg-emerald-500 px-2 py-0.5 rounded-full">
-                      -{promoBasic.savings} HTG
-                    </span>
-                  )}
-                </div>
-                <div className="text-xl font-black leading-tight">Plan Basic</div>
-                <div className="flex items-baseline gap-2 mt-0.5">
-                  <span className="text-2xl font-black">{promoBasic.price} HTG</span>
-                  {promoBasic.active && promoBasic.savings > 0 && (
-                    <span className="text-sm text-white/50 line-through">{promoBasic.anchor} HTG</span>
-                  )}
-                </div>
-                <div className="text-xs text-white/75 mt-0.5">Accès complet jusqu'aux examens</div>
-                <div className="text-[11px] text-amber-200/90 mt-1.5 font-semibold">
-                  Moins cher qu'un répétiteur — et disponible 24h/24.
-                </div>
-                {promoBasic.active && promoCountdown && (
-                  <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-200">
-                    <Clock size={12} /> Se termine dans <span className="tabular-nums">{promoCountdown}</span>
-                  </div>
-                )}
-                <div className="mt-3 inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-sm px-4 py-2 rounded-xl text-sm font-bold">
-                  Profiter de l'offre <ChevronRight size={16} />
-                </div>
-                <div className="text-[11px] text-white/55 mt-2">Plan Premium également disponible</div>
+              <button onClick={dismissPromo} className="w-6 h-6 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center flex-shrink-0">
+                <X size={12} className="text-slate-400" />
               </button>
             </motion.div>
           )}

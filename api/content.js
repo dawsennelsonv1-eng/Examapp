@@ -1603,6 +1603,7 @@ async function handleSolve(req, res) {
           number: ex.number || (i + 1),
           enonce: ex.enonce || "",
           preview: (ex.enonce || "").substring(0, 200),
+          type: ex.type === "problem" ? "problem" : (ex.type === "simple" ? "simple" : null),
           hasUserSolution: Boolean(ex.hasUserSolution),
           userSolutionText: ex.userSolutionText || null,
         })),
@@ -1679,6 +1680,10 @@ Exercice I, II, etc).
 ÉTAPE 3: Pour CHAQUE exercice, extrais:
 - "number": le numéro/identifiant
 - "enonce": l'énoncé complet en texte propre
+- "type": "problem" si l'exercice demande de CALCULER, DÉTERMINER, TROUVER, ou DÉMONTRER
+  une quantité — un vrai problème à résoudre (souvent en bas de page). "simple" si c'est
+  une question à compléter, un QCM / à choisir, une définition, une comparaison de termes,
+  ou une courte question de cours.
 - "hasUserSolution": true si l'élève a déjà écrit une solution à la main, sinon false
 - "userSolutionText": (si hasUserSolution=true) transcription de ce que l'élève a écrit
 
@@ -1687,7 +1692,7 @@ Réponds UNIQUEMENT en JSON:
   "subject": "<matière>",
   "count": <nombre>,
   "exercises": [
-    { "number": "1", "enonce": "...", "hasUserSolution": false, "userSolutionText": null }
+    { "number": "1", "enonce": "...", "type": "simple", "hasUserSolution": false, "userSolutionText": null }
   ]
 }`;
 
@@ -1733,13 +1738,22 @@ Réponds UNIQUEMENT en JSON:
 
 // -------------------- Solve mode --------------------
 async function solveExercise(exercise, model, apiKey, subject, family, track) {
-  const prompt = family === "sciences"
+  // Route by exercise TYPE first: a calculation/problem exercise gets the full
+  // Données/Solution treatment; a fill/choose/define/compare question gets a plain
+  // explanation — even when it sits on a sciences page. Fall back to the subject
+  // family when the extractor didn't classify this exercise.
+  const isProblem = exercise.type
+    ? exercise.type === "problem"
+    : family === "sciences";
+  const prompt = isProblem
     ? sciencesSolvePrompt(exercise, subject, track)
     : choiceSolvePrompt(exercise, subject, track);
 
   const parsed = await callJSON(model, apiKey, prompt);
   if (!parsed) return null;
-  parsed.subjectFamily = family;
+  // Report the family that matches the FORMAT we produced, so the client picks the
+  // right layout per-exercise (sciences = Données/Solution, choice = plain answer).
+  parsed.subjectFamily = isProblem ? "sciences" : "choice";
   return parsed;
 }
 
