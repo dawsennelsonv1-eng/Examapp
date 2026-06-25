@@ -62,14 +62,14 @@ async function requireAdmin(req) {
 
 // =====================================================================
 // SERVER-SIDE USAGE CAPS (can't be bypassed by clearing localStorage)
-//   scan         : free = 5 lifetime trial; basic = 25/day; premium = unlimited
+//   scan         : free = 5 lifetime trial; basic = 25/day; premium = 80/day
 //   call_minutes : per-calendar-month minutes (free 5 / basic 30 / premium 180)
 // Counts live in the `usage_counters` table; increments via bump_usage RPC.
 // =====================================================================
 const TIER_LIMITS = {
   free:    { scan: 5,  call_minutes: 5 },
   basic:   { scan: 25, call_minutes: 30 },
-  premium: { scan: -1, call_minutes: 180 },
+  premium: { scan: 80, call_minutes: 180 },
   admin:   { scan: -1, call_minutes: -1 }, // staff = unlimited
 };
 
@@ -80,7 +80,7 @@ function dayKey()   { return new Date().toISOString().slice(0, 10); } // "2026-0
 // All non-scan features (call_minutes) bucket per calendar month.
 function periodFor(feature, tier) {
   if (feature !== "scan") return monthKey();
-  return tier === "basic" ? dayKey() : "all";
+  return tier === "free" ? "all" : dayKey();   // free = lifetime trial; basic/premium = per-day
 }
 
 // Resolve the caller's identity + REAL tier (from profiles, not the client).
@@ -131,9 +131,9 @@ async function enforceLimit(req, feature) {
   if (used >= limit) {
     let message;
     if (feature === "scan") {
-      message = u.tier === "basic"
-        ? `Vous avez atteint votre limite de ${limit} scans aujourd'hui. Revenez demain ou passez à Premium pour un accès illimité.`
-        : `Vous avez utilisé vos ${limit} scans gratuits. Passez à un forfait pour continuer à scanner.`;
+      message = u.tier === "free"
+        ? `Vous avez utilisé vos ${limit} scans gratuits. Passez à un forfait pour continuer à scanner.`
+        : `Vous avez atteint votre limite de ${limit} scans pour aujourd'hui. Réessayez demain.`;
     } else {
       message = "Vous avez utilisé vos minutes d'appel pour ce mois-ci.";
     }
@@ -1454,6 +1454,14 @@ const SOLVE_MODELS = [
   "openai/gpt-5.5",
 ];
 
+// Cheaper models for simple exercises (fill/choose/define/compare). These don't
+// need the pricier reasoning model — routing them here cuts ~half the cost on the
+// most common exercise type. Problems still use SOLVE_MODELS above.
+const SIMPLE_SOLVE_MODELS = [
+  "google/gemini-3.1-flash-lite",
+  "google/gemini-3-flash-preview",
+];
+
 // Map a detected subject string to a solving family.
 const SCIENCE_SUBJECTS = ["physique", "mathematiques", "mathématiques", "maths", "math", "chimie"];
 function familyForSubject(subject) {
@@ -1655,9 +1663,12 @@ async function handleSolve(req, res) {
 // Run solve or verify across the model fallbacks. Returns {ok, data} or {ok:false,status,body}.
 async function runSolve({ target, mode, subject, family, track, KEY }) {
   const isVerify = mode === "verify" && target.hasUserSolution;
+  // Cost routing: a fill/choose/define exercise gets the cheaper model tier.
+  const isProblem = target.type ? target.type === "problem" : family === "sciences";
+  const models = (isVerify || isProblem) ? SOLVE_MODELS : SIMPLE_SOLVE_MODELS;
   let solution = null;
   let solveModel = null;
-  for (const model of SOLVE_MODELS) {
+  for (const model of models) {
     const result = isVerify
       ? await verifyWork(target, model, KEY, subject, family, track)
       : await solveExercise(target, model, KEY, subject, family, track);

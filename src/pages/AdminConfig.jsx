@@ -34,6 +34,8 @@ export default function AdminConfig() {
         exam_ns4_range: config.exam_ns4_range || "",
         price_basic: config.price_basic ?? 900,
         price_premium: config.price_premium ?? 2400,
+        group_9af: config.group_9af || "",
+        group_ns4: config.group_ns4 || "",
         flags: { ...config.flags },
       });
     }
@@ -63,6 +65,8 @@ export default function AdminConfig() {
       exam_ns4_range: form.exam_ns4_range,
       price_basic: Number(form.price_basic),
       price_premium: Number(form.price_premium),
+      group_9af: form.group_9af.trim(),
+      group_ns4: form.group_ns4.trim(),
       flags: form.flags,
     });
     setSaving(false);
@@ -96,6 +100,20 @@ export default function AdminConfig() {
           <Row label="9AF texte"><TextInput value={form.exam_9af_range} onChange={(v) => setForm({ ...form, exam_9af_range: v })} placeholder="29 juin – 2 juillet" /></Row>
           <Row label="NS4 début"><DateInput value={form.exam_ns4_start} onChange={(v) => setForm({ ...form, exam_ns4_start: v })} /></Row>
           <Row label="NS4 texte"><TextInput value={form.exam_ns4_range} onChange={(v) => setForm({ ...form, exam_ns4_range: v })} placeholder="3 – 7 juillet" /></Row>
+        </Section>
+
+        {/* WhatsApp groups (one per class — students join the group for their track) */}
+        <Section title="Groupes WhatsApp">
+          <UrlRow label="Groupe 9AF"
+            value={form.group_9af}
+            onChange={(v) => setForm({ ...form, group_9af: v })} />
+          <UrlRow label="Groupe NS4"
+            value={form.group_ns4}
+            onChange={(v) => setForm({ ...form, group_ns4: v })} />
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            Colle ici les liens d'invitation WhatsApp (https://chat.whatsapp.com/…). Chaque élève verra
+            le bouton vers le groupe de sa classe sur l'accueil et à l'inscription.
+          </p>
         </Section>
 
         {/* Feature flags */}
@@ -147,5 +165,21 @@ function FlagRow({ label, on, onToggle }) {
       <span className="text-sm text-slate-700 dark:text-slate-300">{label}</span>
       {on ? <ToggleRight size={30} className="text-emerald-500" /> : <ToggleLeft size={30} className="text-slate-400" />}
     </button>
+  );
+}
+
+function UrlRow({ label, value, onChange }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-sm text-slate-700 dark:text-slate-300">{label}</label>
+      <input
+        type="url"
+        inputMode="url"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="https://chat.whatsapp.com/…"
+        className="w-full text-xs px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+      />
+    </div>
   );
 }

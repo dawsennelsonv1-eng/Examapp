@@ -20,6 +20,7 @@ import ReferralCard from "../components/ReferralCard";
 import { getPlanPricing, promoEndsAt, formatCountdown } from "../utils/promo";
 import ScanHistoryCard from "../components/home/ScanHistoryCard";
 import ProgressCard from "../components/ProgressCard";
+import GroupCard from "../components/GroupCard";
 import TutorAvatar from "../components/shared/TutorAvatar";
 import { useState, useEffect } from "react";
 
@@ -161,6 +162,9 @@ export default function Home() {
 
       <main className="px-4 py-6 space-y-6 -mt-4 relative z-10">
         <ProgressCard />
+
+        {/* WhatsApp community — joins the group for the student's class */}
+        <GroupCard track={track} />
 
         {/* Offre Basic — utilisateurs GRATUITS seulement → page de paiement */}
         <AnimatePresence>

@@ -38,6 +38,7 @@ import { supabase } from "../lib/supabase";
 import WhatsAppPayButton from "../components/WhatsAppPayButton";
 
 const API = "/api/content?task=solve";
+const MAX_SOLVE_ALL = 12; // cap exercises solved at once (cost control on dense pages)
 
 export default function ScanSolve() {
   const navigate = useNavigate();
@@ -213,7 +214,8 @@ export default function ScanSolve() {
 
   const handlePickExercise = (index) => solveSet(extracted, [index], scanMode);
   const handleSolveAll = () => {
-    const all = (extracted?.exercises || []).map((_, i) => i);
+    // Bound cost on very dense pages: solve at most the first MAX_SOLVE_ALL.
+    const all = (extracted?.exercises || []).map((_, i) => i).slice(0, MAX_SOLVE_ALL);
     solveSet(extracted, all, scanMode);
   };
 
@@ -308,7 +310,11 @@ export default function ScanSolve() {
               </div>
               <div className="flex-1 text-left">
                 <div className="font-black text-base">Tout résoudre</div>
-                <div className="text-xs text-white/80">Résous les {extracted.exercises.length} exercices d'un coup</div>
+                <div className="text-xs text-white/80">
+                  {extracted.exercises.length > MAX_SOLVE_ALL
+                    ? `Résous les ${MAX_SOLVE_ALL} premiers d'un coup`
+                    : `Résous les ${extracted.exercises.length} exercices d'un coup`}
+                </div>
               </div>
             </motion.button>
             <div className="text-center text-[11px] text-slate-400 mt-3 mb-1">— ou choisis un seul exercice —</div>
