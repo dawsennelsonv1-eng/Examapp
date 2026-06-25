@@ -32,7 +32,7 @@ function splitIntoSentences(text) {
   return chunks.filter((c) => c.length > 0);
 }
 
-async function fetchChunkAudio(text, persona) {
+async function fetchChunkAudio(text, persona, attempt = 0) {
   try {
     const t0 = Date.now();
     const response = await fetch("/api/content?task=tts", {
@@ -40,14 +40,24 @@ async function fetchChunkAudio(text, persona) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, persona }),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      if (attempt < 1) { await new Promise((r) => setTimeout(r, 400)); return fetchChunkAudio(text, persona, attempt + 1); }
+      return null;
+    }
     const data = await response.json();
     lastModelUsed = data?.data?.modelUsed;
     console.log(`[TTS] chunk "${text.substring(0, 30)}..." fetched in ${Date.now() - t0}ms`);
     if (data?.data?.audioUrl) return { audioUrl: data.data.audioUrl };
-    if (data?.data?.useBrowserFallback) return { useBrowserFallback: true, text };
+    if (data?.data?.useBrowserFallback) {
+      // Server couldn't get a Gemini voice for this chunk. Retry once before
+      // accepting the low-quality browser voice — the failure is usually a
+      // transient rate-limit, and a second try keeps the voice consistent.
+      if (attempt < 1) { await new Promise((r) => setTimeout(r, 500)); return fetchChunkAudio(text, persona, attempt + 1); }
+      return { useBrowserFallback: true, text };
+    }
     return null;
   } catch {
+    if (attempt < 1) { await new Promise((r) => setTimeout(r, 400)); return fetchChunkAudio(text, persona, attempt + 1); }
     return null;
   }
 }
@@ -100,7 +110,7 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
       if (audioResult?.audioUrl) {
         await playAudioUrl(audioResult.audioUrl);
       } else if (audioResult?.useBrowserFallback) {
-        await browserSpeakChunk(audioResult.text, lang);
+        await browserSpeakChunk(audioResult.text, lang, persona);
       }
       onChunkEnd?.(i, chunks[i]);
     }
@@ -110,15 +120,47 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
   return { duration: 0, promise: playbackPromise, modelUsed: lastModelUsed, chunks };
 }
 
-function browserSpeakChunk(text, lang = "fr-FR") {
+// Tutor genders (must match the personas/voices defined server-side).
+const PERSONA_GENDER = {
+  joseph: "male", marckenson: "male", tikens: "male",
+  victoria: "female", camille: "female",
+};
+
+// Best-effort: from the available system voices, pick a French one whose gender
+// matches the tutor. Browser voice metadata is inconsistent across devices, so we
+// score by name hints and fall back gracefully. This stops a male tutor from
+// abruptly speaking in the default female Google voice when fallback kicks in.
+function pickFrenchVoice(wantGender) {
+  const voices = (typeof speechSynthesis !== "undefined" ? speechSynthesis.getVoices() : []) || [];
+  const fr = voices.filter((v) => (v.lang || "").toLowerCase().startsWith("fr"));
+  if (fr.length === 0) return null;
+
+  const FEMALE_HINTS = ["female", "femme", "amelie", "amélie", "audrey", "marie", "celine", "céline", "google français"];
+  const MALE_HINTS = ["male", "homme", "thomas", "nicolas", "daniel", "paul", "henri"];
+  const hints = wantGender === "female" ? FEMALE_HINTS : MALE_HINTS;
+  const anti = wantGender === "female" ? MALE_HINTS : FEMALE_HINTS;
+  const nameOf = (v) => (v.name || "").toLowerCase();
+
+  // 1) a French voice whose name matches the wanted gender
+  let pick = fr.find((v) => hints.some((h) => nameOf(v).includes(h)));
+  // 2) otherwise any French voice NOT obviously the opposite gender
+  if (!pick) pick = fr.find((v) => !anti.some((h) => nameOf(v).includes(h)));
+  // 3) otherwise just the first French voice
+  return pick || fr[0];
+}
+
+function browserSpeakChunk(text, lang = "fr-FR", persona = "joseph") {
   return new Promise((resolve) => {
     if (!("speechSynthesis" in window)) { resolve(); return; }
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = lang;
     utter.rate = 0.95;
-    const voices = speechSynthesis.getVoices();
-    const fr = voices.find((v) => v.lang.startsWith("fr"));
-    if (fr) utter.voice = fr;
+    const wantGender = PERSONA_GENDER[persona] || "male";
+    const voice = pickFrenchVoice(wantGender);
+    if (voice) utter.voice = voice;
+    // Nudge male voices a touch lower so a female fallback voice (if that's all the
+    // device has) is less jarring against a male tutor.
+    if (wantGender === "male") utter.pitch = 0.9;
     currentUtterance = utter;
     lastModelUsed = "browser-fallback";
     utter.onend = resolve;

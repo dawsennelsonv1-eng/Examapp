@@ -62,19 +62,26 @@ async function requireAdmin(req) {
 
 // =====================================================================
 // SERVER-SIDE USAGE CAPS (can't be bypassed by clearing localStorage)
-//   scan         : lifetime trial count (free = 5, then must pay)
+//   scan         : free = 5 lifetime trial; basic = 25/day; premium = unlimited
 //   call_minutes : per-calendar-month minutes (free 5 / basic 30 / premium 180)
 // Counts live in the `usage_counters` table; increments via bump_usage RPC.
 // =====================================================================
 const TIER_LIMITS = {
   free:    { scan: 5,  call_minutes: 5 },
-  basic:   { scan: -1, call_minutes: 30 },
+  basic:   { scan: 25, call_minutes: 30 },
   premium: { scan: -1, call_minutes: 180 },
   admin:   { scan: -1, call_minutes: -1 }, // staff = unlimited
 };
 
 function monthKey() { return new Date().toISOString().slice(0, 7); } // "2026-06"
-function periodFor(feature) { return feature === "scan" ? "all" : monthKey(); }
+function dayKey()   { return new Date().toISOString().slice(0, 10); } // "2026-06-25"
+// Scan period depends on tier: basic gets a fresh daily bucket (25/day), free is a
+// lifetime trial ("all"). Premium is unlimited so its period is never read.
+// All non-scan features (call_minutes) bucket per calendar month.
+function periodFor(feature, tier) {
+  if (feature !== "scan") return monthKey();
+  return tier === "basic" ? dayKey() : "all";
+}
 
 // Resolve the caller's identity + REAL tier (from profiles, not the client).
 async function resolveUserTier(req) {
@@ -82,9 +89,9 @@ async function resolveUserTier(req) {
   if (!admin) return { ok: false, status: 500, body: { error: "server_misconfig" } };
   const headerToken = (req.headers?.authorization || "").replace(/^Bearer\s+/i, "");
   const token = req.body?.accessToken || headerToken || null;
-  if (!token) return { ok: false, status: 401, body: { error: "not_signed_in", message: "Konekte pou kontinye." } };
+  if (!token) return { ok: false, status: 401, body: { error: "not_signed_in", message: "Connectez-vous pour continuer." } };
   const { data: ud, error } = await admin.auth.getUser(token);
-  if (error || !ud?.user) return { ok: false, status: 401, body: { error: "invalid_session", message: "Sesyon an fini. Konekte ankò." } };
+  if (error || !ud?.user) return { ok: false, status: 401, body: { error: "invalid_session", message: "Session expirée. Reconnectez-vous." } };
   const user = ud.user;
   let tier = "free";
   try {
@@ -95,18 +102,18 @@ async function resolveUserTier(req) {
   return { ok: true, user, tier, admin };
 }
 
-async function readUsage(admin, userId, feature) {
+async function readUsage(admin, userId, feature, tier) {
   try {
     const { data } = await admin.from("usage_counters")
-      .select("count").eq("user_id", userId).eq("feature", feature).eq("period", periodFor(feature)).single();
+      .select("count").eq("user_id", userId).eq("feature", feature).eq("period", periodFor(feature, tier)).single();
     return Number(data?.count || 0);
   } catch { return 0; }
 }
 
-async function bumpUsage(admin, userId, feature, amount) {
+async function bumpUsage(admin, userId, feature, tier, amount) {
   try {
     const { data, error } = await admin.rpc("bump_usage", {
-      p_user: userId, p_feature: feature, p_period: periodFor(feature), p_amount: amount,
+      p_user: userId, p_feature: feature, p_period: periodFor(feature, tier), p_amount: amount,
     });
     if (error) { console.warn("bump_usage:", error.message); return null; }
     return Number(data);
@@ -120,16 +127,19 @@ async function enforceLimit(req, feature) {
   if (!u.ok) return u;
   const limit = (TIER_LIMITS[u.tier] || TIER_LIMITS.free)[feature];
   if (limit === -1) return { ...u, used: 0, limit: -1 };
-  const used = await readUsage(u.admin, u.user.id, feature);
+  const used = await readUsage(u.admin, u.user.id, feature, u.tier);
   if (used >= limit) {
+    let message;
+    if (feature === "scan") {
+      message = u.tier === "basic"
+        ? `Vous avez atteint votre limite de ${limit} scans aujourd'hui. Revenez demain ou passez à Premium pour un accès illimité.`
+        : `Vous avez utilisé vos ${limit} scans gratuits. Passez à un forfait pour continuer à scanner.`;
+    } else {
+      message = "Vous avez utilisé vos minutes d'appel pour ce mois-ci.";
+    }
     return {
       ok: false, status: 402,
-      body: {
-        error: "limit_reached", feature, tier: u.tier, used, limit,
-        message: feature === "scan"
-          ? "Ou fin itilize 5 scan gratis ou yo. Pase Premium pou scan san limit."
-          : "Ou fin itilize minit apèl ou yo pou mwa a.",
-      },
+      body: { error: "limit_reached", feature, tier: u.tier, used, limit, message },
     };
   }
   return { ...u, used, limit };
@@ -1320,7 +1330,7 @@ async function handleVerifyPayment(req, res) {
 
   if (!sms) {
     await admin.from("transactions").insert({ ...baseTx, status: "pending", note: "no matching SMS yet" });
-    return res.status(200).json({ data: { status: "pending", message: "Nou poko jwenn peman an. Tann kèk minit epi eseye ankò." } });
+    return res.status(200).json({ data: { status: "pending", message: "Nous n'avons pas encore trouvé le paiement. Patientez quelques minutes et réessayez." } });
   }
   if (sms.consumed) {
     await admin.from("transactions").insert({ ...baseTx, status: "duplicate", matched_sms_id: sms.id, note: "id already used" });
@@ -1380,7 +1390,7 @@ async function handleVerifyPayment(req, res) {
     });
   }
 
-  return res.status(200).json({ data: { status: "verified", planTier, message: "Peman konfime! Ou gen aksè kounye a. 🎉" } });
+  return res.status(200).json({ data: { status: "verified", planTier, message: "Paiement confirmé ! Vous avez maintenant accès. 🎉" } });
 }
 
 async function extractPaymentId(imageData) {
@@ -1459,7 +1469,7 @@ async function handleCallCheck(req, res) {
   if (limit === -1) {
     return res.status(200).json({ data: { allowed: true, remainingMinutes: -1, limitMinutes: -1, tier: u.tier } });
   }
-  const used = await readUsage(u.admin, u.user.id, "call_minutes");
+  const used = await readUsage(u.admin, u.user.id, "call_minutes", u.tier);
   const remaining = Math.max(0, limit - used);
   return res.status(200).json({
     data: { allowed: remaining > 0, remainingMinutes: remaining, limitMinutes: limit, usedMinutes: used, tier: u.tier },
@@ -1474,7 +1484,7 @@ async function handleCallConsume(req, res) {
   if (limit === -1 || minutes <= 0) {
     return res.status(200).json({ data: { ok: true, consumed: 0, unlimited: limit === -1 } });
   }
-  const newCount = await bumpUsage(u.admin, u.user.id, "call_minutes", minutes);
+  const newCount = await bumpUsage(u.admin, u.user.id, "call_minutes", u.tier, minutes);
   const remaining = newCount == null ? null : Math.max(0, limit - newCount);
   return res.status(200).json({ data: { ok: true, consumed: minutes, remainingMinutes: remaining } });
 }
@@ -1514,8 +1524,8 @@ async function handleUsageStatus(req, res) {
   if (!u.ok) return res.status(u.status).json(u.body);
   const lim = TIER_LIMITS[u.tier] || TIER_LIMITS.free;
   const [scanUsed, callUsed] = await Promise.all([
-    lim.scan === -1 ? 0 : readUsage(u.admin, u.user.id, "scan"),
-    lim.call_minutes === -1 ? 0 : readUsage(u.admin, u.user.id, "call_minutes"),
+    lim.scan === -1 ? 0 : readUsage(u.admin, u.user.id, "scan", u.tier),
+    lim.call_minutes === -1 ? 0 : readUsage(u.admin, u.user.id, "call_minutes", u.tier),
   ]);
   return res.status(200).json({
     data: {
@@ -1573,7 +1583,7 @@ async function handleSolve(req, res) {
         if (!extracted) {
           return res.status(422).json({
             error: "ocr_failed",
-            message: "L'image n'est pas assez claire. Mete plis limyè epi pwoche kamera a.",
+            message: "L'image n'est pas assez claire. Ajoutez de la lumière et rapprochez la caméra.",
           });
         }
       } else {
@@ -1602,7 +1612,7 @@ async function handleSolve(req, res) {
 
       // Count this scan (one per extract). Free tier is capped; paid/admin are
       // unlimited so we skip the write for them.
-      if (gate.limit !== -1) await bumpUsage(gate.admin, gate.user.id, "scan", 1);
+      if (gate.limit !== -1) await bumpUsage(gate.admin, gate.user.id, "scan", gate.tier, 1);
 
       // If caller used the EXTRACT phase explicitly, return now.
       if (phase === "extract") {
@@ -1994,7 +2004,14 @@ async function handleTTS(req, res) {
     const ELEVEN_KEY = process.env.ELEVENLABS_API_KEY;
 
     if (GEMINI_KEY) {
-      const result = await geminiStreamTTS(cleanText, voice.gemini, GEMINI_KEY);
+      // Retry transient Gemini failures (rate-limits on the preview model) before
+      // surrendering to the low-quality browser voice. This is the main cause of
+      // the voice "suddenly" turning into the Android default mid-answer.
+      let result = null;
+      for (let attempt = 0; attempt < 3 && !result; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 350 * attempt));
+        result = await geminiStreamTTS(cleanText, voice.gemini, GEMINI_KEY);
+      }
       if (result) {
         return res.status(200).json({
           data: {
