@@ -56,6 +56,7 @@ export default function AdminExams() {
   const [qPubSubjects, setQPubSubjects] = useState([]); // subjects with a published course
   const [qChapters, setQChapters] = useState([]);        // chapters from the published tree
   const [qChLoading, setQChLoading] = useState(false);
+  const [qPremium, setQPremium] = useState(false); // mark the generated quiz block as paid
 
   // Subjects that actually have a PUBLISHED course for the chosen class.
   useEffect(() => {
@@ -124,6 +125,7 @@ export default function AdminExams() {
             chapterId: qChapterId,
             points,
             count: batchN,
+            premium: qPremium,
           });
         if (!r.ok) {
           const e = await r.json().catch(() => ({}));
@@ -145,6 +147,7 @@ export default function AdminExams() {
   // ----- Course tree builder (AI-authored, OCR-grounded) -----
   const [ccTrack, setCcTrack] = useState("NS4");
   const [ccSubjectId, setCcSubjectId] = useState("");
+  const [ccPremium, setCcPremium] = useState(false); // mark this subject's course as paid
   const [ccBusy, setCcBusy] = useState(false);
   const [ccStage, setCcStage] = useState("");
   const [ccTree, setCcTree] = useState(null);
@@ -257,7 +260,7 @@ export default function AdminExams() {
       setCcStage(exams.length ? "Construction du cours (examens + programme)…" : "Construction du cours (programme MENFP)…");
       const r = await postAdmin("build_course", {
           track: ccTrack, subjectId: ccSubjectId,
-          subjectName: ccSubject?.name || ccSubjectId, examText,
+          subjectName: ccSubject?.name || ccSubjectId, examText, premium: ccPremium,
         });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
@@ -279,13 +282,27 @@ export default function AdminExams() {
   const publishCourse = async () => {
     setCcMsg(null); setCcBusy(true);
     try {
-      const r = await postAdmin("course_publish", { track: ccTrack, subjectId: ccSubjectId });
+      const r = await postAdmin("course_publish", { track: ccTrack, subjectId: ccSubjectId, premium: ccPremium });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
       setCcMsg({ t: "ok", m: "Cours publié ✓ — visible par les élèves." });
       loadCourseList();
     } catch (err) {
       setCcMsg({ t: "err", m: err?.message || "Échec de la publication." });
+    } finally { setCcBusy(false); }
+  };
+
+  // Flip a published course between paid and free without rebuilding.
+  const toggleCoursePremium = async (subjectId, current) => {
+    setCcBusy(true); setCcMsg(null);
+    try {
+      const r = await postAdmin("course_publish", { track: ccTrack, subjectId, premium: !current });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || j.error || `HTTP ${r.status}`);
+      setCcMsg({ t: "ok", m: !current ? "Cours marqué Payant." : "Cours marqué Gratuit." });
+      loadCourseList();
+    } catch (err) {
+      setCcMsg({ t: "err", m: err?.message || "Échec." });
     } finally { setCcBusy(false); }
   };
 
@@ -555,6 +572,11 @@ export default function AdminExams() {
 
           {qMsg && <p className={`text-xs ${qMsg.t === "ok" ? "text-emerald-500" : "text-red-500"}`}>{qMsg.m}</p>}
 
+          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer">
+            <input type="checkbox" checked={qPremium} onChange={(e) => setQPremium(e.target.checked)} />
+            Quiz Premium (payant) — sinon gratuit
+          </label>
+
           <motion.button whileTap={{ scale: 0.97 }} onClick={generateQuizzes} disabled={qBusy || !qChapterId}
             className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
             {qBusy ? <><Loader2 size={16} className="animate-spin" /> Génération... {qProgress}%</> : <><Sparkles size={16} /> Générer le bloc de quiz</>}
@@ -651,6 +673,11 @@ export default function AdminExams() {
 
           {ccMsg && <p className={`text-xs ${ccMsg.t === "ok" ? "text-emerald-500" : "text-red-500"}`}>{ccMsg.m}</p>}
 
+          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer">
+            <input type="checkbox" checked={ccPremium} onChange={(e) => setCcPremium(e.target.checked)} />
+            Cours Premium (payant) — sinon gratuit
+          </label>
+
           <motion.button whileTap={{ scale: 0.97 }} onClick={buildCourse} disabled={ccBusy || !ccSubjectId}
             className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-700 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
             {ccBusy ? <><Loader2 size={16} className="animate-spin" /> Construction…</> : <><BookOpen size={16} /> Construire le cours</>}
@@ -682,6 +709,9 @@ export default function AdminExams() {
                           <span className="text-slate-400">— Aucun cours</span>
                         )}
                         <span>· {exCount} examen{exCount > 1 ? "s" : ""}</span>
+                        {c && (c.premium
+                          ? <span className="text-violet-500 font-bold">· Payant</span>
+                          : <span className="text-slate-400">· Gratuit</span>)}
                       </div>
                     </div>
                   </div>
@@ -700,6 +730,12 @@ export default function AdminExams() {
                       <button onClick={() => togglePublish(s.id, status)} disabled={ccBusy}
                         className={`text-[11px] px-2.5 py-1 rounded-lg font-bold disabled:opacity-50 ${status === "published" ? "bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300" : "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"}`}>
                         {status === "published" ? "Dépublier" : "Publier"}
+                      </button>
+                    )}
+                    {c && status === "published" && (
+                      <button onClick={() => toggleCoursePremium(s.id, !!c.premium)} disabled={ccBusy}
+                        className={`text-[11px] px-2.5 py-1 rounded-lg font-bold disabled:opacity-50 ${c.premium ? "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200" : "bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300"}`}>
+                        {c.premium ? "Rendre gratuit" : "Rendre payant"}
                       </button>
                     )}
                   </div>

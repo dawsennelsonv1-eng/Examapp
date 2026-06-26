@@ -406,7 +406,7 @@ async function handleBuildCourse(req, res, KEY) {
   try {
     const _a = await requireAdmin(req);
     if (!_a.ok) return res.status(_a.status).json({ error: _a.error });
-    const { track = "NS4", subjectId, subjectName, examText = "", store = true } = req.body || {};
+    const { track = "NS4", subjectId, subjectName, examText = "", premium = false, store = true } = req.body || {};
     if (!subjectId) return res.status(400).json({ error: "missing_subject" });
 
     const examBlock = examText
@@ -447,7 +447,7 @@ Réponds UNIQUEMENT en JSON valide :
           version = (existing?.[0]?.version || 0) + 1;
           const { error } = await admin.from("course_tree").upsert({
             subject: subjectId, track, subject_name: subjectName || subjectId,
-            tree, status: "draft", version, updated_at: new Date().toISOString(),
+            tree, status: "draft", version, premium: Boolean(premium), updated_at: new Date().toISOString(),
           }, { onConflict: "subject,track" });
           saved = !error;
           if (error) console.warn("course_tree save error:", error.message);
@@ -468,12 +468,14 @@ async function handleCoursePublish(req, res) {
   try {
     const _a = await requireAdmin(req);
     if (!_a.ok) return res.status(_a.status).json({ error: _a.error });
-    const { track = "NS4", subjectId } = req.body || {};
+    const { track = "NS4", subjectId, premium } = req.body || {};
     if (!subjectId) return res.status(400).json({ error: "missing_subject" });
     const admin = getSupabaseAdmin();
     if (!admin) return res.status(500).json({ error: "server_misconfig" });
+    const patch = { status: "published", updated_at: new Date().toISOString() };
+    if (typeof premium === "boolean") patch.premium = premium;
     const { error } = await admin.from("course_tree")
-      .update({ status: "published", updated_at: new Date().toISOString() })
+      .update(patch)
       .eq("subject", subjectId).eq("track", track);
     if (error) return res.status(502).json({ error: "publish_failed", message: error.message });
     return res.status(200).json({ data: { ok: true } });
@@ -510,7 +512,7 @@ async function handleCourseGet(req, res) {
     const admin = getSupabaseAdmin();
     if (!admin) return res.status(500).json({ error: "server_misconfig" });
     const { data, error } = await admin.from("course_tree")
-      .select("subject, subject_name, track, tree, status, version, updated_at")
+      .select("subject, subject_name, track, tree, status, version, premium, updated_at")
       .eq("subject", subjectId).eq("track", track).single();
     if (error) return res.status(200).json({ data: null });
     const tree = data?.tree || { chapters: [] };
@@ -986,7 +988,7 @@ async function handleCourseList(req, res) {
     if (!admin) return res.status(500).json({ error: "server_misconfig" });
 
     const { data: courses } = await admin.from("course_tree")
-      .select("subject, subject_name, status, version, updated_at").eq("track", track);
+      .select("subject, subject_name, status, version, premium, updated_at").eq("track", track);
 
     const { data: exams } = await admin.from("exams")
       .select("subject").eq("track", track);
@@ -1024,6 +1026,7 @@ async function handleGenQuiz(req, res, KEY) {
     points = [],           // list of the chapter's lesson points (titles/summaries)
     count = 10,
     sourceExamId = null,
+    premium = false,
     store = true,
   } = req.body || {};
 
@@ -1087,7 +1090,7 @@ Réponds UNIQUEMENT en JSON valide:
           track, subject, topic: topic || null, chapter_id: chapterId,
           question: q.question, options: q.options, answer: q.answer,
           explanation: q.explanation, difficulty: q.difficulty,
-          source_exam_id: sourceExamId, batch,
+          source_exam_id: sourceExamId, batch, premium: Boolean(premium),
         }));
         const { error } = await admin.from("quizzes").insert(rows);
         if (!error) stored = rows.length;
