@@ -8,7 +8,9 @@ let lastModelUsed = null;
 let cancelToken = { cancelled: false };
 
 function splitIntoSentences(text) {
-  // Split aggressively at sentence boundaries. Keep chunks 60-180 chars for fastest TTS.
+  // Combine sentences into ~320-char chunks. Fewer, larger chunks = fewer TTS
+  // calls = far less chance of hitting the preview model's rate limit (which is
+  // what was dropping chunks to the browser voice).
   const sentences = text
     .replace(/\s+/g, " ")
     .match(/[^.!?…]+[.!?…]+|\S[^.!?…]*$/g) || [text];
@@ -17,11 +19,7 @@ function splitIntoSentences(text) {
   let buf = "";
   for (const s of sentences) {
     const candidate = (buf + " " + s).trim();
-    if (candidate.length > 180 && buf) {
-      chunks.push(buf.trim());
-      buf = s;
-    } else if (buf.length > 60 && s.length > 30) {
-      // commit the buffer and start new one to keep chunks small for speed
+    if (candidate.length > 320 && buf) {
       chunks.push(buf.trim());
       buf = s;
     } else {
@@ -41,7 +39,7 @@ async function fetchChunkAudio(text, persona, attempt = 0) {
       body: JSON.stringify({ text, persona }),
     });
     if (!response.ok) {
-      if (attempt < 1) { await new Promise((r) => setTimeout(r, 400)); return fetchChunkAudio(text, persona, attempt + 1); }
+      if (attempt < 2) { await new Promise((r) => setTimeout(r, 500 * (attempt + 1))); return fetchChunkAudio(text, persona, attempt + 1); }
       return null;
     }
     const data = await response.json();
@@ -49,15 +47,14 @@ async function fetchChunkAudio(text, persona, attempt = 0) {
     console.log(`[TTS] chunk "${text.substring(0, 30)}..." fetched in ${Date.now() - t0}ms`);
     if (data?.data?.audioUrl) return { audioUrl: data.data.audioUrl };
     if (data?.data?.useBrowserFallback) {
-      // Server couldn't get a Gemini voice for this chunk. Retry once before
-      // accepting the low-quality browser voice — the failure is usually a
-      // transient rate-limit, and a second try keeps the voice consistent.
-      if (attempt < 1) { await new Promise((r) => setTimeout(r, 500)); return fetchChunkAudio(text, persona, attempt + 1); }
+      // Gemini failed for this chunk (usually a transient rate-limit). Back off and
+      // retry a couple of times before accepting the low-quality browser voice.
+      if (attempt < 2) { await new Promise((r) => setTimeout(r, 700 * (attempt + 1))); return fetchChunkAudio(text, persona, attempt + 1); }
       return { useBrowserFallback: true, text };
     }
     return null;
   } catch {
-    if (attempt < 1) { await new Promise((r) => setTimeout(r, 400)); return fetchChunkAudio(text, persona, attempt + 1); }
+    if (attempt < 2) { await new Promise((r) => setTimeout(r, 500 * (attempt + 1))); return fetchChunkAudio(text, persona, attempt + 1); }
     return null;
   }
 }
@@ -94,14 +91,17 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
   const chunks = splitIntoSentences(text);
   if (chunks.length === 0) return { duration: 0, modelUsed: null, chunks: [] };
 
-  // CRITICAL: start fetching ALL chunks in parallel (the first plays immediately,
-  // the rest are pre-fetched so playback is gapless).
-  const pendingFetches = chunks.map((c) => fetchChunkAudio(c, persona));
-
+  // Fetch with a LOOKAHEAD OF 1 — never more than ~2 TTS calls in flight at once.
+  // (Previously every chunk was fetched in parallel, which bursted the preview
+  // model's rate limit and dropped sentences to the browser voice mid-answer.)
+  // Playback stays gapless because chunk i+1 fetches while chunk i is playing.
   const playbackPromise = (async () => {
+    let nextFetch = fetchChunkAudio(chunks[0], persona);
     for (let i = 0; i < chunks.length; i++) {
       if (myToken.cancelled) break;
-      const audioResult = await pendingFetches[i];
+      const audioResult = await nextFetch;
+      // kick off the next chunk's fetch while the current one plays
+      if (i + 1 < chunks.length) nextFetch = fetchChunkAudio(chunks[i + 1], persona);
       if (myToken.cancelled) break;
       onModelUsed?.(lastModelUsed);
       // Fire RIGHT BEFORE this chunk is heard, so the UI can reveal the matching
