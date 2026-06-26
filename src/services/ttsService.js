@@ -46,12 +46,9 @@ async function fetchChunkAudio(text, persona, attempt = 0) {
     lastModelUsed = data?.data?.modelUsed;
     console.log(`[TTS] chunk "${text.substring(0, 30)}..." fetched in ${Date.now() - t0}ms`);
     if (data?.data?.audioUrl) return { audioUrl: data.data.audioUrl };
-    if (data?.data?.useBrowserFallback) {
-      // Gemini failed for this chunk (usually a transient rate-limit). Back off and
-      // retry a couple of times before accepting the low-quality browser voice.
-      if (attempt < 2) { await new Promise((r) => setTimeout(r, 700 * (attempt + 1))); return fetchChunkAudio(text, persona, attempt + 1); }
-      return { useBrowserFallback: true, text };
-    }
+    // Gemini-only: no browser fallback. Any non-audio response is treated as a miss
+    // (retry a couple of times, then return null → silent for this chunk).
+    if (attempt < 2) { await new Promise((r) => setTimeout(r, 700 * (attempt + 1))); return fetchChunkAudio(text, persona, attempt + 1); }
     return null;
   } catch {
     if (attempt < 2) { await new Promise((r) => setTimeout(r, 500 * (attempt + 1))); return fetchChunkAudio(text, persona, attempt + 1); }
@@ -107,10 +104,11 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
       // Fire RIGHT BEFORE this chunk is heard, so the UI can reveal the matching
       // text at the same moment the audio for it starts (text↔speech sync).
       onChunkStart?.(i, chunks[i]);
+      // GEMINI ONLY: play the Gemini audio if we got it, otherwise stay silent for
+      // this chunk. We never fall back to the browser voice — a wrong/Android voice
+      // mid-answer is worse than a moment of silence (the text is still shown).
       if (audioResult?.audioUrl) {
         await playAudioUrl(audioResult.audioUrl);
-      } else if (audioResult?.useBrowserFallback) {
-        await browserSpeakChunk(audioResult.text, lang, persona);
       }
       onChunkEnd?.(i, chunks[i]);
     }

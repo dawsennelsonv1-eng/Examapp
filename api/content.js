@@ -2038,6 +2038,10 @@ const PERSONA_VOICES = {
   camille:    { gemini: "Leda",     eleven: "EXAVITQu4vr4xnSDxMaL" },
 };
 
+// Gemini TTS model name. Google renames preview models often — when that happens,
+// just set GEMINI_TTS_MODEL in Vercel env to the new name (no code change needed).
+const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL || "gemini-3.1-flash-tts-preview";
+
 async function handleTTS(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -2052,51 +2056,37 @@ async function handleTTS(req, res) {
     const voice = PERSONA_VOICES[persona] || PERSONA_VOICES.joseph;
 
     const GEMINI_KEY = process.env.GEMINI_API_KEY;
-    const ELEVEN_KEY = process.env.ELEVENLABS_API_KEY;
-
-    if (GEMINI_KEY) {
-      // Retry transient Gemini failures (rate-limits on the preview model) before
-      // surrendering to the low-quality browser voice. This is the main cause of
-      // the voice "suddenly" turning into the Android default mid-answer.
-      let result = null;
-      for (let attempt = 0; attempt < 3 && !result; attempt++) {
-        if (attempt > 0) await new Promise((r) => setTimeout(r, 350 * attempt));
-        result = await geminiStreamTTS(cleanText, voice.gemini, GEMINI_KEY);
-      }
-      if (result) {
-        return res.status(200).json({
-          data: {
-            audioUrl: `data:audio/wav;base64,${result.wavBase64}`,
-            backend: "gemini",
-            modelUsed: "gemini-3.1-flash-tts-preview",
-            elapsedMs: Date.now() - startTime,
-          },
-        });
-      }
+    if (!GEMINI_KEY) {
+      console.error("/api/tts: GEMINI_API_KEY is missing");
+      return res.status(503).json({ error: "no_gemini_key" });
     }
 
-    if (ELEVEN_KEY) {
-      const audio = await elevenLabsTTS(cleanText, voice.eleven, ELEVEN_KEY);
-      if (audio) {
-        return res.status(200).json({
-          data: {
-            audioUrl: `data:audio/mpeg;base64,${audio}`,
-            backend: "elevenlabs",
-            modelUsed: "elevenlabs-multilingual-v2",
-            elapsedMs: Date.now() - startTime,
-          },
-        });
-      }
+    // GEMINI ONLY. No ElevenLabs, no browser voice. If Gemini can't produce audio
+    // after retries, we return an error and the tutor stays SILENT for that chunk
+    // (the text still appears). This guarantees the only voice a student can ever
+    // hear is the Gemini persona voice — never the Android/Google default.
+    let result = null;
+    for (let attempt = 0; attempt < 3 && !result; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 400 * attempt));
+      result = await geminiStreamTTS(cleanText, voice.gemini, GEMINI_KEY);
     }
 
-    return res.status(200).json({
-      data: { useBrowserFallback: true, text: cleanText, modelUsed: "browser-fallback" },
-    });
+    if (result?.wavBase64) {
+      return res.status(200).json({
+        data: {
+          audioUrl: `data:audio/wav;base64,${result.wavBase64}`,
+          backend: "gemini",
+          modelUsed: GEMINI_TTS_MODEL,
+          elapsedMs: Date.now() - startTime,
+        },
+      });
+    }
+
+    console.error(`/api/tts: Gemini produced no audio after retries (model=${GEMINI_TTS_MODEL})`);
+    return res.status(502).json({ error: "gemini_tts_failed", model: GEMINI_TTS_MODEL });
   } catch (err) {
     console.error("/api/tts fatal:", err);
-    return res.status(200).json({
-      data: { useBrowserFallback: true, text: req.body?.text || "", modelUsed: "browser-fallback" },
-    });
+    return res.status(502).json({ error: "gemini_tts_exception" });
   }
 }
 
@@ -2104,7 +2094,7 @@ async function geminiStreamTTS(text, voiceName, apiKey) {
   try {
     // streamGenerateContent gives us PCM bytes as they're synthesized (~500ms TTFB)
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:streamGenerateContent?alt=sse&key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:streamGenerateContent?alt=sse&key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2172,7 +2162,7 @@ async function geminiStreamTTS(text, voiceName, apiKey) {
 async function geminiNonStreamTTS(text, voiceName, apiKey) {
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
