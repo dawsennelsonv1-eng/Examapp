@@ -166,6 +166,32 @@ export default function Paywall() {
     }
   };
 
+  // Premium users get no pitch at all — just a confirmation.
+  if (currentPlan === "premium") {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col">
+        <header className="sticky top-0 z-10 bg-slate-950/90 backdrop-blur-md px-4 py-3 flex items-center gap-2 border-b border-white/10">
+          <button onClick={() => navigate("/")} className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
+            <ArrowLeft size={18} />
+          </button>
+          <div className="font-bold">Premium</div>
+        </header>
+        <div className="flex-1 flex flex-col items-center justify-center px-6 text-center max-w-md mx-auto">
+          <div className="w-16 h-16 rounded-2xl bg-amber-500/20 flex items-center justify-center mb-4">
+            <Crown size={30} className="text-amber-300" />
+          </div>
+          <h1 className="text-2xl font-black mb-2">Tu es déjà Premium 🎉</h1>
+          <p className="text-sm text-white/60 leading-relaxed mb-6">
+            Tu as accès à tout jusqu'aux examens : scans, anciens examens, quiz, leçons et le prof IA en illimité. Bonne révision !
+          </p>
+          <button onClick={() => navigate("/")} className="px-6 py-3 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-700 text-white font-bold">
+            Retour à l'accueil
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-white pb-12">
       <header className="sticky top-0 z-10 bg-slate-950/90 backdrop-blur-md px-4 py-3 flex items-center gap-2 border-b border-white/10">

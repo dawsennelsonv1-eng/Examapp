@@ -67,10 +67,10 @@ async function requireAdmin(req) {
 // Counts live in the `usage_counters` table; increments via bump_usage RPC.
 // =====================================================================
 const TIER_LIMITS = {
-  free:    { scan: 5,  call_minutes: 5 },
-  basic:   { scan: 25, call_minutes: 30 },
-  premium: { scan: 80, call_minutes: 180 },
-  admin:   { scan: -1, call_minutes: -1 }, // staff = unlimited
+  free:    { scan: 5,  call_minutes: 5,   tutor: 20 },
+  basic:   { scan: 25, call_minutes: 30,  tutor: -1 },
+  premium: { scan: 80, call_minutes: 180, tutor: -1 },
+  admin:   { scan: -1, call_minutes: -1,  tutor: -1 }, // staff = unlimited
 };
 
 function monthKey() { return new Date().toISOString().slice(0, 7); } // "2026-06"
@@ -79,8 +79,9 @@ function dayKey()   { return new Date().toISOString().slice(0, 10); } // "2026-0
 // lifetime trial ("all"). Premium is unlimited so its period is never read.
 // All non-scan features (call_minutes) bucket per calendar month.
 function periodFor(feature, tier) {
-  if (feature !== "scan") return monthKey();
-  return tier === "free" ? "all" : dayKey();   // free = lifetime trial; basic/premium = per-day
+  if (feature === "scan") return tier === "free" ? "all" : dayKey(); // free = lifetime trial; basic/premium = per-day
+  if (feature === "tutor") return dayKey();                          // tutor messages: per-day
+  return monthKey();                                                 // call_minutes: per-month
 }
 
 // Resolve the caller's identity + REAL tier (from profiles, not the client).
@@ -1211,6 +1212,28 @@ RÈGLES:
 
 // ============== BRAIN (task router) ==============
 async function handleBrain(req, res, KEY, brainTask) {
+  // Free-tier daily cap on tutor chat messages (cost control). Non-blocking by
+  // design: if we can't identify the user (no token), we skip the gate so chat
+  // keeps working — the cap only bites authenticated free users.
+  if (brainTask === "chat") {
+    try {
+      const u = await resolveUserTier(req);
+      if (u.ok && u.tier === "free") {
+        const limit = TIER_LIMITS.free.tutor ?? -1;
+        if (limit !== -1) {
+          const used = await readUsage(u.admin, u.user.id, "tutor", u.tier);
+          if (used >= limit) {
+            return res.status(402).json({
+              error: "limit_reached", feature: "tutor", tier: "free", used, limit,
+              message: `Tu as atteint ta limite de ${limit} messages au prof pour aujourd'hui. Passe à un forfait pour discuter sans limite.`,
+            });
+          }
+          await bumpUsage(u.admin, u.user.id, "tutor", u.tier, 1);
+        }
+      }
+    } catch { /* never block chat on a gating error */ }
+  }
+
   const { prompt, messages, jsonMode = true, temperature = 0.4, maxTokens = 2000, imageData = null } = req.body || {};
   const candidates = TASK_MODELS[brainTask];
   if (!candidates) return res.status(400).json({ error: `Unknown brain task: ${brainTask}` });

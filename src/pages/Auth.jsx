@@ -7,6 +7,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mail, Lock, User, ArrowRight, Loader2, Sparkles, GraduationCap, CheckCircle2 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import GroupCard from "../components/GroupCard";
 
 export default function Auth() {
   const { signUp, signIn, signInWithMagicLink, signInWithGoogle } = useAuth();
@@ -160,6 +161,11 @@ export default function Auth() {
             </p>
           </div>
         )}
+
+        {/* WhatsApp community — joinable right from sign-up (hidden until admin sets links) */}
+        <div className="mt-5">
+          <GroupCard />
+        </div>
       </motion.div>
     </div>
   );
