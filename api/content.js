@@ -62,15 +62,16 @@ async function requireAdmin(req) {
 
 // =====================================================================
 // SERVER-SIDE USAGE CAPS (can't be bypassed by clearing localStorage)
-//   scan         : free = 5 lifetime trial; basic = 25/day; premium = 80/day
-//   call_minutes : per-calendar-month minutes (free 5 / basic 30 / premium 180)
+//   scan         : free = 5 lifetime trial; basic = 35 / premium = 100 (per plan, ~per month)
+//   call_minutes : voice-call minutes per plan (free 3 / basic 10 / premium 30) — kept in every tier (wow factor)
+//   tutor        : free = 20 text msgs/day; basic & premium = unlimited text
 // Counts live in the `usage_counters` table; increments via bump_usage RPC.
 // =====================================================================
 const TIER_LIMITS = {
-  free:    { scan: 5,  call_minutes: 5,   tutor: 20 },
-  basic:   { scan: 25, call_minutes: 30,  tutor: -1 },
-  premium: { scan: 80, call_minutes: 180, tutor: -1 },
-  admin:   { scan: -1, call_minutes: -1,  tutor: -1 }, // staff = unlimited
+  free:    { scan: 5,   call_minutes: 3,  tutor: 20 },
+  basic:   { scan: 35,  call_minutes: 10, tutor: -1 },
+  premium: { scan: 100, call_minutes: 30, tutor: -1 },
+  admin:   { scan: -1,  call_minutes: -1, tutor: -1 }, // staff = unlimited
 };
 
 function monthKey() { return new Date().toISOString().slice(0, 7); } // "2026-06"
@@ -79,9 +80,9 @@ function dayKey()   { return new Date().toISOString().slice(0, 10); } // "2026-0
 // lifetime trial ("all"). Premium is unlimited so its period is never read.
 // All non-scan features (call_minutes) bucket per calendar month.
 function periodFor(feature, tier) {
-  if (feature === "scan") return tier === "free" ? "all" : dayKey(); // free = lifetime trial; basic/premium = per-day
-  if (feature === "tutor") return dayKey();                          // tutor messages: per-day
-  return monthKey();                                                 // call_minutes: per-month
+  if (feature === "scan") return tier === "free" ? "all" : monthKey(); // free = lifetime trial; paid = per-plan (monthly bucket)
+  if (feature === "tutor") return dayKey();                            // tutor text: per-day (free only; paid unlimited)
+  return monthKey();                                                   // call_minutes: per-plan (monthly bucket)
 }
 
 // Resolve the caller's identity + REAL tier (from profiles, not the client).
@@ -134,9 +135,9 @@ async function enforceLimit(req, feature) {
     if (feature === "scan") {
       message = u.tier === "free"
         ? `Vous avez utilisé vos ${limit} scans gratuits. Passez à un forfait pour continuer à scanner.`
-        : `Vous avez atteint votre limite de ${limit} scans pour aujourd'hui. Réessayez demain.`;
+        : `Vous avez atteint la limite de ${limit} scans de votre forfait.`;
     } else {
-      message = "Vous avez utilisé vos minutes d'appel pour ce mois-ci.";
+      message = "Vous avez utilisé vos minutes d'appel pour ce forfait.";
     }
     return {
       ok: false, status: 402,

@@ -45,8 +45,8 @@ export const PROF_PRIVE_HTG = 7500;  // private tutor, per month
 export const SEMINAIRE_HTG  = 1000;  // a one-off exam-prep seminar
 
 export const PLAN_PRICES = {
-  basic: 750,
-  premium: 1200,
+  basic: 450,
+  premium: 900,
 };
 
 export const PLAN_PRICES_HTG = PLAN_PRICES; // alias
@@ -54,8 +54,8 @@ export const PLAN_PRICES_HTG = PLAN_PRICES; // alias
 // "Regular" anchor prices shown struck-through to signal the discount value.
 // Real price (PLAN_PRICES) is what they actually pay during the promo window.
 export const PLAN_ANCHOR_PRICES = {
-  basic: 900,   // 900 -> 750  = save 150
-  premium: 1450, // 1450 -> 1200 = save 250
+  basic: 750,   // 750 -> 450  = save 300
+  premium: 1200, // 1200 -> 900 = save 300
 };
 
 // The discount is valid for this many days after the student first opens the app.
@@ -82,46 +82,45 @@ export const PLAN_FEATURES = {
     price: 0,
     tagline: "Pour essayer",
     included: [
-      "5 scans gratis",
-      "5 messages au prof par jour",
-      "Quiz hebdomadaire (1)",
-      "Anciens examens (avant 2019)",
+      "5 scans pour essayer",
+      "20 messages au prof / jour",
+      "2 min d'appel avec le prof",
+      "Quiz et cours gratuits",
+      "Anciens examens",
     ],
     excluded: [
-      "Appels avec le prof IA",
-      "Scan illimité",
-      "Examens des 5 dernières années",
-      "Vérification de réponses",
+      "Plus de scans",
+      "Appels plus longs",
+      "Tout le contenu premium",
     ],
   },
   basic: {
     label: "Basic",
-    price: 750,
+    price: 450,
     tagline: "Pour réviser sérieusement",
     included: [
-      "20 scans par jour",
+      "35 scans",
       "Messages au prof illimités",
-      "Voix du prof illimitée",
-      "Tous les quiz hebdomadaires",
-      "Cours complets",
-      "5 vérifications de réponses / jour",
+      "10 min d'appel avec le prof",
+      "Quiz et cours débloqués",
+      "Anciens examens",
     ],
     excluded: [
-      "Appels avec le prof IA",
-      "Examens des 5 dernières années",
+      "Appels plus longs",
+      "Contenu premium exclusif",
     ],
   },
   premium: {
     label: "Premium",
-    price: 1200,
-    tagline: "Tout, sans limite",
+    price: 900,
+    tagline: "Tout, au maximum",
     highlight: true,
     included: [
-      "Tout le Basic, sans limite",
-      "📞 Appels avec le prof IA (exclusif)",
-      "Scan illimité",
-      "Examens des 5 dernières années",
-      "Vérifications illimitées",
+      "100 scans",
+      "Messages au prof illimités",
+      "📞 30 min d'appel avec le prof",
+      "Tout le contenu débloqué",
+      "Tous les anciens examens",
       "Support prioritaire WhatsApp",
     ],
     excluded: [],
@@ -131,40 +130,40 @@ export const PLAN_FEATURES = {
 // ===== USAGE LIMITS =====
 export const USAGE_CAPS = {
   free: {
-    scans_per_day: 2,
-    chat_messages_per_day: 5,
-    tts_per_day: 3,
-    voice_call_minutes_per_day: 0,
-    camera_scans_per_day: 0,
+    scans_per_day: 5,
+    chat_messages_per_day: 20,
+    tts_per_day: -1,
+    voice_call_minutes_per_day: 3,
+    camera_scans_per_day: 5,
     verification_scans_per_day: 0,
     past_exams_unlocked_before_year: 2019,
     weekly_quizzes_per_week: 1,
     // legacy field name compatibility
-    dailyScans: 2,
-    dailyChats: 5,
+    dailyScans: 5,
+    dailyChats: 20,
   },
   basic: {
-    scans_per_day: 20,
+    scans_per_day: 35,
     chat_messages_per_day: -1,
     tts_per_day: -1,
-    voice_call_minutes_per_day: 0,
-    camera_scans_per_day: 20,
-    verification_scans_per_day: 5,
-    past_exams_unlocked_before_year: 2022,
-    weekly_quizzes_per_week: -1,
-    dailyScans: 20,
-    dailyChats: -1,
-  },
-  premium: {
-    scans_per_day: -1,
-    chat_messages_per_day: -1,
-    tts_per_day: -1,
-    voice_call_minutes_per_day: -1,
-    camera_scans_per_day: -1,
+    voice_call_minutes_per_day: 10,
+    camera_scans_per_day: 35,
     verification_scans_per_day: -1,
     past_exams_unlocked_before_year: 9999,
     weekly_quizzes_per_week: -1,
-    dailyScans: -1,
+    dailyScans: 35,
+    dailyChats: -1,
+  },
+  premium: {
+    scans_per_day: 100,
+    chat_messages_per_day: -1,
+    tts_per_day: -1,
+    voice_call_minutes_per_day: 30,
+    camera_scans_per_day: 100,
+    verification_scans_per_day: -1,
+    past_exams_unlocked_before_year: 9999,
+    weekly_quizzes_per_week: -1,
+    dailyScans: 100,
     dailyChats: -1,
   },
 };
