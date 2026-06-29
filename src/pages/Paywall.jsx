@@ -202,28 +202,8 @@ export default function Paywall() {
         <div className="font-bold">Passer à Premium</div>
       </header>
 
-      <div className="px-4 pt-5 space-y-6 max-w-md mx-auto">
-        {/* URGENCY — real countdown to the national exam (honest deadline) */}
-        {examDaysLeft != null && examDaysLeft > 0 && (
-          <div className="rounded-2xl px-4 py-3 bg-gradient-to-r from-rose-600/20 to-amber-600/20 ring-1 ring-rose-500/30 flex items-center gap-3">
-            <div className="text-3xl font-black tabular-nums text-rose-300 leading-none">{examDaysLeft}</div>
-            <div className="text-[12px] text-rose-50 leading-snug">
-              <span className="font-black">jour{examDaysLeft > 1 ? "s" : ""}</span> avant l'examen {examInfo.label} ({examInfo.range}).
-              <br /><span className="text-rose-200/80">Chaque jour de révision compte. Ne perds pas de temps.</span>
-            </div>
-          </div>
-        )}
-
-        {/* WHY PAY vs free ChatGPT — the format that earns the marks (honest moat) */}
-        <div className="rounded-2xl px-4 py-3 bg-violet-500/10 ring-1 ring-violet-500/25">
-          <div className="text-[13px] text-white/90 leading-snug">
-            <span className="font-black text-violet-200">ChatGPT ba ou yon repons.</span> Laureat AI
-            montre w <span className="font-black">kijan pou w jwenn li nan fòma egzat MENFP la</span> —
-            pou w pa pèdi pwen yo. Li konnen 9AF ak NS4, an Kreyòl ak Fransè.
-          </div>
-        </div>
-
-        {/* Plan picker */}
+      <div className="px-4 pt-5 space-y-5 max-w-md mx-auto">
+        {/* 1) PLANS — what you get + price. Tap a card to switch (right here at the top). */}
         <div className="grid grid-cols-2 gap-3">
           {Object.values(PLANS).map((p) => {
             const Icon = p.icon;
@@ -236,7 +216,7 @@ export default function Paywall() {
                 <div className="mt-2 font-black">{p.name}</div>
                 <div className="text-sm text-white/80 mt-0.5">
                   <span className="font-black">{pr.price} HTG</span>
-                  <span className="text-[11px] text-white/40"> {"jusqu'aux examens"}</span>
+                  <span className="text-[11px] text-white/40"> /mois</span>
                 </div>
                 {pr.active && pr.savings > 0 && (
                   <div className="mt-1 flex items-center gap-1.5">
@@ -249,28 +229,61 @@ export default function Paywall() {
           })}
         </div>
 
-        {/* Discount urgency banner */}
-        {pricing.active && countdown && (
-          <div className="rounded-2xl px-4 py-3 bg-emerald-500/10 ring-1 ring-emerald-500/30 flex items-center gap-2.5">
-            <Clock size={16} className="text-emerald-300 shrink-0" />
-            <div className="text-[12px] text-emerald-100">
-              <span className="font-black">Offre spéciale</span> — économisez <span className="font-black">{pricing.savings} HTG</span>. Se termine dans <span className="font-black tabular-nums">{countdown}</span>.
+        {/* What the selected plan includes */}
+        <ul className="space-y-1.5">
+          {plan.features.map((f, i) => (
+            <li key={i} className="flex items-center gap-2 text-sm text-white/70"><Check size={14} className="text-emerald-400" />{f}</li>
+          ))}
+        </ul>
+
+        {upgradeCredit > 0 && (
+          <div className="rounded-2xl px-4 py-3 bg-violet-500/10 ring-1 ring-violet-500/30 flex items-center gap-2.5">
+            <Crown size={16} className="text-violet-300 shrink-0" />
+            <div className="text-[12px] text-violet-50">
+              <span className="font-black">Mise à niveau</span> — tu as déjà payé Basic, donc <span className="font-black">−{upgradeCredit} HTG</span> sur le Premium.
             </div>
           </div>
         )}
 
-        {/* VALUE STACK — Laureat AI vs prof privé vs séminaire */}
+        {/* 2) PAY — and "pay for me" — right away, above the fold */}
+        <div className="space-y-2">
+          <WhatsAppPayButton planId={planId} livePrice={livePrice[planId]} extraDiscount={totalDiscount} />
+          <AskToPay price={Math.max(plan.price - totalDiscount, 0)} />
+          <div className="flex items-start gap-2 rounded-xl bg-emerald-500/10 ring-1 ring-emerald-500/20 px-3 py-2.5">
+            <ShieldCheck size={16} className="text-emerald-300 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-emerald-50 leading-snug">
+              <span className="font-bold">Sans risque.</span> Tu paies seulement parce que ça t'aide — pas de carte bancaire, aucun engagement.
+            </p>
+          </div>
+        </div>
+
+        {/* 3) Urgency + why-vs-ChatGPT — only for users who haven't paid */}
+        {currentPlan !== "basic" && currentPlan !== "premium" && examDaysLeft != null && examDaysLeft > 0 && (
+          <div className="rounded-2xl px-4 py-3 bg-gradient-to-r from-rose-600/20 to-amber-600/20 ring-1 ring-rose-500/30 flex items-center gap-3">
+            <div className="text-3xl font-black tabular-nums text-rose-300 leading-none">{examDaysLeft}</div>
+            <div className="text-[12px] text-rose-50 leading-snug">
+              <span className="font-black">jour{examDaysLeft > 1 ? "s" : ""}</span> avant l'examen {examInfo.label} ({examInfo.range}). Chaque jour compte.
+            </div>
+          </div>
+        )}
+
+        {currentPlan !== "basic" && currentPlan !== "premium" && (
+          <div className="rounded-2xl px-4 py-3 bg-violet-500/10 ring-1 ring-violet-500/25">
+            <div className="text-[13px] text-white/90 leading-snug">
+              <span className="font-black text-violet-200">ChatGPT ba ou yon repons.</span> Laureat AI montre w <span className="font-black">kijan jwenn li nan fòma egzat MENFP la</span> — pou w pa pèdi pwen yo.
+            </div>
+          </div>
+        )}
+
+        {/* Comparison — the detail, below the decision */}
         <div className="rounded-2xl p-4 bg-white/5 ring-1 ring-white/10">
           <h3 className="text-[11px] uppercase tracking-widest font-black text-white/50 mb-3">Compare par toi-même</h3>
-
-          {/* header */}
           <div className="flex items-end mb-1">
             <span className="flex-1" />
             <span className="w-11 text-center text-[9px] font-black text-white/45 leading-tight">Prof<br/>privé</span>
             <span className="w-11 text-center text-[9px] font-black text-white/45 leading-tight">Sémi-<br/>naire</span>
             <span className="w-12 text-center text-[9px] font-black text-violet-300 leading-tight">Laureat<br/>AI</span>
           </div>
-
           {[
             { label: "Disponible 24h/24 (même à 2h du matin)", prof: false, sem: false },
             { label: "Sans te déplacer — sur ton téléphone", prof: false, sem: false },
@@ -286,66 +299,13 @@ export default function Paywall() {
               <span className="w-12 flex justify-center"><Check size={16} className="text-emerald-400" strokeWidth={3} /></span>
             </div>
           ))}
-
-          {/* price row */}
           <div className="flex items-center py-2 border-t border-white/10 mt-0.5">
             <span className="flex-1 text-[11px] font-bold text-white/55 pr-2">Prix</span>
             <span className="w-11 text-center text-[10px] font-bold text-white/55 leading-tight">{PROF_PRIVE_HTG.toLocaleString("fr-FR")}<br/>/mois</span>
             <span className="w-11 text-center text-[10px] font-bold text-white/55 leading-tight">{SEMINAIRE_HTG.toLocaleString("fr-FR")}</span>
-            <span className="w-12 text-center text-[10px] font-black text-emerald-300 leading-tight">{Math.max(plan.price - totalDiscount, 0)}<br/>1 fois</span>
-          </div>
-
-          <p className="text-[11px] text-white/45 mt-2 leading-relaxed">
-            Un prof privé coûte ~{PROF_PRIVE_HTG.toLocaleString("fr-FR")} HTG/mois et n'est pas là à 2h du matin. Laureat AI : tout ça, dans ta poche, jusqu'aux examens — pour {Math.max(plan.price - totalDiscount, 0)} HTG une seule fois.
-          </p>
-        </div>
-
-        {/* Upgrade credit — Basic subscriber pays only the difference */}
-        {upgradeCredit > 0 && (
-          <div className="rounded-2xl px-4 py-3 bg-violet-500/10 ring-1 ring-violet-500/30 flex items-center gap-2.5">
-            <Crown size={16} className="text-violet-300 shrink-0" />
-            <div className="text-[12px] text-violet-50">
-              <span className="font-black">Mise à niveau</span> — tu as déjà payé Basic, donc <span className="font-black">−{upgradeCredit} HTG</span> sur le Premium.
-            </div>
-          </div>
-        )}
-
-        {/* PRIMARY: pay on WhatsApp */}
-        <div className="space-y-2">
-          <WhatsAppPayButton planId={planId} livePrice={livePrice[planId]} extraDiscount={totalDiscount} />
-          <p className="text-center text-[11px] text-white/45 px-2">
-            Cliquez, envoyez le message, et nous activons votre compte après le paiement. Le plus simple.
-          </p>
-
-          {/* Wallet bridge — for the student who's convinced but has no money on hand */}
-          <AskToPay price={Math.max(plan.price - totalDiscount, 0)} className="mt-1" />
-          <p className="text-center text-[11px] text-white/45 px-2">
-            Pa gen kòb? Mande yon paran oswa fanmi nan dyaspora — n ap voye mesaj la pou ou.
-          </p>
-
-          {/* Parent-aimed line — the screen the student shows their parent should speak to the parent */}
-          <div className="flex items-start gap-2 rounded-xl bg-white/5 ring-1 ring-white/10 px-3 py-2.5">
-            <Users size={16} className="text-white/50 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-white/60 leading-snug">
-              <span className="font-bold text-white/80">Pour un parent :</span> moins cher qu'un répétiteur,
-              disponible 24h/24, et votre enfant a tout ce qu'il faut pour réussir l'examen.
-            </p>
-          </div>
-
-          {/* GUARANTEE / risk reversal */}
-          <div className="flex items-start gap-2 rounded-xl bg-emerald-500/10 ring-1 ring-emerald-500/20 px-3 py-2.5">
-            <ShieldCheck size={16} className="text-emerald-300 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-emerald-50 leading-snug">
-              <span className="font-bold">Sans risque.</span> Tu as déjà essayé gratuitement — tu paies seulement parce que ça t'aide. Pas de carte bancaire, aucun engagement.
-            </p>
+            <span className="w-12 text-center text-[10px] font-black text-emerald-300 leading-tight">{Math.max(plan.price - totalDiscount, 0)}<br/>/mois</span>
           </div>
         </div>
-
-        <ul className="space-y-1.5">
-          {plan.features.map((f, i) => (
-            <li key={i} className="flex items-center gap-2 text-sm text-white/70"><Check size={14} className="text-emerald-400" />{f}</li>
-          ))}
-        </ul>
 
         {/* Other payment methods (collapsed by default) */}
         <button onClick={() => setShowOther((v) => !v)}
@@ -462,6 +422,17 @@ export default function Paywall() {
         )}
         </div>
         )}
+
+        {/* How payment works — explained at the bottom */}
+        <div className="rounded-2xl p-4 bg-white/5 ring-1 ring-white/10 space-y-2">
+          <div className="text-[11px] uppercase tracking-widest font-black text-white/50">Comment ça marche</div>
+          <ol className="space-y-1.5 text-[12px] text-white/70 leading-snug list-decimal list-inside">
+            <li>Tu envoies le message pré-écrit sur WhatsApp.</li>
+            <li>On te demande ton nom et si tu paies par MonCash ou NatCash.</li>
+            <li>On t'envoie le numéro — tu fais le transfert.</li>
+            <li>Après paiement, on retrouve ton compte par ton nom (celui de ton profil) et on active ton plan.</li>
+          </ol>
+        </div>
 
         <p className="text-center text-[11px] text-white/35 flex items-center justify-center gap-1.5">
           <ShieldCheck size={12} /> Paiement vérifié automatiquement. Chaque ID ne sert qu'une fois.

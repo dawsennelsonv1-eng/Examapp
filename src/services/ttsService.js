@@ -8,9 +8,7 @@ let lastModelUsed = null;
 let cancelToken = { cancelled: false };
 
 function splitIntoSentences(text) {
-  // Combine sentences into ~320-char chunks. Fewer, larger chunks = fewer TTS
-  // calls = far less chance of hitting the preview model's rate limit (which is
-  // what was dropping chunks to the browser voice).
+  // Split aggressively at sentence boundaries. Keep chunks 60-180 chars for fastest TTS.
   const sentences = text
     .replace(/\s+/g, " ")
     .match(/[^.!?…]+[.!?…]+|\S[^.!?…]*$/g) || [text];
@@ -19,7 +17,11 @@ function splitIntoSentences(text) {
   let buf = "";
   for (const s of sentences) {
     const candidate = (buf + " " + s).trim();
-    if (candidate.length > 320 && buf) {
+    if (candidate.length > 180 && buf) {
+      chunks.push(buf.trim());
+      buf = s;
+    } else if (buf.length > 60 && s.length > 30) {
+      // commit the buffer and start new one to keep chunks small for speed
       chunks.push(buf.trim());
       buf = s;
     } else {
@@ -30,7 +32,10 @@ function splitIntoSentences(text) {
   return chunks.filter((c) => c.length > 0);
 }
 
-async function fetchChunkAudio(text, persona, attempt = 0) {
+async function fetchChunkAudio(text, persona) {
+  // On ANY failure (server error, depleted Gemini credits, no audio, network),
+  // fall back to the browser voice instead of going silent. The whole point is
+  // that the student always hears something.
   try {
     const t0 = Date.now();
     const response = await fetch("/api/content?task=tts", {
@@ -38,21 +43,15 @@ async function fetchChunkAudio(text, persona, attempt = 0) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, persona }),
     });
-    if (!response.ok) {
-      if (attempt < 2) { await new Promise((r) => setTimeout(r, 500 * (attempt + 1))); return fetchChunkAudio(text, persona, attempt + 1); }
-      return null;
-    }
+    if (!response.ok) return { useBrowserFallback: true, text };
     const data = await response.json();
     lastModelUsed = data?.data?.modelUsed;
     console.log(`[TTS] chunk "${text.substring(0, 30)}..." fetched in ${Date.now() - t0}ms`);
     if (data?.data?.audioUrl) return { audioUrl: data.data.audioUrl };
-    // Gemini-only: no browser fallback. Any non-audio response is treated as a miss
-    // (retry a couple of times, then return null → silent for this chunk).
-    if (attempt < 2) { await new Promise((r) => setTimeout(r, 700 * (attempt + 1))); return fetchChunkAudio(text, persona, attempt + 1); }
-    return null;
+    // No Gemini audio for any reason → speak it with the browser voice.
+    return { useBrowserFallback: true, text };
   } catch {
-    if (attempt < 2) { await new Promise((r) => setTimeout(r, 500 * (attempt + 1))); return fetchChunkAudio(text, persona, attempt + 1); }
-    return null;
+    return { useBrowserFallback: true, text };
   }
 }
 
@@ -88,27 +87,23 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
   const chunks = splitIntoSentences(text);
   if (chunks.length === 0) return { duration: 0, modelUsed: null, chunks: [] };
 
-  // Fetch with a LOOKAHEAD OF 1 — never more than ~2 TTS calls in flight at once.
-  // (Previously every chunk was fetched in parallel, which bursted the preview
-  // model's rate limit and dropped sentences to the browser voice mid-answer.)
-  // Playback stays gapless because chunk i+1 fetches while chunk i is playing.
+  // CRITICAL: start fetching ALL chunks in parallel (the first plays immediately,
+  // the rest are pre-fetched so playback is gapless).
+  const pendingFetches = chunks.map((c) => fetchChunkAudio(c, persona));
+
   const playbackPromise = (async () => {
-    let nextFetch = fetchChunkAudio(chunks[0], persona);
     for (let i = 0; i < chunks.length; i++) {
       if (myToken.cancelled) break;
-      const audioResult = await nextFetch;
-      // kick off the next chunk's fetch while the current one plays
-      if (i + 1 < chunks.length) nextFetch = fetchChunkAudio(chunks[i + 1], persona);
+      const audioResult = await pendingFetches[i];
       if (myToken.cancelled) break;
       onModelUsed?.(lastModelUsed);
       // Fire RIGHT BEFORE this chunk is heard, so the UI can reveal the matching
       // text at the same moment the audio for it starts (text↔speech sync).
       onChunkStart?.(i, chunks[i]);
-      // GEMINI ONLY: play the Gemini audio if we got it, otherwise stay silent for
-      // this chunk. We never fall back to the browser voice — a wrong/Android voice
-      // mid-answer is worse than a moment of silence (the text is still shown).
       if (audioResult?.audioUrl) {
         await playAudioUrl(audioResult.audioUrl);
+      } else if (audioResult?.useBrowserFallback) {
+        await browserSpeakChunk(audioResult.text, lang);
       }
       onChunkEnd?.(i, chunks[i]);
     }
@@ -118,47 +113,15 @@ export async function speakText(text, lang = "fr-FR", options = {}) {
   return { duration: 0, promise: playbackPromise, modelUsed: lastModelUsed, chunks };
 }
 
-// Tutor genders (must match the personas/voices defined server-side).
-const PERSONA_GENDER = {
-  joseph: "male", marckenson: "male", tikens: "male",
-  victoria: "female", camille: "female",
-};
-
-// Best-effort: from the available system voices, pick a French one whose gender
-// matches the tutor. Browser voice metadata is inconsistent across devices, so we
-// score by name hints and fall back gracefully. This stops a male tutor from
-// abruptly speaking in the default female Google voice when fallback kicks in.
-function pickFrenchVoice(wantGender) {
-  const voices = (typeof speechSynthesis !== "undefined" ? speechSynthesis.getVoices() : []) || [];
-  const fr = voices.filter((v) => (v.lang || "").toLowerCase().startsWith("fr"));
-  if (fr.length === 0) return null;
-
-  const FEMALE_HINTS = ["female", "femme", "amelie", "amélie", "audrey", "marie", "celine", "céline", "google français"];
-  const MALE_HINTS = ["male", "homme", "thomas", "nicolas", "daniel", "paul", "henri"];
-  const hints = wantGender === "female" ? FEMALE_HINTS : MALE_HINTS;
-  const anti = wantGender === "female" ? MALE_HINTS : FEMALE_HINTS;
-  const nameOf = (v) => (v.name || "").toLowerCase();
-
-  // 1) a French voice whose name matches the wanted gender
-  let pick = fr.find((v) => hints.some((h) => nameOf(v).includes(h)));
-  // 2) otherwise any French voice NOT obviously the opposite gender
-  if (!pick) pick = fr.find((v) => !anti.some((h) => nameOf(v).includes(h)));
-  // 3) otherwise just the first French voice
-  return pick || fr[0];
-}
-
-function browserSpeakChunk(text, lang = "fr-FR", persona = "joseph") {
+function browserSpeakChunk(text, lang = "fr-FR") {
   return new Promise((resolve) => {
     if (!("speechSynthesis" in window)) { resolve(); return; }
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = lang;
     utter.rate = 0.95;
-    const wantGender = PERSONA_GENDER[persona] || "male";
-    const voice = pickFrenchVoice(wantGender);
-    if (voice) utter.voice = voice;
-    // Nudge male voices a touch lower so a female fallback voice (if that's all the
-    // device has) is less jarring against a male tutor.
-    if (wantGender === "male") utter.pitch = 0.9;
+    const voices = speechSynthesis.getVoices();
+    const fr = voices.find((v) => v.lang.startsWith("fr"));
+    if (fr) utter.voice = fr;
     currentUtterance = utter;
     lastModelUsed = "browser-fallback";
     utter.onend = resolve;
