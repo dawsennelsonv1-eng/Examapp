@@ -21,6 +21,7 @@ import { getPlanPricing, promoEndsAt, formatCountdown } from "../utils/promo";
 import ScanHistoryCard from "../components/home/ScanHistoryCard";
 import ProgressCard from "../components/ProgressCard";
 import GroupCard from "../components/GroupCard";
+import AskToPay from "../components/AskToPay";
 import TutorAvatar from "../components/shared/TutorAvatar";
 import { useState, useEffect } from "react";
 
@@ -214,6 +215,12 @@ export default function Home() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {planTier === "free" && showPromo && (
+          <div className="px-1 -mt-3">
+            <AskToPay price={450} variant="link" />
+          </div>
+        )}
 
         {/* Mise à niveau — pour les abonnés BASIC seulement → Premium au prix de la différence */}
         <AnimatePresence>

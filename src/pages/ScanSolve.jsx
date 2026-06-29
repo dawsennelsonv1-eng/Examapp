@@ -36,6 +36,7 @@ import { exportSolutionsToPDF } from "../services/pdfService";
 import { logEvent } from "../services/analytics";
 import { supabase } from "../lib/supabase";
 import WhatsAppPayButton from "../components/WhatsAppPayButton";
+import AskToPay from "../components/AskToPay";
 
 const API = "/api/content?task=solve";
 const MAX_SOLVE_ALL = 12; // cap exercises solved at once (cost control on dense pages)
@@ -276,10 +277,18 @@ export default function ScanSolve() {
           <div className="space-y-2">
             <WhatsAppPayButton planId="premium" />
             <WhatsAppPayButton planId="basic" />
+
+            {/* Wallet bridge — catch the convinced-but-broke student right here */}
+            <AskToPay price={450} className="mt-1" />
+
             <button onClick={() => navigate("/paywall")}
               className="block w-full text-center text-[12px] text-white/45 underline py-2">
               Voir tous les forfaits
             </button>
+            {/* Urgency at the moment of desire */}
+            <p className="text-center text-[12px] text-rose-300/90 font-semibold">
+              L'examen approche — ne perds pas de temps à rester bloqué.
+            </p>
           </div>
         </div>
       </div>

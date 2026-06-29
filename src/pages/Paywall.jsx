@@ -16,7 +16,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Copy, Check, Upload, Hash, Loader2, ShieldCheck,
-  Crown, Zap, X, ChevronDown, Clock,
+  Crown, Zap, X, ChevronDown, Clock, Users,
 } from "lucide-react";
 import { useApp } from "../contexts/AppContext";
 import { useAuth } from "../contexts/AuthContext";
@@ -26,6 +26,7 @@ import { PLAN_PRICES, PLAN_FEATURES, EXAM_DATES, PROF_PRIVE_HTG, SEMINAIRE_HTG }
 import { useEffectiveTrack } from "../hooks/useAdminAccess";
 import { useAppConfig } from "../hooks/useAppConfig";
 import WhatsAppPayButton from "../components/WhatsAppPayButton";
+import AskToPay from "../components/AskToPay";
 import { getPlanPricing, promoEndsAt, formatCountdown, daysUntil } from "../utils/promo";
 
 // Prices and features come from constants.js (single source of truth) so they
@@ -213,6 +214,15 @@ export default function Paywall() {
           </div>
         )}
 
+        {/* WHY PAY vs free ChatGPT — the format that earns the marks (honest moat) */}
+        <div className="rounded-2xl px-4 py-3 bg-violet-500/10 ring-1 ring-violet-500/25">
+          <div className="text-[13px] text-white/90 leading-snug">
+            <span className="font-black text-violet-200">ChatGPT ba ou yon repons.</span> Laureat AI
+            montre w <span className="font-black">kijan pou w jwenn li nan fòma egzat MENFP la</span> —
+            pou w pa pèdi pwen yo. Li konnen 9AF ak NS4, an Kreyòl ak Fransè.
+          </div>
+        </div>
+
         {/* Plan picker */}
         <div className="grid grid-cols-2 gap-3">
           {Object.values(PLANS).map((p) => {
@@ -306,6 +316,22 @@ export default function Paywall() {
           <p className="text-center text-[11px] text-white/45 px-2">
             Cliquez, envoyez le message, et nous activons votre compte après le paiement. Le plus simple.
           </p>
+
+          {/* Wallet bridge — for the student who's convinced but has no money on hand */}
+          <AskToPay price={Math.max(plan.price - totalDiscount, 0)} className="mt-1" />
+          <p className="text-center text-[11px] text-white/45 px-2">
+            Pa gen kòb? Mande yon paran oswa fanmi nan dyaspora — n ap voye mesaj la pou ou.
+          </p>
+
+          {/* Parent-aimed line — the screen the student shows their parent should speak to the parent */}
+          <div className="flex items-start gap-2 rounded-xl bg-white/5 ring-1 ring-white/10 px-3 py-2.5">
+            <Users size={16} className="text-white/50 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-white/60 leading-snug">
+              <span className="font-bold text-white/80">Pour un parent :</span> moins cher qu'un répétiteur,
+              disponible 24h/24, et votre enfant a tout ce qu'il faut pour réussir l'examen.
+            </p>
+          </div>
+
           {/* GUARANTEE / risk reversal */}
           <div className="flex items-start gap-2 rounded-xl bg-emerald-500/10 ring-1 ring-emerald-500/20 px-3 py-2.5">
             <ShieldCheck size={16} className="text-emerald-300 shrink-0 mt-0.5" />

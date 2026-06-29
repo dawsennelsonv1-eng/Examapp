@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Mail, Lock, User, ArrowRight, Loader2, Sparkles, GraduationCap, CheckCircle2 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import GroupCard from "../components/GroupCard";
+import WhatsAppHelp from "../components/WhatsAppHelp";
 
 export default function Auth() {
   const { signUp, signIn, signInWithMagicLink, signInWithGoogle } = useAuth();
@@ -64,6 +65,11 @@ export default function Auth() {
         <div className="absolute -top-32 -left-24 w-96 h-96 rounded-full bg-violet-600/30 blur-3xl" />
         <div className="absolute top-40 -right-24 w-96 h-96 rounded-full bg-indigo-600/20 blur-3xl" />
         <div className="absolute bottom-0 left-1/3 w-80 h-80 rounded-full bg-fuchsia-600/15 blur-3xl" />
+      </div>
+
+      {/* Help — always reachable, right at the top */}
+      <div className="absolute top-4 right-4 z-20">
+        <WhatsAppHelp variant="inline" label="Contactez-nous" className="text-[12px] px-3 py-2" />
       </div>
 
       {/* Hero */}
