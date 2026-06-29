@@ -1,65 +1,108 @@
-// src/hooks/useAppConfig.js — v24
-// Loads the single app_config row so prices, exam dates, feature flags, and usage
-// caps can be changed live from the admin panel without a redeploy. Falls back to
-// trackConfig.js / constants defaults when Supabase isn't configured or the row
-// isn't loaded yet, so the app always has sane values.
+// src/hooks/useAppConfig.js
+// Single-row, client-side app settings: exam dates, prices, WhatsApp group links,
+// banner, and feature flags.
+//
+// WHY THIS WAS REWRITTEN:
+// The old version saved each setting to its own table column. PostgREST silently
+// DROPS any key that has no matching column, so fields without a dedicated column
+// (group_9af, group_ns4, banner) vanished on reload while prices/dates survived.
+//
+// THE FIX: store the whole config object in ONE jsonb column named `data`. Now any
+// field — present or future — persists. Existing values stored in old typed columns
+// are still read and preserved (merged under the blob), so nothing is lost.
+//
+// ONE-TIME SQL (run before deploying this):
+//   alter table public.app_config
+//     add column if not exists data jsonb not null default '{}'::jsonb;
 
-import { useEffect, useState, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "../lib/supabase";
-import { TRACK_CONFIG } from "../utils/trackConfig";
 
+// Sane defaults so the app always has values, even before anything is saved.
 const DEFAULTS = {
-  exam_9af_start: TRACK_CONFIG["9AF"].examStart,
-  exam_9af_range: TRACK_CONFIG["9AF"].examRange,
-  exam_ns4_start: TRACK_CONFIG.NS4.examStart,
-  exam_ns4_range: TRACK_CONFIG.NS4.examRange,
-  price_basic: 750,
-  price_premium: 1200,
-  caps: null,
-  flags: { payments_on: true, calls_on: true, new_signups: true },
+  exam_9af_start: null,
+  exam_9af_range: "",
+  exam_ns4_start: null,
+  exam_ns4_range: "",
+  price_basic: 450,
+  price_premium: 900,
+  group_9af: "",
+  group_ns4: "",
+  banner: null,
+  flags: {},
 };
 
-let _cache = null; // module cache so all consumers share one fetch
+function dropNulls(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v !== null && v !== undefined) out[k] = v;
+  }
+  return out;
+}
 
 export function useAppConfig() {
-  const [config, setConfig] = useState(_cache || DEFAULTS);
-  const [loading, setLoading] = useState(!_cache);
+  const [config, setConfig] = useState(DEFAULTS);
+  const [loading, setLoading] = useState(true);
+  const rowIdRef = useRef(null); // actual PK value of the single config row
 
   const load = useCallback(async () => {
-    if (!supabase) { setConfig(DEFAULTS); setLoading(false); return; }
     try {
-      const { data } = await supabase.from("app_config").select("*").eq("id", 1).single();
-      if (data) {
-        const merged = {
-          ...DEFAULTS,
-          ...data,
-          exam_9af_start: data.exam_9af_start ? new Date(data.exam_9af_start) : DEFAULTS.exam_9af_start,
-          exam_ns4_start: data.exam_ns4_start ? new Date(data.exam_ns4_start) : DEFAULTS.exam_ns4_start,
-          flags: { ...DEFAULTS.flags, ...(data.flags || {}) },
-        };
-        _cache = merged;
-        setConfig(merged);
+      const { data: row, error } = await supabase
+        .from("app_config")
+        .select("*")
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+
+      if (row) {
+        rowIdRef.current = row.id ?? null;
+        // eslint-disable-next-line no-unused-vars
+        const { id: _id, data: blob, ...legacyCols } = row;
+        // Merge order (later wins): defaults < legacy typed columns < json blob.
+        // This preserves anything already saved in old columns, while the blob is
+        // the source of truth going forward.
+        setConfig({ ...DEFAULTS, ...dropNulls(legacyCols), ...(blob || {}) });
+      } else {
+        setConfig(DEFAULTS);
       }
-    } catch {
+    } catch (e) {
+      console.error("useAppConfig load failed:", e?.message || e);
       setConfig(DEFAULTS);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { if (!_cache) load(); }, [load]);
+  useEffect(() => { load(); }, [load]);
 
+  // Merge a patch into the current config and persist the WHOLE thing into `data`.
   const save = useCallback(async (patch) => {
-    const next = { ...config, ...patch, flags: { ...config.flags, ...(patch.flags || {}) } };
-    setConfig(next);
-    _cache = next;
-    if (!supabase) return { error: { message: "Supabase non configuré." } };
-    const { error } = await supabase.from("app_config").update({
-      ...patch,
-      updated_at: new Date().toISOString(),
-    }).eq("id", 1);
-    return { error };
+    const next = { ...config, ...(patch || {}) };
+    try {
+      let error;
+      if (rowIdRef.current != null) {
+        ({ error } = await supabase
+          .from("app_config")
+          .update({ data: next })
+          .eq("id", rowIdRef.current));
+      } else {
+        const { data: inserted, error: insErr } = await supabase
+          .from("app_config")
+          .insert({ data: next })
+          .select("id")
+          .maybeSingle();
+        error = insErr;
+        if (inserted) rowIdRef.current = inserted.id ?? null;
+      }
+      if (!error) setConfig(next); // reflect immediately in the UI
+      return { error };
+    } catch (error) {
+      console.error("useAppConfig save failed:", error?.message || error);
+      return { error };
+    }
   }, [config]);
 
-  return { config, loading, reload: load, save };
+  return { config, loading, save, reload: load };
 }
+
+export default useAppConfig;
