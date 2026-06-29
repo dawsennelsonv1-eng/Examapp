@@ -1216,30 +1216,38 @@ RÈGLES:
 
 // ============== BRAIN (task router) ==============
 async function handleBrain(req, res, KEY, brainTask) {
-  // Free-tier daily cap on tutor chat messages (cost control). Non-blocking by
-  // design: if we can't identify the user (no token), we skip the gate so chat
-  // keeps working — the cap only bites authenticated free users.
+  // For the classroom tutor (chat) we resolve the user's tier once: it drives both
+  // the free-tier message cap AND which models they get (Premium = strongest models
+  // for the best explanations). Non-blocking: if we can't identify the user, chat
+  // still works on the standard models.
+  let tier = null;
   if (brainTask === "chat") {
     try {
       const u = await resolveUserTier(req);
-      if (u.ok && u.tier === "free") {
-        const limit = TIER_LIMITS.free.tutor ?? -1;
-        if (limit !== -1) {
-          const used = await readUsage(u.admin, u.user.id, "tutor", u.tier);
-          if (used >= limit) {
-            return res.status(402).json({
-              error: "limit_reached", feature: "tutor", tier: "free", used, limit,
-              message: `Tu as atteint ta limite de ${limit} messages au prof pour aujourd'hui. Passe à un forfait pour discuter sans limite.`,
-            });
+      if (u.ok) {
+        tier = u.tier;
+        if (u.tier === "free") {
+          const limit = TIER_LIMITS.free.tutor ?? -1;
+          if (limit !== -1) {
+            const used = await readUsage(u.admin, u.user.id, "tutor", u.tier);
+            if (used >= limit) {
+              return res.status(402).json({
+                error: "limit_reached", feature: "tutor", tier: "free", used, limit,
+                message: `Tu as atteint ta limite de ${limit} messages au prof pour aujourd'hui. Passe à un forfait pour discuter sans limite.`,
+              });
+            }
+            await bumpUsage(u.admin, u.user.id, "tutor", u.tier, 1);
           }
-          await bumpUsage(u.admin, u.user.id, "tutor", u.tier, 1);
         }
       }
     } catch { /* never block chat on a gating error */ }
   }
 
   const { prompt, messages, jsonMode = true, temperature = 0.4, maxTokens = 2000, imageData = null } = req.body || {};
-  const candidates = TASK_MODELS[brainTask];
+  // Premium students get the strongest models for the best in-class explanations.
+  const candidates = (brainTask === "chat" && tier === "premium")
+    ? PREMIUM_CHAT_MODELS
+    : TASK_MODELS[brainTask];
   if (!candidates) return res.status(400).json({ error: `Unknown brain task: ${brainTask}` });
 
   let userContent;
@@ -1489,6 +1497,24 @@ const SIMPLE_SOLVE_MODELS = [
   "google/gemini-3-flash-preview",
 ];
 
+// PREMIUM models — the strongest tier, used only for paying Premium users so they
+// get the best possible explanations (hard problems in scan + the classroom tutor).
+// Gemini 3.1 Pro leads: best for step-by-step exam explanations and multilingual
+// (FR/Kreyòl) reasoning. GPT-5.5 backs it up on hard math; 3.5-flash is the safe
+// fallback. NOTE: if your OpenRouter doesn't expose "google/gemini-3.1-pro", the
+// chain simply falls through to gpt-5.5 (still top-tier) — set the exact slug here
+// if you want to pin it.
+const PREMIUM_SOLVE_MODELS = [
+  "google/gemini-3.1-pro",
+  "openai/gpt-5.5",
+  "google/gemini-3.5-flash",
+];
+const PREMIUM_CHAT_MODELS = [
+  "google/gemini-3.1-pro",
+  "openai/gpt-5.5",
+  "google/gemini-3.5-flash",
+];
+
 // Map a detected subject string to a solving family.
 const SCIENCE_SUBJECTS = ["physique", "mathematiques", "mathématiques", "maths", "math", "chimie"];
 function familyForSubject(subject) {
@@ -1660,7 +1686,7 @@ async function handleSolve(req, res) {
         return res.status(200).json({ data: payload });
       }
       const target = payload.exercises[selectedExerciseIndex ?? 0];
-      const sol = await runSolve({ target, mode, subject: payload.subject, family: payload.subjectFamily, track, KEY });
+      const sol = await runSolve({ target, mode, subject: payload.subject, family: payload.subjectFamily, track, tier: gate.tier, KEY });
       if (!sol.ok) return res.status(sol.status).json(sol.body);
       return res.status(200).json({ data: { ...sol.data, subject: payload.subject, subjectFamily: payload.subjectFamily, ocrModel } });
     }
@@ -1675,7 +1701,11 @@ async function handleSolve(req, res) {
       const target = ex[selectedExerciseIndex ?? 0];
       if (!target) return res.status(422).json({ error: "No exercise to solve" });
 
-      const sol = await runSolve({ target, mode, subject, family, track, KEY });
+      // Premium students get the strongest models for the clearest worked solution.
+      let tier = null;
+      try { const u = await resolveUserTier(req); if (u.ok) tier = u.tier; } catch { /* default models */ }
+
+      const sol = await runSolve({ target, mode, subject, family, track, tier, KEY });
       if (!sol.ok) return res.status(sol.status).json(sol.body);
       return res.status(200).json({ data: { ...sol.data, subject, subjectFamily: family } });
     }
@@ -1688,11 +1718,21 @@ async function handleSolve(req, res) {
 }
 
 // Run solve or verify across the model fallbacks. Returns {ok, data} or {ok:false,status,body}.
-async function runSolve({ target, mode, subject, family, track, KEY }) {
+async function runSolve({ target, mode, subject, family, track, tier, KEY }) {
   const isVerify = mode === "verify" && target.hasUserSolution;
   // Cost routing: a fill/choose/define exercise gets the cheaper model tier.
   const isProblem = target.type ? target.type === "problem" : family === "sciences";
-  const models = (isVerify || isProblem) ? SOLVE_MODELS : SIMPLE_SOLVE_MODELS;
+  const isPremium = tier === "premium";
+  let models;
+  if (isVerify || isProblem) {
+    // Hard problems & answer-checking: Premium gets the strongest models (best
+    // worked solutions + clearest explanations); free/basic stay on the standard set.
+    models = isPremium ? PREMIUM_SOLVE_MODELS : SOLVE_MODELS;
+  } else {
+    // Simple exercises: Premium still gets a step up (full model vs lite); free/basic
+    // stay on the cheap model — a definition doesn't need a frontier model.
+    models = isPremium ? SOLVE_MODELS : SIMPLE_SOLVE_MODELS;
+  }
   let solution = null;
   let solveModel = null;
   for (const model of models) {
