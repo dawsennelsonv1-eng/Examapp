@@ -11,6 +11,8 @@ import {
 import { useClassroomSessions } from "../../hooks/useClassroom";
 import { useApp } from "../../contexts/AppContext";
 import { useUsage } from "../../hooks/useUsage";
+import { supabase } from "../../lib/supabase";
+import FeatureRemaining from "../FeatureRemaining";
 import { useOrientation } from "../../hooks/useOrientation";
 import {
   speakText, stopSpeaking, pauseSpeaking, resumeSpeaking,
@@ -54,6 +56,7 @@ export default function ClassroomSession({ session, onExit, autoCall = false }) 
   const appCtx = useApp() || {};
   const preferences = appCtx.preferences || {};
   const { planTier = "free" } = useUsage() || {};
+  const [msgRefresh, setMsgRefresh] = useState(0); // bump to re-check remaining messages
 
   const orientation = useOrientation() || { isLandscape: false };
   const isLandscape = orientation.isLandscape;
@@ -234,10 +237,13 @@ export default function ClassroomSession({ session, onExit, autoCall = false }) 
     setSuggestedQuestions([]);
 
     try {
+      const { data: _sess } = await supabase.auth.getSession();
+      const accessToken = _sess?.session?.access_token;
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          accessToken,
           sessionId: session.id,
           context: {
             exercise: session.exercise,
@@ -273,6 +279,7 @@ export default function ClassroomSession({ session, onExit, autoCall = false }) 
       setLocalMessages((prev) => [...prev, tutorMsg]);
       appendMessage(session.id, tutorMsg);
       setLastModelUsed(data?.data?.modelUsed);
+      setMsgRefresh((n) => n + 1); // update "messages restants" for free users
 
       // The AI drives the boards. It can return boardActions telling us what to
       // write where: solution steps go to the solution board, and it can request
@@ -558,6 +565,11 @@ export default function ClassroomSession({ session, onExit, autoCall = false }) 
       )}
 
       <div className="bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-3 flex-shrink-0">
+        {planTier === "free" && (
+          <div className="max-w-3xl mx-auto mb-2 flex justify-center">
+            <FeatureRemaining feature="tutor" unit="messages" periodNote="aujourd'hui" refreshSignal={msgRefresh} />
+          </div>
+        )}
         <div className="flex items-end gap-2 max-w-3xl mx-auto">
           <div className="flex-1 rounded-2xl bg-slate-100 dark:bg-slate-800 px-4 py-2.5 flex items-center gap-2">
             <input

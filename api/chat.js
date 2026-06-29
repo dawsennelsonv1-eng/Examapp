@@ -3,6 +3,57 @@
 //  - When preferences.language === "fr", AI replies in French ONLY (no kreyòl mix)
 //  - Removed MENFP wording from system prompts
 //  - 5 personas with tightened anti-overexplain rules
+// v18:
+//  - Tier-aware models (premium = best; free/basic = cheaper) for cost control
+//  - Free daily message cap (counts as "tutor" usage, same scheme as content.js)
+
+import { createClient } from "@supabase/supabase-js";
+
+// --- Usage tracking (MUST mirror content.js so the meter/counter match) ---
+let _admin = null;
+function getSupabaseAdmin() {
+  if (_admin) return _admin;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  _admin = createClient(url, key, { auth: { persistSession: false } });
+  return _admin;
+}
+function dayKey() { return new Date().toISOString().slice(0, 10); } // tutor = per-day bucket
+const FREE_TUTOR_LIMIT = 20;
+
+async function resolveTier(req) {
+  const admin = getSupabaseAdmin();
+  if (!admin) return { tier: "free", admin: null, user: null };
+  const headerToken = (req.headers?.authorization || "").replace(/^Bearer\s+/i, "");
+  const token = req.body?.accessToken || headerToken || null;
+  if (!token) return { tier: "free", admin, user: null };
+  try {
+    const { data: ud, error } = await admin.auth.getUser(token);
+    if (error || !ud?.user) return { tier: "free", admin, user: null };
+    let tier = "free";
+    try {
+      const { data: prof } = await admin.from("profiles").select("plan_tier, statut").eq("id", ud.user.id).single();
+      if (prof?.statut === "admin") tier = "admin";
+      else if (prof?.plan_tier === "basic" || prof?.plan_tier === "premium") tier = prof.plan_tier;
+    } catch {}
+    return { tier, admin, user: ud.user };
+  } catch {
+    return { tier: "free", admin, user: null };
+  }
+}
+async function readTutorUsed(admin, userId) {
+  try {
+    const { data } = await admin.from("usage_counters")
+      .select("count").eq("user_id", userId).eq("feature", "tutor").eq("period", dayKey()).single();
+    return Number(data?.count || 0);
+  } catch { return 0; }
+}
+async function bumpTutor(admin, userId) {
+  try {
+    await admin.rpc("bump_usage", { p_user: userId, p_feature: "tutor", p_period: dayKey(), p_amount: 1 });
+  } catch {}
+}
 
 const PERSONALITIES = {
   joseph: `Tu es M. JOSEPH, professeur expérimenté (~62 ans). PATIENT, fatherly, méthodique. Voix calme.`,
@@ -29,6 +80,32 @@ export default async function handler(req, res) {
     if (!userMessage) return res.status(400).json({ error: "Missing userMessage" });
     const KEY = process.env.OPENROUTER_API_KEY;
     if (!KEY) return res.status(500).json({ error: "Server misconfigured" });
+
+    // Identify the caller + real tier (drives model quality + the free cap).
+    const auth = await resolveTier(req);
+    const tier = auth.tier;
+
+    // Free-tier daily message cap on the classe. Return a friendly in-chat message
+    // (200) so the UI renders it as a normal tutor reply — no client change needed.
+    if (tier === "free" && auth.user && auth.admin) {
+      const used = await readTutorUsed(auth.admin, auth.user.id);
+      if (used >= FREE_TUTOR_LIMIT) {
+        return res.status(200).json({
+          data: {
+            segments: [{
+              type: "explain",
+              text: `Ou itilize tout ${FREE_TUTOR_LIMIT} mesaj gratis ou yo ak pwofesè a pou jodi a 🙏\n\nPase nan yon fòfè pou kontinye pale san limit jiska egzamen an.`,
+              speakable: "Ou itilize tout mesaj gratis ou yo pou jodi a. Pase nan yon fòfè pou kontinye.",
+              boardActions: [],
+            }],
+            suggestedQuestions: [],
+            needsConfirmation: false,
+            limitReached: true,
+            tier,
+          },
+        });
+      }
+    }
 
     const prefs = preferences || { language: "fr", personality: "joseph", name: "" };
 
@@ -142,13 +219,22 @@ FORMAT JSON STRICT:
       { role: "user", content: userMessage },
     ];
 
-    const models = [
-      "google/gemini-3-pro-preview",
-      "anthropic/claude-opus-4.7",
-      "openai/gpt-5.5",
-      "google/gemini-3.5-flash",
-      "openai/gpt-5.4",
-    ];
+    // Premium (and staff) get the strongest models for the best explanations.
+    // Free & basic get a solid but far cheaper chain — basic has unlimited messages,
+    // so keeping it off the priciest model avoids an open-ended cost, and free is
+    // capped anyway. This also stops free users from running the Pro model uncapped.
+    const models = (tier === "premium" || tier === "admin")
+      ? [
+          "google/gemini-3-pro-preview",
+          "anthropic/claude-opus-4.7",
+          "openai/gpt-5.5",
+          "google/gemini-3.5-flash",
+        ]
+      : [
+          "google/gemini-3.5-flash",
+          "google/gemini-3-flash-preview",
+          "openai/gpt-5.4",
+        ];
 
     let parsed = null;
     let modelUsed = null;
@@ -200,6 +286,12 @@ FORMAT JSON STRICT:
 
     if (!parsed) {
       return res.status(502).json({ error: "AI service error", details: lastError });
+    }
+
+    // Count this classe message toward the free daily allowance, so the usage meter
+    // and the per-screen counter show real numbers (and the cap above eventually bites).
+    if (tier === "free" && auth.user && auth.admin) {
+      await bumpTutor(auth.admin, auth.user.id);
     }
 
     const segments = (Array.isArray(parsed.segments) ? parsed.segments : [])
