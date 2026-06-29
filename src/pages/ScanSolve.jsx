@@ -37,6 +37,7 @@ import { logEvent } from "../services/analytics";
 import { supabase } from "../lib/supabase";
 import WhatsAppPayButton from "../components/WhatsAppPayButton";
 import AskToPay from "../components/AskToPay";
+import FeatureRemaining from "../components/FeatureRemaining";
 
 const API = "/api/content?task=solve";
 const MAX_SOLVE_ALL = 12; // cap exercises solved at once (cost control on dense pages)
@@ -352,6 +353,7 @@ export default function ScanSolve() {
           <div className="text-[11px] text-slate-500 dark:text-slate-400">
             {(extracted?.subject || "Général")} · Niveau {track || "NS4"}
           </div>
+          <FeatureRemaining feature="scan" unit="scans" refreshSignal={solutions.length} className="mt-0.5" />
         </div>
 
         {doneSolutions.length > 0 && (
