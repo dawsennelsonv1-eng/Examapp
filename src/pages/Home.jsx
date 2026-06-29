@@ -22,6 +22,7 @@ import ScanHistoryCard from "../components/home/ScanHistoryCard";
 import ProgressCard from "../components/ProgressCard";
 import GroupCard from "../components/GroupCard";
 import AskToPay from "../components/AskToPay";
+import FreeUsageMeter from "../components/FreeUsageMeter";
 import TutorAvatar from "../components/shared/TutorAvatar";
 import { useState, useEffect } from "react";
 
@@ -164,6 +165,9 @@ export default function Home() {
       <main className="px-4 py-6 space-y-6 -mt-4 relative z-10">
         <ProgressCard />
 
+        {/* Free users: live "what's left" per feature + upgrade nudge */}
+        <FreeUsageMeter />
+
         {/* WhatsApp community — joins the group for the student's class */}
         <GroupCard track={track} />
 
@@ -198,7 +202,7 @@ export default function Home() {
                     <span className="text-sm text-white/50 line-through">{promoBasic.anchor} HTG</span>
                   )}
                 </div>
-                <div className="text-xs text-white/75 mt-0.5">Accès complet jusqu'aux examens</div>
+                <div className="text-xs text-white/75 mt-0.5">Accès complet · 450 HTG/mois</div>
                 <div className="text-[11px] text-amber-200/90 mt-1.5 font-semibold">
                   Moins cher qu'un répétiteur — et disponible 24h/24.
                 </div>
@@ -245,7 +249,7 @@ export default function Home() {
                   <span className="text-xs text-white/70">seulement (tu as déjà payé Basic)</span>
                 </div>
                 <div className="text-[11px] text-amber-100/90 mt-1.5 font-semibold">
-                  Plus d'appels avec le prof, tout illimité jusqu'aux examens.
+                  Plus d'appels avec le prof, tout illimité. 900 HTG/mois.
                 </div>
                 <div className="mt-3 inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-sm px-4 py-2 rounded-xl text-sm font-bold">
                   Passer à Premium <ChevronRight size={16} />

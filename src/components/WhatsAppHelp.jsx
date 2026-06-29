@@ -5,6 +5,7 @@
 // sits above the bottom nav on every screen). Pre-written help message is in Kreyòl.
 
 import { MessageCircle } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import { WHATSAPP_NUMBER } from "../utils/constants";
 
 const SUPPORT = (import.meta.env.VITE_WHATSAPP_NUMBER || WHATSAPP_NUMBER || "").replace(/[^0-9]/g, "");
@@ -17,7 +18,12 @@ function openHelp() {
 }
 
 export default function WhatsAppHelp({ variant = "inline", label = "Contactez-nous", className = "" }) {
+  const location = useLocation();
+
   if (variant === "floating") {
+    // Keep the bubble out of the Classe (it overlaps the chat input and the call
+    // controls). Calls live under /classe, so this covers both.
+    if (location.pathname.startsWith("/classe")) return null;
     return (
       <button onClick={openHelp} aria-label="Contactez-nous sur WhatsApp"
         className={`fixed z-40 bottom-24 right-4 w-14 h-14 rounded-full flex items-center justify-center shadow-xl text-white ${className}`}

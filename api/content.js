@@ -68,7 +68,7 @@ async function requireAdmin(req) {
 // Counts live in the `usage_counters` table; increments via bump_usage RPC.
 // =====================================================================
 const TIER_LIMITS = {
-  free:    { scan: 5,   call_minutes: 3,  tutor: 20 },
+  free:    { scan: 3,   call_minutes: 2,  tutor: 20 },
   basic:   { scan: 35,  call_minutes: 10, tutor: -1 },
   premium: { scan: 100, call_minutes: 30, tutor: -1 },
   admin:   { scan: -1,  call_minutes: -1, tutor: -1 }, // staff = unlimited
@@ -1584,15 +1584,18 @@ async function handleUsageStatus(req, res) {
   const u = await resolveUserTier(req);
   if (!u.ok) return res.status(u.status).json(u.body);
   const lim = TIER_LIMITS[u.tier] || TIER_LIMITS.free;
-  const [scanUsed, callUsed] = await Promise.all([
+  const [scanUsed, callUsed, tutorUsed] = await Promise.all([
     lim.scan === -1 ? 0 : readUsage(u.admin, u.user.id, "scan", u.tier),
     lim.call_minutes === -1 ? 0 : readUsage(u.admin, u.user.id, "call_minutes", u.tier),
+    lim.tutor === -1 ? 0 : readUsage(u.admin, u.user.id, "tutor", u.tier),
   ]);
+  const mk = (used, limit) => ({ used, limit, remaining: limit === -1 ? -1 : Math.max(0, limit - used) });
   return res.status(200).json({
     data: {
       tier: u.tier,
-      scan: { used: scanUsed, limit: lim.scan, remaining: lim.scan === -1 ? -1 : Math.max(0, lim.scan - scanUsed) },
-      call_minutes: { used: callUsed, limit: lim.call_minutes, remaining: lim.call_minutes === -1 ? -1 : Math.max(0, lim.call_minutes - callUsed) },
+      scan: mk(scanUsed, lim.scan),
+      call_minutes: mk(callUsed, lim.call_minutes),
+      tutor: mk(tutorUsed, lim.tutor),
     },
   });
 }

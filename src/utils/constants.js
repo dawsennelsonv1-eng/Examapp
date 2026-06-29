@@ -67,7 +67,7 @@ export const REFERRAL_PAID_GOAL = 2;
 export const REFERRAL_REWARD_HTG = 250;
 
 // One-time access that ends with the exams (not a recurring subscription).
-export const PRICE_SUFFIX = "jusqu'aux examens";
+export const PRICE_SUFFIX = "/mois";
 
 // WhatsApp number that receives payment messages. Prefer the Vercel env var
 // VITE_WHATSAPP_NUMBER; this constant is the fallback. Digits only, with country
